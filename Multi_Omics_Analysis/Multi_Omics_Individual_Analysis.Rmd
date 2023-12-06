@@ -1,0 +1,447 @@
+---
+title: "Individual Omics Analysis"
+output: html_document
+date: "2023-05-12"
+params:
+    p.value: 0.05
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Packages
+
+```{r}
+library(MultiAssayExperiment)
+library(xcms)
+library(TreeSummarizedExperiment)
+library(DESeq2)
+library(SummarizedExperiment)
+library(dplyr)
+library(vsn)
+library(compositions)
+library(ggplot2)
+library(plotly)
+library(impute)
+library(ggpubr)
+library(RColorBrewer)
+library(reshape2)
+source("../../Utility Functions/utilities.R")
+```
+
+## Analysis functions
+
+```{r}
+data_boxplots <- function(omic_dt, omic_name, output_dir, 
+                        ylab = "Intensity", xlab_var = "group", 
+                        main_title = "rownames", ...){
+    var_dt <- assay(omic_dt)
+    if (main_title == "rownames" || !(main_title %in% colnames(rowData(omic_dt)))){
+        main_title <- rownames(var_dt)
+    } else {
+        main_title <- make.names(rowData(omic_dt)[[main_title]])
+    }
+    pdf(paste0(output_dir, omic_name, "_boxplots.pdf"))
+    for(dt_var_id in seq_len(nrow(var_dt))){
+        
+        plot_dt <- cbind(colData(omic_dt)[xlab_var], t(var_dt[dt_var_id,]))
+            
+        print(ggboxplot(data = as.data.frame(plot_dt), x = xlab_var, 
+                    y = make.names(rownames(var_dt)[dt_var_id]), ylab = ylab,
+                    title = main_title[dt_var_id], 
+                    color = xlab_var, add = "jitter", palette = brewer.pal(n = length(unique(plot_dt[[xlab_var]])), name = "Dark2")) + theme(legend.position = "none", plot.title = element_text(hjust = 0.5)))
+    }
+    dev.off()
+}
+
+data_pca <- function(dt_list, metadata, stratificationVar, pc_x = 1, pc_y = 2, 
+                     scale. = FALSE, center = FALSE, plot_name, ...){
+    group_var <- metadata[[stratificationVar]]
+    if(any(is.na(dt_list))){
+        dt_list <- t(impute::impute.knn(as.matrix(dt_list))$data)    
+    } else{
+        dt_list <- t(dt_list)
+    }
+    
+    pca_dt <- prcomp(dt_list, center = center, scale. = scale.)
+    
+    pca_plot(pca_dt, pc_x = pc_x, pc_y = pc_y, group_var = group_var, 
+            ellipse_var = group_var, interactive = FALSE) + ggtitle(plot_name)
+}
+```
+
+
+## Introduction
+    
+## Objectives
+
+- Study the life-style intervention model (lima) to find:
+    - What are the effects of the high fat diet (HFD) and the life-style intervention
+        - Which components/organs are most affected by the high fat diet (HFD)
+        - Which components/organs are restored by the posterior life-style intervention (INT)
+        - Which components/organs are resistant to the life-style intervention (INT)
+        - Is the microbiota diversity reduced with the high fat diet (HFD)?  Is it restored with the life-style intervention (INT)?
+    - Why is the high fat diet excluded (HFE) group resistant to the high fat diet (HFD)?
+        - Which components/organs are affected differently in the high fat diet excluded (HFE) group and the high fat diet (HFD) group?
+        - Is it more similar to the control group (CNT) than the life-style intervention group (INT)?
+        - Do they have a specific composition of the microbiota?
+- Integrate the multi omics data from the lima model to find how the microbiota metabolites affects mice through epigenetic modifications.
+    - Which epigenetically relevant metabolites correlate/are knownly produced/induced by the microbiota
+    - Which epigenetic modifications related to the above mentioned metabolites are found on the data
+    - Which genes related to these epigenetic modications are actually affected
+
+Necessary contrasts:
+    - Sig. HFD-CTR (1)
+    - Sig. HFD-CTR / No Sig. INT-CTR (2)
+    - (1) - (2)
+    
+    
+## Loading the data
+
+```{r}
+multi_omics_raw <- readRDS("./Merged_Multi_Omics.rds")
+multi_omics_ma <- readRDS("./Multivariate_Merged_Multi_Omics.rds")
+data_list <- list("Raw_Results" = multi_omics_raw, 
+                  "Multivariate_Normalized" = multi_omics_ma)
+```
+
+    
+## PCA and Heatmap Outputs
+
+```{r}
+
+all_omics_functions <- list("PCA_Results" = data_pca, 
+                            "Heatmap_Results" = heatMapFun)
+
+for(data_mae_name in names(data_list)){
+    experiment_list <- experiments(data_list[[data_mae_name]])
+    
+    for(fun_name in names(all_omics_functions)){
+        param_list <- list()
+        pdf(paste0("./Results/", data_mae_name, "/", fun_name, ".pdf"))
+        for(experiment_name in names(experiment_list)){
+            param_list$plot_name <- experiment_name
+            param_list$dt_list <- assay(experiment_list[[experiment_name]])
+            param_list$metadata <- colData(experiment_list[[experiment_name]])
+            param_list$stratificationVar <- "group"
+            
+            if(fun_name == "Heatmap_Results"){
+                param_list$cdQuantile <- ifelse(nrow(param_list$dt_list) >= 4000, 0.75, 0)        
+                param_list$show_colnames <- ifelse(nrow(param_list$dt_list) > 100, FALSE, TRUE)
+            }
+            if(experiment_name %in% c("DNA_Methylation_unsupervised.liver", "DNA_Methylation.liver")){
+                param_list$cdQuantile <- 0
+                set.seed(123)
+                param_list$dt_list <- param_list$dt_list[sample(x = seq_len(nrow(param_list$dt_list)), size = 1000),]
+            }
+            if(data_mae_name == "Raw_Results"){
+                param_list$clustering_distance_rows <- dist(scale(t(param_list$dt_list)))
+            } else{
+                param_list$clustering_distance_rows <-  dist(t(param_list$dt_list))
+            }
+            
+            
+            print(do.call(all_omics_functions[[fun_name]], param_list))
+        }
+        dev.off()
+    }    
+}
+
+rm(param_list)
+```
+
+## Component List
+
+```{r}
+# expression_list <- list(
+#     "HFD Altered" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05
+#     ),
+#     "INT Restored Up" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` > 0 & 
+#         `INT-HFD.adj.p.value` <= 0.05 & 
+#         `INT-CNT.adj.p.value` > 0.05
+#     ), 
+#     "INT Restored Down" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 & 
+#         `INT-HFD.adj.p.value` <= 0.05 & 
+#         `INT-CNT.adj.p.value` > 0.05
+#     ),
+#     "INT Restored Over Down" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 &
+#         `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` > 0 &
+#         `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` > 0
+#     ),
+#     "INT Restored Over Up" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` >= 0 &
+#         `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` < 0 &
+#         `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` < 0
+#     ),
+#     "INT Resistant Over Up" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` >= 0 & 
+#         `INT-CNT.adj.p.value` <= 0.05 &
+#         `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` >= 0
+#     ),
+#     "INT Resistant Over Down" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 & 
+#         `INT-CNT.adj.p.value` <= 0.05 &
+#         `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` < 0
+#     ),
+#     "INT Resistant Up" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` >= 0 & 
+#         `INT-CNT.adj.p.value` <= 0.05 & 
+#         `INT-HFD.adj.p.value` > 0.05 
+#     ),
+#     "INT Resistant Down" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 & 
+#         `INT-CNT.adj.p.value` <= 0.05 &
+#         `INT-HFD.adj.p.value` > 0.05
+#     ),
+#     "INT Resistant Half Up" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` >= 0 & 
+#         ((`INT-HFD.adj.p.value` <= 0.05 & `INT-CNT.adj.p.value` <= 0.05) |
+#         (`INT-HFD.adj.p.value` > 0.05 & `INT-CNT.adj.p.value` > 0.05)) &
+#         `INT-HFD.log2FC` < 0 & 
+#         `INT-CNT.log2FC` >= 0
+#     ),
+#     "INT Resistant Half Down" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 &
+#         ((`INT-HFD.adj.p.value` <= 0.05 & `INT-CNT.adj.p.value` <= 0.05) |
+#         (`INT-HFD.adj.p.value` > 0.05 & `INT-CNT.adj.p.value` > 0.05)) & 
+#         `INT-HFD.log2FC` >= 0 &
+#         `INT-CNT.log2FC` < 0
+#     ), "INT Resistant Weird" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 &
+#         `INT-HFD.adj.p.value` > 0.05 & 
+#         `INT-CNT.adj.p.value` > 0.05 & 
+#         ((`INT-HFD.log2FC` >= 0 & `INT-CNT.log2FC` >= 0) | 
+#             (`INT-HFD.log2FC` < 0 & `INT-CNT.log2FC` < 0))
+#     ),
+#     "HFE Unaffected" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` > 0.05 & `HFE-HFD.adj.p.value` <= 0.05
+#     ),
+#     "HFE Affected equal HFD" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` <= 0.05 & `HFE-HFD.adj.p.value` > 0.05
+#     ),
+#     "HFE Affected diff HFD" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` <= 0.05 & `HFE-HFD.adj.p.value` <= 0.05
+#     ),
+#     "HFE Other" = quote(
+#         `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` > 0.05 & `HFE-HFD.adj.p.value` > 0.05
+#     )
+# )
+
+expression_list <- list(
+    "HFD Altered" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05
+    ),
+    "INT Restored Up" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` > 0 & 
+        ((`INT-HFD.adj.p.value` <= 0.05 & 
+        `INT-CNT.adj.p.value` > 0.05) | 
+            ((`INT-HFD.adj.p.value` > 0.05 & 
+            `INT-CNT.adj.p.value` > 0.05) & 
+                ((`INT-HFD.adj.p.value` < `INT-CNT.adj.p.value`) | 
+                     ((`INT-HFD.adj.p.value` == `INT-CNT.adj.p.value`) & (abs(`INT-HFD.log2FC`) - abs(`INT-CNT.log2FC`)) > 0))))
+    ), 
+    "INT Restored Down" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 & 
+        ((`INT-HFD.adj.p.value` <= 0.05 & 
+        `INT-CNT.adj.p.value` > 0.05) | 
+            ((`INT-HFD.adj.p.value` > 0.05 & 
+            `INT-CNT.adj.p.value` > 0.05) & 
+                ((`INT-HFD.adj.p.value` < `INT-CNT.adj.p.value`) | 
+                     ((`INT-HFD.adj.p.value` == `INT-CNT.adj.p.value`) & (abs(`INT-HFD.log2FC`) - abs(`INT-CNT.log2FC`)) > 0))))
+    ),
+    "INT Restored Over Down" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` > 0 &
+        `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` > 0
+    ),
+    "INT Restored Over Up" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` >= 0 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` < 0 &
+        `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` < 0
+    ),
+    "INT Resistant Over Up" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` >= 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` >= 0
+    ),
+    "INT Resistant Over Down" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` < 0
+    ),
+    "INT Resistant Up" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` >= 0 & 
+        ((`INT-CNT.adj.p.value` <= 0.05 & 
+        `INT-HFD.adj.p.value` > 0.05) | 
+            ((`INT-HFD.adj.p.value` > 0.05 & 
+            `INT-CNT.adj.p.value` > 0.05) & 
+                ((`INT-HFD.adj.p.value` > `INT-CNT.adj.p.value`) | 
+                     ((`INT-HFD.adj.p.value` == `INT-CNT.adj.p.value`) & (abs(`INT-HFD.log2FC`) - abs(`INT-CNT.log2FC`)) < 0))))
+    ),
+    "INT Resistant Down" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 & 
+        ((`INT-CNT.adj.p.value` <= 0.05 & 
+        `INT-HFD.adj.p.value` > 0.05) | 
+            ((`INT-HFD.adj.p.value` > 0.05 & 
+            `INT-CNT.adj.p.value` > 0.05) & 
+                ((`INT-HFD.adj.p.value` > `INT-CNT.adj.p.value`) | 
+                     ((`INT-HFD.adj.p.value` == `INT-CNT.adj.p.value`) & (abs(`INT-HFD.log2FC`) - abs(`INT-CNT.log2FC`)) < 0))))
+    ),
+    "INT Resistant Half Up" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` >= 0 & 
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-CNT.adj.p.value` <= 0.05 &
+        `INT-HFD.log2FC` < 0 & 
+        `INT-CNT.log2FC` >= 0
+    ),
+    "INT Resistant Half Down" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-CNT.adj.p.value` <= 0.05 & 
+        `INT-HFD.log2FC` >= 0 &
+        `INT-CNT.log2FC` < 0
+    ),
+    "HFE Unaffected" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` > 0.05 & `HFE-HFD.adj.p.value` <= 0.05
+    ),
+    "HFE Affected equal HFD" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` <= 0.05 & `HFE-HFD.adj.p.value` > 0.05
+    ),
+    "HFE Affected diff HFD" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` <= 0.05 & `HFE-HFD.adj.p.value` <= 0.05
+    ),
+    "HFE Other" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` > 0.05 & `HFE-HFD.adj.p.value` > 0.05
+    )
+)
+
+multi_omic_filtered_list <- lapply(data_list, function(multi_omics_dt){
+    lapply(expression_list, function(ctrs_exprs){
+        
+        keep_rows_list <- lapply(experiments(multi_omics_dt), function(omic_dt){
+            omic_rowdata <- rowData(omic_dt)
+            rownames(omic_rowdata)[which(eval(ctrs_exprs, envir = omic_rowdata))]
+        })
+        
+        multi_omics_dt[keep_rows_list,,]
+    })
+})
+```
+
+## Restored/Resistant Table
+
+```{r}
+ctrs_sig <- lapply(multi_omic_filtered_list[[2]], function(omic_ctrs){
+    lengths(rownames(omic_ctrs))
+})
+
+ctrs_sig <- do.call(cbind, ctrs_sig)
+
+restored_cols <- grep("Restored", colnames(ctrs_sig)) 
+hfd_affected_cols <- grep("Altered", colnames(ctrs_sig))
+resistant_cols <- grep("Resistant", colnames(ctrs_sig))
+
+affected_col <- grep("Affected", colnames(ctrs_sig))
+unaffected_col <- grep("Unaffected", colnames(ctrs_sig))
+other_col <- grep("Other", colnames(ctrs_sig))
+
+
+dt_table <- t(apply(ctrs_sig, 1, function(omic_var){
+   c("% Restored" = sum(omic_var[restored_cols])/omic_var[hfd_affected_cols], 
+     "% Resistant" = sum(omic_var[resistant_cols])/omic_var[hfd_affected_cols], 
+     "Total Altered" = omic_var["HFD Altered"])
+}))
+
+
+hfe_table <- t(apply(ctrs_sig, 1, function(omic_var){
+   c("% HFE Affected" = sum(omic_var[affected_col])/omic_var[hfd_affected_cols], 
+     "% HFE Unaffected" = sum(omic_var[unaffected_col])/omic_var[hfd_affected_cols],
+     "% HFE Other" = sum(omic_var[other_col])/omic_var[hfd_affected_cols],
+     "Total Altered" = omic_var["HFD Altered"])
+}))
+
+```
+
+## Boxplots
+
+```{r}
+lapply(names(multi_omic_filtered_list), function(multi_omic_filtered_name){
+    multi_omic_filtered <- multi_omic_filtered_list[[multi_omic_filtered_name]]
+
+    lapply(names(multi_omic_filtered)[2:15], function(sig_ctrs_name){
+        sig_ctrs <- multi_omic_filtered[[sig_ctrs_name]]
+        
+        ctrs_dir <- paste0("./Results/", multi_omic_filtered_name, "/",
+                        make.names(sig_ctrs_name), "/")
+        
+        if(!dir.exists(ctrs_dir)){dir.create(ctrs_dir)}
+        
+        for(omic_name in names(sig_ctrs)[1]){
+            if(grepl("RNASeq", omic_name)){
+                main_title <- "gene_lab" 
+                ylab <- ifelse(multi_omic_filtered_name == "Raw_Results", 
+                               "Counts", "VST Scaled Counts")
+            } else if(grepl("16S", omic_name)){
+                main_title <- "specie_name_short"
+                ylab <- ifelse(multi_omic_filtered_name == "Raw_Results", 
+                               "% of abundance", "CLR Transformed abundance")
+                
+            } else if(grepl("Shotgun", omic_name)){
+                main_title <- "specie_name_short"
+                ylab <- ifelse(multi_omic_filtered_name == "Raw_Results", 
+                               "Counts", "CLR Transformed counts")
+                
+            } else if(grepl("PTM|DNA", omic_name)){
+                ylab <- ifelse(multi_omic_filtered_name == "Raw_Results", 
+                               "B Value", "M Value")
+                main_title <- "rownames"
+            } else if(grepl("Untargeted", omic_name)){
+                ylab <- ifelse(multi_omic_filtered_name == "Raw_Results", 
+                               "Intensity", "VST Transformed intensity")
+                main_title <- "rownames"
+            } else{
+                main_title <- "rownames"
+                ylab <- ifelse(multi_omic_filtered_name == "Raw_Results", 
+                               "Intensity", "Scaled Intensity")
+            }
+            if(nrow(experiments(sig_ctrs)[[omic_name]]) == 0){next}
+            data_boxplots(omic_dt = experiments(sig_ctrs)[[omic_name]], 
+                          omic_name = omic_name, 
+                          output_dir = ctrs_dir, ylab = ylab, 
+                          main_title = main_title)   
+        }
+    })
+})
+```
+
+## Data analysis
+
+```{r, results='asis'}
+for(data_list_names in names(complete_data_list)){
+    cat("### ", data_list_names, "{.tabset} \n")
+    for(fun_name in names(function_list)){
+        cat("#### ", fun_name, "{.tabset} \n")
+        fun_param <- list(dt_list = complete_data_list[[data_list_names]],
+                          metadata = complete_metadata_list[[data_list_names]],
+                          stratificationVar = "Recurrencia")
+        if(fun_name == "PCA Analysis"){
+            fun_param$stratificationVar <- c("Recurrencia",
+                                             "Grado Histológico tumoral (Low o High Grade)")
+        }
+        if(fun_name == "Image Complications"){
+            fun_param$metadata <- complete_hist_metadata_list[[data_list_names]]
+        }
+        if(fun_name == "Univariate Results" | fun_name == "pls-DA Caret"){
+            fun_param$file_name <- data_list_names
+        }
+        cat("\n")
+        do.call(function_list[[fun_name]], fun_param)
+        cat("\n")
+    }
+    cat("\n")
+}
+```
+

@@ -1,0 +1,114 @@
+---
+title: "Multi_Omics_Individual_Analysis_Script"
+author: "Jordi Rofes Herrera"
+date: "2023-10-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Packages
+
+```{r}
+library(MultiAssayExperiment)
+library(xcms)
+library(DESeq2)
+library(SummarizedExperiment)
+library(dplyr)
+library(vsn)
+library(compositions)
+library(ggplot2)
+library(plotly)
+library(impute)
+library(ggpubr)
+library(RColorBrewer)
+library(reshape2)
+source("../../Utility Functions/utilities.R")
+```
+
+## Analysis functions
+
+```{r}
+data_boxplots <- function(omic_dt, omic_name, output_dir, 
+                        ylab = "Intensity", xlab_var = "group", 
+                        main_title = "rownames"){
+    var_dt <- assay(omic_dt)
+    if (main_title == "rownames" || !(main_title %in% colnames(rowData(omic_dt)))){
+        main_title <- rownames(var_dt)
+    } else {
+        main_title <- make.names(rowData(omic_dt)[[main_title]])
+    }
+    pdf(paste0(output_dir, omic_name, "_boxplots.pdf"))
+    for(dt_var_id in seq_len(nrow(var_dt))){
+        
+        plot_dt <- cbind(colData(omic_dt)[xlab_var], t(var_dt[dt_var_id,]))
+            
+        print(ggboxplot(data = as.data.frame(plot_dt), x = xlab_var, 
+                    y = make.names(rownames(var_dt)[dt_var_id]), ylab = ylab,
+                    title = main_title[dt_var_id], 
+                    color = xlab_var, add = "jitter", palette = brewer.pal(n = length(unique(plot_dt[[xlab_var]])), name = "Dark2")) + theme(legend.position = "none", plot.title = element_text(hjust = 0.5)))
+    }
+    dev.off()
+}
+
+data_pca <- function(dt_list, metadata, stratificationVar, pc_x = 1, pc_y = 2, 
+                     scale. = FALSE, center = FALSE, plot_name){
+    group_var <- metadata[[stratificationVar]]
+    
+    if(any(is.na(dt_list))){
+        dt_list <- impute::impute.knn(t(dt_list))$data    
+    } else{
+        dt_list <- t(dt_list)
+    }
+    
+    pca_dt <- prcomp(dt_list, center = center, scale. = scale.)
+    
+    pca_plot(pca_dt, pc_x = pc_x, pc_y = pc_y, group_var = group_var, 
+            ellipse_var = group_var, interactive = FALSE) + ggtitle(plot_name)
+}
+```
+
+
+## Loading the data
+
+```{r}
+multi_omics_raw <- readRDS("./Merged_Multi_Omics_gfcv.rds")
+multi_omics_ma <- readRDS("./Multivariate_Merged_Multi_Omics_gfcv.rds")
+data_list <- list("Raw_Results" = multi_omics_raw, 
+                  "Multivariate_Normalized" = multi_omics_ma)
+```
+
+    
+## PCA and Heatmap Outputs
+
+```{r}
+
+all_omics_functions <- list("PCA_Results" = data_pca, 
+                            "Heatmap_Results" = heatMapFun)
+
+for(data_mae_name in names(data_list)){
+    experiment_list <- experiments(data_list[[data_mae_name]])
+    
+    for(fun_name in names(all_omics_functions)){
+        param_list <- list()
+        pdf(paste0("./Results_gfcv/", data_mae_name, "/", fun_name, ".pdf"))
+        for(experiment_name in names(experiment_list)){
+            param_list$plot_name <- experiment_name
+            param_list$dt_list <- assay(experiment_list[[experiment_name]])
+            param_list$metadata <- colData(experiment_list[[experiment_name]])
+            param_list$stratificationVar <- "group"
+            
+            if(fun_name == "Heatmap_Results"){
+                param_list$cdQuantile <- ifelse(nrow(param_list$dt_list) >= 4000, 0.9, 0)        
+            }
+            
+            print(do.call(all_omics_functions[[fun_name]], param_list))
+        }
+        dev.off()
+    }    
+}
+
+rm(param_list)
+```

@@ -1,0 +1,114 @@
+---
+title: "Weight Gene Correlation Network Analysis"
+author: "Jordi Rofes Herrera"
+date: "2023-09-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading the packages
+
+```{r}
+library(WGCNA)
+library(MultiAssayExperiment)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(clusterProfiler)
+```
+
+
+## Loading the data
+
+```{r}
+multi_omic_dt <- readRDS("../Multi_Omics_Analysis/Multivariate_Merged_Multi_Omics.rds")
+rna_seq_dt <- experiments(multi_omic_dt)[["RNASeq.liver"]]
+dt_list <- assay(rna_seq_dt)
+rowMetadata <- rowData(rna_seq_dt)
+metadata <- colData(rna_seq_dt)
+```
+
+## WGCNA Network
+
+```{r}
+wgcna_soft_thr <- WGCNA::pickSoftThreshold(data = t(dt_list), 
+                                           networkType = "signed", powerVector = seq(1:30))
+```
+
+```{r}
+sft <- wgcna_soft_thr
+cex1 <- 0.9
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+labels = sft$fitIndices$Power, cex=cex1,col="red");
+```
+
+```{r}
+# Network construction
+bwnet <- blockwiseModules(datExpr = t(dt_list), maxBlockSize = 5000, power = 17, 
+                        TOMType = "signed", minModuleSize = 30, 
+                        reassignThreshold = 0, mergeCutHeight = 0.25,
+                        numericLabels = TRUE, saveTOMs = TRUE, 
+                        saveTOMFileBase = "lima_blockwise", verbose = 3)
+```
+
+```{r}
+# Convert labels to colors for plotting
+mergedColors <-  labels2colors(bwnet$colors)
+# Plot the dendrogram and the module colors underneath
+plotDendroAndColors(bwnet$dendrograms[[1]], mergedColors[bwnet$blockGenes[[1]]],
+"Module colors",
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05)
+```
+```{r}
+moduleLabels <- bwnet$colors
+moduleColors <- labels2colors(bwnet$colors)
+MEs <- bwnet$MEs
+
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+entrez_ids <- mapIds(x = org.Mm.eg.db, keys = names(moduleLabels), column = "ENTREZID", keytype = "ENSEMBL")
+```
+
+```{r}
+cluster_ids <- lapply(unique(moduleColors), function(x){
+    as.numeric(entrez_ids[moduleColors == x])
+})
+cluster_ids
+names(cluster_ids) <- unique(moduleColors)
+    
+enrich_test <- compareCluster(geneClusters = cluster_ids, fun = "enrichGO", 
+                        OrgDb = org.Mm.eg.db, keyType = "ENTREZID", ont = "ALL", 
+                        pAdjustMethod = "fdr", pvalueCutoff = 0.05, 
+                        qvalueCutoff = 0.05, universe = unlist(cluster_ids))
+sem_data <- GOSemSim::godata(org.Mm.eg.db, ont = "ALL")
+
+simplified_enrich <- clusterProfiler::simplify(enrich_test, OrgDb = org.Mm.eg.db)
+
+GOenr <- GOenrichmentAnalysis(moduleColors, entrez_ids, organism = "mouse", nBestP = 10);
+```
+
+
+```{r}
+# Network construction
+net <- blockwiseModules(datExpr = t(dt_list), power = 3, maxBlockSize = 30000,
+                        TOMType = "unsigned", minModuleSize = 30, 
+                        reassignThreshold = 0, mergeCutHeight = 0.25,
+                        numericLabels = TRUE, saveTOMs = TRUE, 
+                        saveTOMFileBase = "lima_blockwise", verbose = 3)
+```
+
+```{r}
+# Convert labels to colors for plotting
+mergedColors <-  labels2colors(bwnet$colors)
+# Plot the dendrogram and the module colors underneath
+plotDendroAndColors(bwnet$dendrograms[[1]], mergedColors[bwnet$blockGenes[[1]]],
+"Module colors",
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05)
+```

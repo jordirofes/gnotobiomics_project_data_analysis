@@ -1,0 +1,79 @@
+---
+title: "DNA Methylation Unsupervised"
+author: "Jordi Rofes Herrera"
+date: "2023-11-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Packages
+
+```{r}
+library(DescTools)
+source("../../Utility Functions/utilities.R")
+```
+
+
+## Unsupervised Analysis Contrast Results
+
+```{r}
+dna_met_exp <- readRDS("../DNA_met/LIMA_model/dna_met_exp_unsupervised_regions.rds")
+
+dna_met_exp <- dna_met_exp[rowMeans(as.matrix(assay(dna_met_exp)), na.rm = TRUE) != 0, ]
+dna_met_exp <- dna_met_exp[rowCounts(as.matrix(assay(dna_met_exp)), na.rm = TRUE, value = 0)/ncol(dna_met_exp) < 0.8, ]
+
+row_ids <- lapply(levels(dna_met_exp$group), function(group_id){
+    rownames(dna_met_exp)[rowCounts(as.matrix(assay(dna_met_exp)), cols = dna_met_exp$group == group_id, value = NaN)/sum(dna_met_exp$group == group_id) < 0.2]
+})
+row_ids <- Reduce(union, row_ids)
+
+dna_met_exp <- dna_met_exp[row_ids,]
+```
+
+
+```{r}
+dna_met_exp_mv <- transformToMvalues(omic_dt = dna_met_exp)
+dna_met_dt <- assay(dna_met_exp_mv)
+dna_met_dt_meta <- colData(dna_met_exp)
+
+names_comp <- apply(t(combn(levels(dna_met_dt_meta$group), m = 2))[,2:1], 1, paste, collapse = "-")
+comp_mat <- as.data.frame(matrix(NA, ncol = 2, nrow = length(names_comp)))
+rownames(comp_mat) <- names_comp
+colnames(comp_mat) <- c("mean rank diff", "p.value")
+
+
+#pca(mat = dna_met_dt, metadata = dna_met_dt_meta, scale = FALSE)
+var_results <- lapply(as.data.frame(t(dna_met_dt)), function(dt_var){
+    kruskal_res <- kruskal.test(x = dt_var, dna_met_dt_meta$group)
+    if(!is.nan(kruskal_res$p.value) && kruskal_res$p.value <= 0.05){
+        return(DescTools::ConoverTest(x = dt_var, dna_met_dt_meta$group, method = "none")[[1]])
+    } else{
+        return(comp_mat)
+    }
+})
+
+comp_list <- lapply(names_comp, function(idv_comp){
+    results_list <- lapply(var_results, function(results_mat){
+        if(idv_comp %in% rownames(results_mat)){
+            return(results_mat[idv_comp,])} 
+        else{
+            return(rep(NA, 3))
+        }
+    })
+    results_list <- do.call(rbind, results_list)
+    results_list$adj.p.value <- p.adjust(results_list$p.value, method = "fdr")
+    results_list
+})
+names(comp_list) <- names_comp
+
+
+
+rowData(dna_met_exp) <- cbind(rowData(dna_met_exp), do.call(cbind, comp_list))
+
+rowData(dna_met_exp)
+saveRDS(dna_met_exp, "./LIMA_model/dna_met_exp_unsupervised_regions_proc.rds")
+
+```

@@ -1,0 +1,535 @@
+---
+title: "Targeted Metabolomics Processing"
+output: html_document
+date: "2023-02-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Neccessary packages
+
+```{r}
+library(openxlsx)
+library(pmp)
+library(mixOmics)
+library(DESeq2)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(sva)
+source("../../Utility Functions/utilities.R")
+```
+
+## Loading the data
+
+```{r}
+dir_list <- list.dirs(recursive = FALSE)
+
+raw_file_list <- lapply(dir_list, function(dir_path){
+    file_vec <- list.files(dir_path, pattern = "oct2021.xlsx", recursive = TRUE, full.names = TRUE)
+    file_vec[!grepl(file_vec, pattern = "~\\$")]
+})
+keep_dir <- !sapply(raw_file_list, length) == 0
+raw_file_list <- raw_file_list[keep_dir]
+names(raw_file_list) <- basename(dir_list[keep_dir])
+raw_file_list
+
+raw_file_list <- lapply(raw_file_list, function(file_path){
+    sheet_names <- getSheetNames(file_path)
+    
+    met_data <- grep(pattern = "met$", x = sheet_names)
+    mg_data <- grep(pattern = "mg", x = sheet_names)
+    inj_order <- grep(pattern = "^inj_ord", x = sheet_names)
+    
+    sheet_name_list <- list("Metabolite_Data" = met_data, "Metabolite_Metadata" = inj_order, "Tissue_mg" = mg_data)
+    
+    sheet_data_list <- lapply(sheet_name_list, function(sheet_name){
+        if(!length(sheet_name)){return(NULL)}
+        read.xlsx(xlsxFile = file_path, sheet = sheet_name)
+    })
+    
+    if(!is.null(sheet_data_list$Tissue_mg)){
+        metadata_col <- sapply(sheet_data_list$Tissue_mg, function(coln){any(coln %in% sheet_data_list$Metabolite_Metadata$samplename)})
+        colnames(sheet_data_list$Tissue_mg)[metadata_col][1] <- "samplename"
+        
+        if(grepl(pattern = "liver", file_path)){
+            sheet_data_list$Tissue_mg$samplename <- sapply(sheet_data_list$Tissue_mg$samplename, function(sample_name){
+                if(grepl("QC", sample_name)){
+                    return(sample_name)
+                } else if(grepl(pattern = "GF|CV", sample_name)){
+                    splitted_name <- strsplit(sample_name, split = "_")[[1]]
+                    sex_id <- strsplit(splitted_name[3], "")[[1]]
+                    group <- strsplit(splitted_name[2], "")[[1]]
+                    batch <- ifelse(splitted_name[4] == "a", 1, 2)
+                    return(paste(c(group[1], sex_id, batch), collapse = ""))
+                } else if(grepl("Blank", sample_name)){
+                    return(NA)
+                } else if(grepl("ex$", sample_name)){
+                    splitted_name <- strsplit(sample_name, split = "_")[[1]]
+                    return(paste(c(splitted_name[2], "E"), collapse = ""))
+                } else{
+                    splitted_name <- strsplit(sample_name, split = "_")[[1]]
+                    return(paste(c(splitted_name[2], strsplit(splitted_name[3], split = "")[[1]][1]), collapse = ""))
+                }
+            }) 
+        }
+        sheet_data_list$Metabolite_Metadata <- left_join(sheet_data_list$Metabolite_Metadata, sheet_data_list$Tissue_mg, by = "samplename")    
+    }    
+    
+    if(grepl(pattern = "liver", file_path)){
+        sheet_data_list$scfa_data <- read.xlsx(file_path, grep("SCFA", sheet_names))
+        
+        dna_data <- read.xlsx(file_path, grep("dna", sheet_names, ignore.case = TRUE))
+        metadata_col <- sapply(dna_data, function(coln){any(coln %in% sheet_data_list$Metabolite_Metadata$samplename)})
+        colnames(dna_data)[metadata_col][1] <- "samplename"
+        sheet_data_list$Metabolite_Metadata <- left_join(sheet_data_list$Metabolite_Metadata, dna_data, by = "samplename")
+    }
+    sheet_data_list
+})
+
+
+raw_file_list <- lapply(raw_file_list, function(organ_data){
+    col_names <- grepl("samplename", colnames(organ_data$Metabolite_Data))
+    sample_names <- organ_data$Metabolite_Data[,col_names]
+    met_data <- organ_data$Metabolite_Data[,!col_names, drop = FALSE]
+    
+    met_data <- as.data.frame(lapply(met_data, as.numeric))
+    
+    met_data <- as.data.frame(t(met_data))
+    colnames(met_data) <- sample_names
+    
+    met_metadata <- organ_data$Metabolite_Metadata
+    met_metadata$inj_ord <- seq_along(met_metadata$inj_ord)
+    
+    processed_ids <- lapply(met_metadata$samplename, function(sample_id){
+        if(grepl(pattern = "QC", sample_id)){
+            return(c("QC", NA, strsplit(sample_id, split = "_")[[1]][[2]], NA))
+        } else if(grepl(pattern = "^GF|^CF|^GM|^CM", sample_id)){
+            return(strsplit(sample_id, split = "")[[1]])
+        } else{
+            splitted_name <- strsplit(sample_id, split = "")[[1]]
+            if(splitted_name[4] == "C"){splitted_name[4] <- "CT"}
+            return(c(splitted_name[4], "M", paste(splitted_name[1:3], collapse = ""), 3))
+        }
+    })
+    processed_ids <- as.data.frame(do.call(rbind, processed_ids))
+    names(processed_ids) <- c("group","sex", "id", "batch")
+    
+    met_metadata <- cbind(met_metadata, processed_ids)
+    met_metadata <- met_metadata[match(colnames(met_data), met_metadata$samplename),]
+    
+    remove_samples <- met_metadata$group == "QC" &  c(diff(met_metadata$inj_ord), Inf) == 1
+    met_metadata$inj_ord <- met_metadata$inj_ord - sum(remove_samples)
+    
+    organ_data$Metabolite_Metadata <- subset(met_metadata, !remove_samples)
+    organ_data$Metabolite_Data <- met_data[,colnames(met_data) %in% organ_data$Metabolite_Metadata$samplename]
+    
+    organ_data
+    #SummarizedExperiment(assays = organ_data$Metabolite_Data, colData = organ_data$Metabolite_Metadata)
+})
+```
+
+```{r}
+# Correcting samples 24 and 18
+change_cols <- colnames(raw_file_list$colon$Metabolite_Data) %in% c("CF51", "CM51")
+
+colnames(raw_file_list$colon$Metabolite_Data)[change_cols] <- colnames(raw_file_list$colon$Metabolite_Data)[change_cols][2:1]
+
+change_rows <- raw_file_list$colon$Metabolite_Metadata$samplename %in% c("CF51", "CM51")
+raw_file_list$colon$Metabolite_Metadata[change_rows,] <- raw_file_list$colon$Metabolite_Metadata[change_rows,][2:1,]
+```
+
+### Explorative PCA
+
+```{r}
+pca_dt_list <- lapply(raw_file_list, function(organ_data){
+    met_data <- organ_data$Metabolite_Data
+    met_data <- limma::normalizeMedianValues(met_data)
+    met_data <- impute::impute.knn(t(met_data))$data
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = organ_data$Metabolite_Metadata, design = ~ group)
+    
+    dt_pca <- estimateSizeFactors(dt_pca)
+    dt_pca <- estimateDispersions(dt_pca)
+    dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
+    prcomp(t(dt_pca))
+})
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = group_dt$Metabolite_Metadata$samplename))
+}, pca_dt = pca_dt_list, group_dt = raw_file_list)
+```
+
+
+### Batch Correction
+
+```{r}
+batch_corrected_file_list <- lapply(raw_file_list, function(organ_data){
+    
+    qc_samples <- organ_data$Metabolite_Metadata$group == "QC"
+    
+    correct_vars <- apply(organ_data$Metabolite_Data[,qc_samples], 1, function(x){sd(x, na.rm = TRUE)/mean(x, na.rm = TRUE)}) > 0.1
+    
+    organ_data$Metabolite_Data[correct_vars,] <- QCRSC(organ_data$Metabolite_Data[correct_vars,], 
+            order = organ_data$Metabolite_Metadata$inj_ord, 
+            batch = rep(1, length(organ_data$Metabolite_Metadata$inj_ord)), 
+            classes = organ_data$Metabolite_Metadata$group, qc_label = "QC")
+    # organ_data$Metabolite_Data <- limma::normalizeMedianValues(organ_data$Metabolite_Data)
+
+    # organ_data$Metabolite_Data <- QCRSC(organ_data$Metabolite_Data, 
+    #         order = organ_data$Metabolite_Metadata$inj_ord, 
+    #         batch = rep(1, length(organ_data$Metabolite_Metadata$inj_ord)), 
+    #         classes = organ_data$Metabolite_Metadata$group, qc_label = "QC")
+    organ_data
+})
+```
+
+#### Corrected PCA
+
+```{r}
+pca_dt_list <- lapply(batch_corrected_file_list, function(organ_data){
+    met_data <- organ_data$Metabolite_Data
+    met_data <- impute::impute.knn(t(met_data))$data
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = organ_data$Metabolite_Metadata, design = ~ group)
+    
+    dt_pca <- estimateSizeFactors(dt_pca)
+    dt_pca <- estimateDispersions(dt_pca)
+    dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
+    prcomp(t(dt_pca))
+})
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = group_dt$Metabolite_Metadata$group))
+}, pca_dt = pca_dt_list, group_dt = raw_file_list)
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = paste(group_dt$Metabolite_Metadata$group, group_dt$Metabolite_Metadata$sex)))
+}, pca_dt = pca_dt_list, group_dt = raw_file_list)
+```
+
+### Remove QCs
+
+```{r}
+noqc_file_list <- lapply(batch_corrected_file_list, function(organ_dt){
+    organ_dt$Metabolite_Data <- organ_dt$Metabolite_Data[, organ_dt$Metabolite_Metadata$group != "QC"]
+    organ_dt$Metabolite_Metadata <- subset(organ_dt$Metabolite_Metadata, group != "QC")
+    organ_dt
+})
+```
+
+```{r}
+pca_dt_list <- lapply(noqc_file_list, function(organ_data){
+    met_data <- organ_data$Metabolite_Data
+    met_data <- impute::impute.knn(t(met_data))$data
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = organ_data$Metabolite_Metadata, design = ~ group)
+    
+    dt_pca <- estimateSizeFactors(dt_pca)
+    dt_pca <- estimateDispersions(dt_pca)
+    dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
+    prcomp(t(dt_pca))
+})
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = group_dt$Metabolite_Metadata$mg))
+}, pca_dt = pca_dt_list, group_dt = noqc_file_list)
+```
+
+### mg tissue index correction
+
+```{r}
+tissue_noqc_file_list <- lapply(noqc_file_list, function(organ_dt){
+    if(is.null(organ_dt$Tissue_mg)){return(organ_dt)}
+    sample_index <- organ_dt$Metabolite_Metadata$mg/mean(organ_dt$Metabolite_Metadata$mg)
+    organ_dt$Metabolite_Data <- as.data.frame(t(t(organ_dt$Metabolite_Data)/sample_index))
+    organ_dt
+})
+```
+
+```{r}
+pca_dt_list <- lapply(tissue_noqc_file_list, function(organ_data){
+    met_data <- organ_data$Metabolite_Data
+    met_data <- impute::impute.knn(t(met_data))$data
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = organ_data$Metabolite_Metadata, design = ~ group)
+    
+    dt_pca <- estimateSizeFactors(dt_pca)
+    dt_pca <- estimateDispersions(dt_pca)
+    dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
+    prcomp(t(dt_pca))
+})
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = group_dt$Metabolite_Metadata$group))
+}, pca_dt = pca_dt_list, group_dt = tissue_noqc_file_list)
+```
+
+
+## Summarizing the data
+
+```{r}
+summarized_data <- lapply(names(tissue_noqc_file_list), function(organ_name){
+    organ_data <- tissue_noqc_file_list[[organ_name]]
+    # rownames(organ_data$Metabolite_Data) <- paste0(organ_name, "_", rownames(organ_data$Metabolite_Data))
+    organ_data$Metabolite_Metadata$group <- as.factor(organ_data$Metabolite_Metadata$group)
+    
+    SummarizedExperiment(assays = organ_data$Metabolite_Data, colData = organ_data$Metabolite_Metadata)
+})
+names(summarized_data) <- names(tissue_noqc_file_list)
+
+rownames(tissue_noqc_file_list$liver$scfa_data) <- tissue_noqc_file_list$liver$scfa_data$samplename
+tissue_noqc_file_list$liver$scfa_data$samplename <- NULL
+tissue_noqc_file_list$liver$scfa_data <- as.data.frame(t(tissue_noqc_file_list$liver$scfa_data))
+tissue_noqc_file_list$liver$scfa_data
+
+rownames(tissue_noqc_file_list$liver$scfa_data) <- paste0("liver_scfa_", rownames(tissue_noqc_file_list$liver$scfa_data))
+
+summarized_data$liver_scfa <- SummarizedExperiment(assays = tissue_noqc_file_list$liver$scfa_data, 
+                                                   colData = tissue_noqc_file_list$liver$Metabolite_Metadata[match(colnames(tissue_noqc_file_list$liver$scfa_data),
+                                                                                                                   tissue_noqc_file_list$liver$Metabolite_Metadata$samplename),])
+```
+
+### GF/CV data subset
+
+```{r}
+gf_cv_data_list <- lapply(summarized_data, function(organ_dt){
+    organ_dt <- organ_dt[,colData(organ_dt)$group %in% c("C", "G")]
+    organ_dt$sex <- factor(organ_dt$sex, levels = c("M", "F"))
+    organ_dt$gfcv <- factor(organ_dt$group, levels = c("C", "G"))
+    organ_dt$group <- factor(paste0(ifelse(organ_dt$gfcv == "G", "GF", "CV"), organ_dt$sex), 
+                            levels = c("GFF", "GFM", "CVF", "CVM"))
+    organ_dt
+})
+```
+
+```{r}
+pca_dt_list <- lapply(gf_cv_data_list, function(organ_data){
+    met_data <- assay(organ_data)
+    met_data <- impute::impute.knn(t(met_data))$data
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = colData(organ_data), design = ~ group)
+    
+    dt_pca <- estimateSizeFactors(dt_pca)
+    dt_pca <- estimateDispersions(dt_pca)
+    dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
+    prcomp(t(dt_pca))
+})
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = colData(group_dt)$batch))
+}, pca_dt = pca_dt_list, group_dt = gf_cv_data_list)
+```
+
+#### GF/CV Batch Correction
+
+```{r}
+pca_dt_list <- lapply(gf_cv_data_list, function(organ_data){
+    met_data <- assay(organ_data)
+    met_data <- impute::impute.knn(t(met_data))$data
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = colData(organ_data), design = ~ group)
+    
+    dt_pca <- estimateSizeFactors(dt_pca)
+    dt_pca <- estimateDispersions(dt_pca)
+    dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
+    dt_pca <- ComBat(dat = dt_pca, batch = colData(organ_data)$batch)
+    
+    prcomp(t(dt_pca))
+})
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = colData(group_dt)$group))
+}, pca_dt = pca_dt_list, group_dt = gf_cv_data_list)
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = paste0(colData(group_dt)$group, colData(group_dt)$sex)))
+}, pca_dt = pca_dt_list, group_dt = gf_cv_data_list)
+
+mapply(function(pca_dt, group_dt){
+        print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = colData(group_dt)$samplename))
+}, pca_dt = pca_dt_list, group_dt = gf_cv_data_list)
+```
+
+
+#### Outlier Elimination
+
+```{r}
+gf_cv_data_list$colon <- gf_cv_data_list$colon[,!gf_cv_data_list$colon$samplename %in% c("GF11", "CF11")]
+```
+
+#### Anova Results
+
+```{r}
+tukey_results <- lapply(gf_cv_data_list, function(organ_data){
+    apply(assay(organ_data), 1, function(dt_var){
+        anova_results <- aov(dt_var ~ batch + sex + gfcv + sex:gfcv, data = colData(organ_data))
+        anova_results2 <- aov(dt_var ~ batch + sex + gfcv, data = colData(organ_data))
+        list("Interaction Term" = as.data.frame(summary(anova_results)[[1]]["sex:gfcv",]),
+             "GF_CV_Full" = as.data.frame(summary(anova_results2)[[1]]["gfcv",]),
+            "Pairwise-Tests" = TukeyHSD(anova_results, which = c("sex:gfcv")))
+    })    
+}) 
+
+
+interaction_results <- lapply(tukey_results, function(tukey_ind){
+    do.call(rbind, lapply(tukey_ind, function(x){x[[1]]}))
+})
+interaction_results <- lapply(interaction_results, function(int_res){
+    names(int_res)[names(int_res) == "Pr(>F)"] <- "pvalue"
+    int_res$adj.p.value <- p.adjust(int_res$pvalue, method = "fdr")
+    int_res <- cbind(NA, NA, "Targeted", NA, NA, int_res[,5:6])
+    names(int_res) <- c("mzmed", "rtmed", "PutativeMetabolites", "formula", "soi", "p.value", "adj.p.value")
+    int_res
+})
+
+gf_cv_results <- lapply(tukey_results, function(tukey_ind){
+    do.call(rbind, lapply(tukey_ind, function(x){x[[2]]}))
+})
+gf_cv_results <- lapply(gf_cv_results, function(int_res){
+    names(int_res)[names(int_res) == "Pr(>F)"] <- "pvalue"
+    int_res$adj.p.value <- p.adjust(int_res$pvalue, method = "fdr")
+    int_res <- cbind(NA, NA, "Targeted", NA, NA, int_res[,5:6])
+    names(int_res) <- c("mzmed", "rtmed", "PutativeMetabolites", "formula", "soi", "p.value", "adj.p.value")
+    int_res
+})
+
+contrasts_results <- lapply(tukey_results, function(tukey_res){
+    lapply(tukey_res, function(x){x[[3]]})
+})
+
+contrasts_results <- lapply(contrasts_results, function(contrast_res){
+    lapply(seq_len(nrow(contrast_res[[1]][[1]])), function(ctrs_row){
+        ctrs_result_list <- lapply(contrast_res, function(ctrs){
+            if(nrow(ctrs[[1]]) == 0){return(rep(NA, 4))}
+            ctrs[[1]][ctrs_row,]   
+        })
+        do.call(rbind, ctrs_result_list)
+    })
+})
+contrasts_results <- lapply(contrasts_results, function(contrast_res){
+    names(contrast_res) <- c("CVF_CVM", "GFM_CVM", "GFF_CVM", "GFM_CVF", "GFF_CVF", "GFF_GFM")
+    contrast_res
+})
+contrasts_results <- lapply(contrasts_results, function(contrast_res){
+    contrast_res <- lapply(contrast_res, function(ctrs){
+        ctrs <- as.data.frame(ctrs)
+        colnames(ctrs) <- c("difference", "lower", "upper", "pvalue")
+        ctrs$adj.p.value <- p.adjust(ctrs[,"pvalue"], method = "fdr")
+        ctrs <- cbind(NA, NA, "Targeted", NA, NA, ctrs[,4:5])
+        colnames(ctrs) <- c("mzmed", "rtmed", "PutativeMetabolites", "formula", "soi", "p.value", "adj.p.value")
+        ctrs
+    })
+    contrast_res
+})
+
+merged_results <- lapply(names(interaction_results), function(ctrs_name){
+    c(list("GFCV_sex_Interaction" = interaction_results[[ctrs_name]]), 
+      list("GF_CV" = gf_cv_results[[ctrs_name]]), 
+      contrasts_results[[ctrs_name]]) 
+})
+names(merged_results) <- names(interaction_results)
+```
+
+#### Saving results
+
+```{r}
+saveRDS(merged_results, "./targeted_metabolomics_results.rds")
+saveRDS(gf_cv_data_list, "./targeted_metabolomics_data.rds")
+```
+
+### LIMA subset
+
+```{r}
+lima_data_list <- lapply(summarized_data, function(organ_dt){
+    organ_dt <- organ_dt[,!colData(organ_dt)$group %in% c("C", "G")]
+    organ_dt$group <- factor(organ_dt$group, levels = c("CT", "H", "I", "E"),
+                             labels = c("CNT", "HFD", "INT", "HFE"))
+    organ_dt
+})
+```
+
+#### Explorative PCA
+
+```{r}
+pca_dt_list <- lapply(lima_data_list, function(organ_data){
+    met_data <- assay(organ_data)
+    if(ncol(met_data) == 0){return(NULL)}
+    met_data <- impute::impute.knn(t(met_data))$data
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = colData(organ_data), design = ~ group)
+    
+    dt_pca <- estimateSizeFactors(dt_pca)
+    dt_pca <- estimateDispersions(dt_pca)
+    dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
+    prcomp(t(dt_pca))
+})
+
+mapply(function(pca_dt, group_dt){
+    if(is.null(pca_dt)){return(NULL)}
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = colData(group_dt)$group, ellipse_var = colData(group_dt)$group))
+}, pca_dt = pca_dt_list, group_dt = lima_data_list)
+```
+
+#### Anova Results
+
+```{r}
+tukey_results <- lapply(lima_data_list, function(organ_data){
+    if(ncol(assay(organ_data)) == 0){return(NULL)}
+    apply(assay(organ_data), 1, function(dt_var){
+        anova_results <- aov(dt_var ~ 0 + group, data = colData(organ_data))
+        list("Pairwise-Tests" = TukeyHSD(anova_results, which = c("group")))
+    })    
+}) 
+
+contrasts_results <- lapply(tukey_results, function(tukey_res){
+    lapply(tukey_res, function(x){x[[1]]})
+})
+
+contrasts_results <- lapply(contrasts_results, function(contrast_res){
+    if(length(contrast_res) == 0){return(NULL)}
+    lapply(rownames(contrast_res[[1]][[1]]), function(ctrs_row){
+        ctrs_result_list <- lapply(contrast_res, function(ctrs){
+            if(!ctrs_row %in% rownames(ctrs[[1]])){return(rep(NA, 4))}
+            if(nrow(ctrs[[1]]) == 0){return(rep(NA, 4))}
+            ctrs[[1]][ctrs_row,]   
+        })
+        do.call(rbind, ctrs_result_list)
+    })
+})
+contrasts_results <- lapply(contrasts_results, function(contrast_res){
+    if(length(contrast_res) == 0 ){return(NULL)}
+    names(contrast_res) <- c("HFD-CNT", "INT-CNT", "HFE-CNT", "INT-HFD", "HFE-HFD", "HFE-INT")
+    contrast_res
+})
+contrasts_results <- lapply(contrasts_results, function(contrast_res){
+    if(length(contrast_res) == 0){return(NULL)}
+    contrast_res <- lapply(contrast_res, function(ctrs){
+        ctrs <- as.data.frame(ctrs)
+        colnames(ctrs) <- c("difference", "lower", "upper", "pvalue")
+        ctrs$adj.p.value <- p.adjust(ctrs[,"pvalue"], method = "fdr")
+        ctrs <- cbind(NA, NA, "Targeted", NA, NA, ctrs[,4:5])
+        colnames(ctrs) <- c("mzmed", "rtmed", "PutativeMetabolites", "formula", "soi", "p.value", "adj.p.value")
+        ctrs
+    })
+    contrast_res
+})
+
+merged_results <- lapply(names(contrasts_results$cecum), function(ctrs_name){
+    ctrs_list <- lapply(seq_along(contrasts_results), function(ctrs_id){
+        if(length(contrasts_results[[ctrs_id]]) == 0){return(NULL)}
+        contrasts_results[[ctrs_id]][[ctrs_name]]
+    })
+    do.call(rbind, ctrs_list)
+})
+names(merged_results) <- names(contrasts_results$cecum)
+```
+
+#### Saving Results
+
+```{r}
+saveRDS(lima_data_list, "./targeted_metabolomics_lima_data.rds")
+saveRDS(contrasts_results, "./targeted_metabolomics_lima_results.rds")
+```

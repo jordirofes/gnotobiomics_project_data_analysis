@@ -1,0 +1,347 @@
+---
+title: "Limma post XCMS/HERMES processing"
+author: "Jordi Rofes Herrera"
+date: "27/3/2022"
+output: html_document
+params:
+    metadata_file: "./Hilic_Positive/LC_MS_metadata.csv"
+    xcms_hermes_file: "./Hermes_Results/Hilic_Positive/summarized_hermes_xcms.rds"
+    hermes_file: "./Hermes_Results/Hilic_Positive/filteredSoiLists.rds"
+    qc_name: "HP_QC"
+    blank_name: "HP_Blank"
+    output_results: "./Hermes_Results/Hilic_Positive/"
+    data_type: "HP Positive"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## XCMS Post-procesing analysis
+
+```{r}
+# readRDS("./Hermes_Results/Hilic_Positive/summarized.rds")
+xcms_dt <- readRDS(params$xcms_hermes_file)
+```
+
+
+```{r}
+library(SummarizedExperiment)
+library(ggplot2)
+library(plotly)
+library(mixOmics)
+library(vsn)
+
+pca_plot <- function(pca_data, pc_x, pc_y, group_var, ellipse_var, allElipse =TRUE, interactive = TRUE, level = 0.95){
+    pc_var <- pca_data$sdev^2
+    pc_var_abs <- pc_var/sum(pc_var)*100
+    pc_plot <- ggplot() + geom_point(aes(x = pca_data$x[,pc_x], y = pca_data$x[,pc_y], colour = group_var)) + 
+        theme_classic() + xlab(paste0("PC", pc_x, " (", round(pc_var_abs[pc_x]), "%)")) +
+        ylab(paste0("PC", pc_y, " (",round(pc_var_abs[pc_y]), "%)")) +
+        theme(axis.line = element_line(colour = "black", size = 0.5,
+                                        linetype = "solid"),
+                                        legend.title = element_blank(),
+                                        plot.margin = unit(c(0.5,0.5,0.5,0.5),"cm"),
+            plot.title = element_text(hjust = 0.5),
+            axis.text.x = element_text(vjust = 0.5, hjust = 1)) + geom_hline(yintercept = 0) + 
+        geom_vline(xintercept = 0)
+    if(allElipse){
+        pc_plot <- pc_plot + stat_ellipse(aes(x = pca_data$x[,pc_x], y = pca_data$x[,pc_y]),
+                            colour = "grey7", type = "t", linetype = 1,
+                            level = level)
+    }
+        
+    
+    if(!missing(ellipse_var)){
+        pc_plot <- pc_plot + stat_ellipse(aes(x = pca_data$x[,pc_x], y = pca_data$x[,pc_y], color = ellipse_var),
+                            type = "t", linetype = 1,
+                            level = level)
+    }
+        
+    
+    if(interactive){
+        pc_plot <- ggplotly(pc_plot)
+    }
+    return(pc_plot)
+}
+var_plot <- function(pca_data){
+    pc_var <- pca_data$sdev^2
+    var_vec_1 <- cumsum(pc_var)/sum(pc_var)*100
+    variance_plot <- qplot(y = var_vec_1) + theme_minimal() + 
+        xlab("Number of components") + ylab("Cummulative variance (%)") + 
+        ggtitle("Scree Plot") + theme(plot.title = element_text(hjust = 0.5))
+    return(variance_plot)
+}
+```
+
+### Data loading
+
+```{r}
+#xcms_dt <- readRDS(paste0(params$output_dir, "/xcms_quant_matrix.rds"))
+gf_lima_meta <- read.csv(params$metadata_file)
+```
+
+#### PMP filter
+
+```{r}
+xcms_p <- pmp::filter_peaks_by_fraction(xcms_dt, min_frac = 0.8, classes = gf_lima_meta$groups_m, 
+                                        qc_label = params$qc_name, method = "across")
+xcms_p <- pmp::filter_peaks_by_fraction(xcms_p, min_frac = 0.3, classes = gf_lima_meta$groups_m, 
+                                        qc_label = params$qc_name, method = "QC")
+xcms_p <- pmp::filter_peaks_by_blank(xcms_p, fold_change = 1, classes = gf_lima_meta$groups_m, blank_label = params$blank_name, qc_label = params$qc_name, fraction_in_blank = 0, remove_samples = TRUE, remove_peaks = TRUE)
+
+xcms_p <- pmp::filter_peaks_by_rsd(xcms_p, max_rsd = 35, classes = gf_lima_meta$groups_m[gf_lima_meta$groups_m != params$blank_name], 
+                                   qc_label = params$qc_name, remove_peaks = TRUE)
+dt_pca <- pmp::mv_imputation(xcms_p, method = "knn", k = 10)
+
+pca_dt <- prcomp(t(assay(dt_pca)), center = TRUE, scale. = TRUE)
+pca_plot(pca_dt, 1, 2, group_var = gf_lima_meta$groups_m[gf_lima_meta$groups_m != params$blank_name],
+         level = 0.95, allElipse = FALSE)
+```
+
+#### QCRSC batch correction
+
+```{r}
+xcms_p_dc <- pmp::QCRSC(df = xcms_p, order = c(1:92), batch = rep(1, 92), spar = 0, 
+                        qc_label = params$qc_name, classes = gf_lima_meta$groups_m[gf_lima_meta$groups_m != params$blank_name])
+dt_pca <- pmp::mv_imputation(xcms_p_dc, method = "knn", k = 10)
+
+gf_lima_meta_nb <- gf_lima_meta[gf_lima_meta$groups_m != params$blank_name,]
+
+pca_dt <- prcomp(t(assay(dt_pca)), center = TRUE, scale. = TRUE)
+pca_plot(pca_dt, 1, 2, group_var = gf_lima_meta_nb$groups_m,
+         level = 0.95, allElipse = FALSE)
+```
+
+### GFCV model analysis
+
+#### Batch effect exploration
+
+```{r}
+library(sva)
+library(DESeq2)
+xcms_p_dc_filt <- xcms_p_dc[,(gf_lima_meta_nb$gfcv != "") & (gf_lima_meta_nb$groups_m != params$qc_name)]
+pca_gr_dt <- gf_lima_meta[(gf_lima_meta$groups_m != params$blank_name) & (gf_lima_meta$gfcv != "") & 
+                                                             (gf_lima_meta$groups_m != params$qc_name),]
+
+write.csv(pca_gr_dt, file = paste0(params$output_results, "filtered_metadata.csv"), row.names = FALSE)
+
+dt_pca <- assay(pmp::mv_imputation(xcms_p_dc_filt, method = "knn", k = 10))
+dt_pca <- DESeq2::DESeqDataSetFromMatrix(round(dt_pca), colData = pca_gr_dt, design = ~ batch + sex_m + gfcv)
+
+dt_pca <- estimateSizeFactors(dt_pca)
+dt_pca <- estimateDispersions(dt_pca)
+plotDispEsts(dt_pca)
+dt_pca <- varianceStabilizingTransformation(dt_pca, blind=FALSE)
+
+pca_dt <- prcomp(t(assay(dt_pca)), center = TRUE, scale. = TRUE)
+pca_plot(pca_dt, 1, 2, group_var = as.factor(pca_gr_dt$batch), level = 0.95, allElipse = FALSE)
+```
+
+#### Batch correction
+
+```{r}
+dt_pca <- assay(pmp::mv_imputation(xcms_p_dc_filt, method = "knn"))
+
+dt_pca <- DESeq2::DESeqDataSetFromMatrix(round(dt_pca), colData = pca_gr_dt, design = ~ batch + sex_m + gfcv)
+
+dt_pca <- estimateSizeFactors(dt_pca)
+dt_pca <- estimateDispersions(dt_pca)
+plotDispEsts(dt_pca)
+dt_pca <- varianceStabilizingTransformation(dt_pca, blind=FALSE)
+
+dt_pca <- ComBat(dat = assay(dt_pca), batch = pca_gr_dt$batch)
+
+pca_dt <- prcomp(t(dt_pca), center = TRUE, scale. = TRUE)
+
+pca_plot(pca_dt, 1, 2, group_var = pca_gr_dt$batch, level = 0.95, allElipse = FALSE, ellipse_var = pca_gr_dt$groups_m)
+pca_plot(pca_dt, 1, 2, group_var = pca_gr_dt$groups_m, ellipse_var = pca_gr_dt$groups_m, allElipse = FALSE)
+```
+
+```{r}
+pcvar <- round(pca_dt$sdev^2/sum(pca_dt$sdev^2)*100, 2)
+
+d3plot <- plot_ly(x = pca_dt$x[,1], y = pca_dt$x[,2], z = pca_dt$x[,3], color = pca_gr_dt$groups_m)
+d3plot <- d3plot %>% add_markers()
+d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
+                     yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
+                     zaxis = list(title = paste0('PC3', "(", pcvar[3], "%)"))))
+d3plot
+```
+
+```{r}
+pcvar <- round(pca_dt$sdev^2/sum(pca_dt$sdev^2)*100, 2)
+
+d3plot <- plot_ly(x = pca_dt$x[,1], y = pca_dt$x[,2], z = pca_dt$x[,4], color = pca_gr_dt$groups_m)
+d3plot <- d3plot %>% add_markers()
+d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
+                     yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
+                     zaxis = list(title = paste0('PC4', "(", pcvar[4], "%)"))))
+d3plot
+```
+
+#### Anova analisis
+
+```{r}
+library(limma)
+xcms_p_dc_filt$group <- factor(xcms_p_dc_filt$groups_m, 
+                                levels = c("CVM", "CVF", "GFM", "GFF"))
+xcms_p_dc_filt$sex <- factor(xcms_p_dc_filt$sex_m, levels = c("M", "F"))
+xcms_p_dc_filt$gfcv <- factor(xcms_p_dc_filt$gfcv, levels = c("C", "G"))
+
+tukey_results <- apply(assay(xcms_p_dc_filt), 1, function(dt_var){
+    anova_results <- aov(dt_var ~ batch + sex + gfcv + sex:gfcv, 
+                        data = colData(xcms_p_dc_filt))
+    anova_results_no_int <- aov(dt_var ~ batch + sex + gfcv, 
+                                data = colData(xcms_p_dc_filt))
+    
+    list("Interaction Term" = as.data.frame(summary(anova_results)[[1]][4,]),
+         "GF_CV_Full" = as.data.frame(summary(anova_results_no_int)[[1]][3,]),
+         "Pairwise-Tests" = TukeyHSD(anova_results, which = c("sex:gfcv")))
+})
+
+gf_cv_results <- do.call(rbind, lapply(tukey_results, function(x){x[[2]]}))
+names(gf_cv_results)[names(gf_cv_results) == "Pr(>F)"] <- "pvalue"
+gf_cv_results$adj.p.value <- p.adjust(gf_cv_results$pvalue, method = "fdr")
+
+
+interaction_results <- do.call(rbind, lapply(tukey_results, function(x){x[[1]]}))
+names(interaction_results)[names(interaction_results) == "Pr(>F)"] <- "pvalue"
+interaction_results$adj.p.value <- p.adjust(interaction_results$pvalue, method = "fdr")
+
+contrasts_results <- lapply(tukey_results, function(x){x[[3]]})
+contrasts_results <- lapply(seq_len(nrow(contrasts_results[[1]][[1]])), function(ctrs_row){
+    ctrs_result_list <- lapply(contrasts_results, function(ctrs){
+        if(nrow(ctrs[[1]]) == 0){return(rep(NA, 4))}
+        ctrs[[1]][ctrs_row,]   
+    })
+    do.call(rbind, ctrs_result_list)
+})
+names(contrasts_results) <- c("CVF_CVM", "GFM_CVM", "GFF_CVM", 
+                              "GFM_CVF", "GFF_CVF", "GFF_GFM")
+
+contrasts_results <- lapply(contrasts_results, function(ctrs){
+    ctrs <- as.data.frame(ctrs)
+    colnames(ctrs) <- c("difference", "lower", "upper", "pvalue")
+    ctrs$adj.p.value <- p.adjust(ctrs[,"pvalue"], method = "fdr")
+    ctrs
+})
+
+feature_data <- as.data.frame(rowData(xcms_p_dc_filt))
+
+hermes_dt <- readRDS(params$hermes_file)
+hermes_ions <- hermes_dt@metadata@ExpParam@ionF[[2]]
+
+feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
+    found_formulas <- hermes_ions$f[hermes_ions$ion %in% form]
+    found_mets <- hermes_dt@metadata@ExpParam@DB$Name[hermes_dt@metadata@ExpParam@DB$MolecularFormula %in% found_formulas]
+    if(length(found_mets) > 5){
+        found_mets <- found_mets[1:5]
+    }
+    return(paste(found_mets, collapse = "#"))
+}, USE.NAMES = FALSE)
+
+feature_data$soi <- sapply(feature_data$soi, function(x){paste(x, collapse = ",")})
+feature_data$formula <- sapply(feature_data$formula, function(x){paste(x, collapse = "/")})
+
+contrasts_results <-  c(list("GFCV_sex_Interaction" = interaction_results, 
+                            "GF_CV" = gf_cv_results), contrasts_results)
+
+data_table <- lapply(contrasts_results, function(ctrs){
+    cbind(feature_data[, c("mzmed","rtmed", "PutativeMetabolites")], 
+                    feature_data[,c("formula","soi")], "p.value" = ctrs$pvalue,"adj.p.value" = ctrs$adj.p.value)
+})
+
+saveRDS(list("Contrasts_Results" = data_table, 
+            "qcrsc_corrected_data" = xcms_p_dc_filt),
+        paste0(params$output_results, "contrasts_results_anova_list.rds"))
+```
+
+### LIMA model analysis
+
+```{r}
+xcms_p_dc_filt <- xcms_p_dc[,(gf_lima_meta_nb$gfcv == "") & (gf_lima_meta_nb$groups_m != params$qc_name)]
+pca_gr_dt <- gf_lima_meta[(gf_lima_meta$groups_m != params$blank_name) & (gf_lima_meta$gfcv == "") & 
+                                                             (gf_lima_meta$groups_m != params$qc_name),]
+
+meanSdPlot(x = assay(xcms_p_dc_filt), ranks = FALSE)
+dt_pca <- assay(pmp::mv_imputation(xcms_p_dc_filt, method = "knn", k = 10))
+dt_pca <- DESeq2::DESeqDataSetFromMatrix(round(dt_pca), colData = pca_gr_dt, design = ~ groups_m)
+
+dt_pca <- estimateSizeFactors(dt_pca)
+dt_pca <- estimateDispersions(dt_pca)
+plotDispEsts(dt_pca)
+dt_pca <- varianceStabilizingTransformation(dt_pca, blind=FALSE)
+
+meanSdPlot(x = assay(dt_pca), ranks = FALSE)
+
+pca_dt <- prcomp(t(assay(dt_pca)), center = TRUE, scale. = TRUE)
+pca_plot(pca_dt, 1, 2, group_var = as.factor(pca_gr_dt$groups_m), level = 0.95, allElipse = FALSE)
+```
+
+#### Anova analisis
+
+```{r}
+library(limma)
+lima_metadata <- gf_lima_meta_nb[!gf_lima_meta_nb$gfcv %in% c("G","C") & (gf_lima_meta_nb$groups_m != params$qc_name),]
+
+lima_metadata$group <- factor(lima_metadata$groups_m, levels = c("CNT", "HFD", "INT", "HFE"))
+lima_metadata
+
+comp_names <- apply(t(combn(levels(lima_metadata$group), m = 2))[,2:1], 1, paste, collapse = "-")
+comp_matrix <- matrix(NA, nrow = length(comp_names), ncol = 4)
+rownames(comp_matrix) <- comp_names
+
+tukey_results <- apply(assay(xcms_p_dc_filt), 1, function(dt_var){
+    anova_results <- aov(dt_var ~ 0 + group, data = lima_metadata) 
+    #plot(anova_results)
+    if(summary(anova_results)[[1]]["group", "Pr(>F)"] <= 0.1){
+        return(TukeyHSD(anova_results, which = c("group"))$group)
+    } else{
+        return(comp_matrix)
+    }
+    
+})
+
+contrasts_results <- lapply(comp_names, function(ctrs_row){
+    ctrs_result_list <- lapply(tukey_results, function(ctrs){
+        if(!(ctrs_row %in% rownames(ctrs))){return(rep(NA, 4))}
+        ctrs[ctrs_row,]   
+    })
+    do.call(rbind, ctrs_result_list)
+})
+names(contrasts_results) <- comp_names
+
+contrasts_results <- lapply(contrasts_results, function(ctrs){
+    ctrs <- as.data.frame(ctrs)
+    colnames(ctrs) <- c("difference", "lower", "upper", "pvalue")
+    ctrs$adj.p.value <- p.adjust(ctrs[,"pvalue"], method = "fdr")
+    ctrs
+})
+
+feature_data <- as.data.frame(rowData(xcms_p_dc_filt))
+
+hermes_dt <- readRDS(params$hermes_file)
+hermes_ions <- hermes_dt@metadata@ExpParam@ionF[[2]]
+
+feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
+    found_formulas <- hermes_ions$f[hermes_ions$ion %in% form]
+    found_mets <- hermes_dt@metadata@ExpParam@DB$Name[hermes_dt@metadata@ExpParam@DB$MolecularFormula %in% found_formulas]
+    if(length(found_mets) > 5){
+        found_mets <- found_mets[1:5]
+    }
+    return(paste(found_mets, collapse = "#"))
+}, USE.NAMES = FALSE)
+
+feature_data$soi <- sapply(feature_data$soi, function(x){paste(x, collapse = ",")})
+feature_data$formula <- sapply(feature_data$formula, function(x){paste(x, collapse = "/")})
+
+data_table <- lapply(contrasts_results, function(ctrs){
+    cbind(feature_data[, c("mzmed","rtmed", "PutativeMetabolites")], 
+                    feature_data[,c("formula","soi")], "p.value" = ctrs$pvalue,"adj.p.value" = ctrs$adj.p.value)
+})
+
+saveRDS(list("Contrasts_Results" = data_table, 
+            "qcrsc_corrected_data" = xcms_p_dc_filt),
+        paste0(params$output_results, "contrasts_results_anova_lima_list.rds"))
+```

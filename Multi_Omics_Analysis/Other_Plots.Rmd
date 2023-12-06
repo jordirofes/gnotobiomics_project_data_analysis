@@ -1,0 +1,336 @@
+---
+title: "Paper_Plots"
+output: html_document
+date: "2023-09-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(reshape2)
+library(ggplot2)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
+library(clusterProfiler)
+source("../../Utility Functions/utilities.R")
+
+expression_list <- list(
+    "HFD Altered" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05)
+    ),
+        "INT Restored Up" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `INT-CNT.adj.p.value` > 0.05 & `HFD-CNT.log2FC` > 0
+    ), 
+    "INT Restored Down" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `INT-CNT.adj.p.value` > 0.05 & `HFD-CNT.log2FC` < 0
+    ),
+    "INT Restored Over Up" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` > 0 &
+        `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` > 0
+    ),
+    "INT Restored Over Down" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` > 0 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` < 0 &
+        `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` < 0
+    ),
+    "INT Resistant Over Up" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` > 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` > 0)
+    ),
+    "INT Resistant Over Down" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` < 0)
+    ),
+    "INT Resistant Up" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` > 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 & 
+        `INT-HFD.adj.p.value` > 0.05) 
+    ),
+    "INT Resistant Down" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 &
+        `INT-HFD.adj.p.value` > 0.05)
+    ),
+    "INT Resistant Half Up" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` > 0 & 
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` < 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` > 0)
+    ),
+    "INT Resistant Half Down" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` > 0 &
+        `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` < 0)
+    )
+)
+
+hfe_expression_list <- list(
+    "HFE Unaffected" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` > 0.05 & `HFE-HFD.adj.p.value` <= 0.05
+    ),
+    "HFE Affected as HFD" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` <= 0.05 & `HFE-HFD.adj.p.value` > 0.05
+    ),
+    "HFE Affected diff HFD" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` <= 0.05 & `HFE-HFD.adj.p.value` <= 0.05 
+    ),
+    "HFE Other" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` > 0.05 & `HFE-HFD.adj.p.value` > 0.05
+    ))
+```
+
+```{r}
+multi_omic_dt <- readRDS("./Multivariate_Merged_Multi_Omics.rds")
+rna_seq_dt <- experiments(multi_omic_dt)[["RNASeq.liver"]]
+dt_list <- assay(rna_seq_dt)
+rowMetadata <- rowData(rna_seq_dt)
+metadata <- colData(rna_seq_dt)
+groupVar <- "group"
+
+mean_dt <- t(apply(dt_list, 1, function(var_dt){
+    tapply(var_dt, INDEX = metadata[[groupVar]], mean, na.rm = TRUE)
+}))
+
+row_var <- rep(NA, nrow(dt_list))
+names(row_var) <- rownames(dt_list)    
+
+for(ctrs_exprs_name in names(expression_list)){
+    row_var[which(eval(expression_list[[ctrs_exprs_name]], 
+                    envir = rowMetadata))] <- ctrs_exprs_name
+}
+
+hfd_int_var <- row_var
+
+plot_dt_raw <- as.data.frame(cbind(mean_dt, row_var, data.frame("ENSEMBLID" = rownames(mean_dt))))
+plot_dt_raw <- plot_dt_raw[!is.na(plot_dt_raw$row_var),]
+# plot_dt_raw$type <- ifelse(grepl("Restored", plot_dt_raw$row_var), "Restored", "Resistant")
+
+plot_dt <- melt(plot_dt_raw, id.vars = c("row_var", "ENSEMBLID"))
+
+plot_dt$row_var2 <- ifelse(grepl("Restored", plot_dt$row_var), "Restored", "Resistant")
+plot_dt <- subset(plot_dt, variable != "HFE")
+
+plot_dt_mean <- tapply(plot_dt$value, INDEX = paste0(plot_dt$row_var, "_", plot_dt$variable), FUN = function(x){
+    return(c("dt_mean" = mean(x, na.rm = TRUE), "dt_sd" = sd(x, na.rm = TRUE), 
+        "lowerQ" = unname(quantile(x, 0.05, na.rm = TRUE)),
+        "upperQ" = unname(quantile(x, 0.95, na.rm = TRUE)),
+        "n_val" = length(x)))
+})
+plot_dt_mean <- lapply(names(plot_dt_mean), function(x){
+    dt <- as.data.frame(plot_dt_mean[[x]])
+    colnames(dt) <- x
+    dt
+})
+plot_dt_mean <- as.data.frame(t(do.call(cbind, plot_dt_mean)))
+
+group_vars <- as.data.frame(t(do.call(cbind, strsplit(rownames(plot_dt_mean), split = "_"))))
+colnames(group_vars) <- c("row_var", "variable")
+
+plot_dt_mean <- cbind(plot_dt_mean, group_vars)
+plot_dt$facet_var <- ifelse(grepl(pattern = "Restored", plot_dt$row_var), "Restored", "Resistant")
+
+
+plot_dt_mean$facet_var <- ifelse(grepl(pattern = "Restored", plot_dt_mean$row_var), "Restored", "Resistant")
+
+    # geom_line(data = plot_dt_mean, aes(x = group, y = dt_mean,
+    #             group = type, colour = type))
+
+hfd_int_levels <- c("INT Restored Over Down", "INT Restored Down", 
+                    "INT Restored Over Up", "INT Restored Up", 
+                    "INT Resistant Over Down", "INT Resistant Down", "INT Resistant Half Down",
+                    "INT Resistant Half Up", "INT Resistant Up", "INT Resistant Over Up")
+
+plot_dt$row_var <- factor(plot_dt$row_var, levels = hfd_int_levels)
+plot_dt_mean$row_var <- factor(plot_dt_mean$row_var, levels = hfd_int_levels)
+
+
+pie_var <- table(plot_dt_raw$row_var)
+
+pie_dt <- data.frame("values" = as.numeric(unname(pie_var)), "group" = factor(names(pie_var), ordered = TRUE))
+pie_dt$group_2 <- ifelse(grepl(pattern = "Restored", pie_dt$group), "Restored", "Resistant")
+
+pie_dt$group <- factor(pie_dt$group, levels = hfd_int_levels)
+pie_dt$group_3 <- ifelse(grepl("Up", x = pie_dt$group), "Up", "Down")
+pie_dt$group_res_dir <- paste(pie_dt$group_2, pie_dt$group_3)
+
+color_list <- c("lightpink", "indianred1", "lightblue1", "lightskyblue", 
+                "palegreen", "palegreen3", "palegreen4", 
+                "plum2", "plum3", "plum4")
+
+
+pdf("Resistant_Restored_genes_barplot.pdf")
+ggplot(pie_dt, aes(x = group_2, y = values, fill = group, 
+                    label = values)) + 
+    geom_col(size = 0.005) +
+    scale_color_manual(values = c("blue3", "red3")) + 
+    geom_text(aes(colour = group_3), size = 4, position = position_stack(vjust = 0.5)) + 
+    theme_minimal() + ylab("Number of genes") + xlab(NULL) + 
+    theme(legend.title = element_blank()) + scale_fill_manual(values = color_list)
+dev.off()
+```
+
+```{r, fig.width=14}
+pdf("Resistant_Restored_genes_lineplots.pdf", width = 14)
+ggplot(plot_dt_mean) + 
+        geom_line(aes(x = variable, y = dt_mean, group = row_var, colour = row_var), alpha = 0.6) + 
+        geom_ribbon(aes(x = variable, ymin = lowerQ, group = row_var, ymax = upperQ, fill = row_var), alpha = 0.2) + 
+        facet_grid(cols = vars(facet_var)) + 
+        theme_minimal() + ylab("Mean Expression") + xlab("Experimental Group") + 
+        theme(legend.title = element_blank()) + scale_color_manual(values = color_list) +
+        scale_fill_manual(values = color_list)
+    
+ggplot(plot_dt) +
+    geom_line(aes(x = variable, y = value, group = ENSEMBLID, colour = row_var), alpha = 0.05) +
+    facet_grid(cols = vars(facet_var)) + theme_minimal() + 
+    ylab("Mean Expression") + xlab("Experimental Group") + 
+    theme(legend.title = element_blank()) + 
+    guides(colour = guide_legend(override.aes = list(alpha = 1))) + 
+    scale_color_manual(values = color_list)
+dev.off()
+
+
+```
+
+## HFE 
+
+```{r}
+row_var <- rep(NA, nrow(dt_list))
+names(row_var) <- rownames(dt_list)    
+
+for(ctrs_exprs_name in names(hfe_expression_list)){
+    row_var[which(eval(hfe_expression_list[[ctrs_exprs_name]], 
+                    envir = rowMetadata))] <- ctrs_exprs_name
+}
+
+hfe_var <- row_var
+
+plot_dt_raw <- as.data.frame(cbind(mean_dt, row_var, data.frame("ENSEMBLID" = rownames(mean_dt))))
+plot_dt_raw <- plot_dt_raw[!is.na(plot_dt_raw$row_var),]
+# plot_dt_raw$type <- ifelse(grepl("Restored", plot_dt_raw$row_var), "Restored", "Resistant")
+
+plot_dt <- melt(plot_dt_raw, id.vars = c("row_var", "ENSEMBLID"))
+
+# plot_dt$row_var2 <- ifelse(grepl("Restored", plot_dt$row_var), "Restored", "Resistant")
+plot_dt <- subset(plot_dt, variable != "INT")
+
+plot_dt_mean <- tapply(plot_dt$value, INDEX = paste0(plot_dt$row_var, "_", plot_dt$variable), FUN = function(x){
+    return(c("dt_mean" = mean(x, na.rm = TRUE), "dt_sd" = sd(x, na.rm = TRUE), 
+        "lowerQ" = unname(quantile(x, 0.05, na.rm = TRUE)),
+        "upperQ" = unname(quantile(x, 0.95, na.rm = TRUE)),
+        "n_val" = length(x)))
+})
+plot_dt_mean <- lapply(names(plot_dt_mean), function(x){
+    dt <- as.data.frame(plot_dt_mean[[x]])
+    colnames(dt) <- x
+    dt
+})
+plot_dt_mean <- as.data.frame(t(do.call(cbind, plot_dt_mean)))
+
+group_vars <- as.data.frame(t(do.call(cbind, strsplit(rownames(plot_dt_mean), split = "_"))))
+colnames(group_vars) <- c("row_var", "variable")
+
+plot_dt_mean <- cbind(plot_dt_mean, group_vars)
+# plot_dt$facet_var <- ifelse(grepl(pattern = "Restored", plot_dt$row_var), "Restored", "Resistant")
+
+
+# plot_dt_mean$facet_var <- ifelse(grepl(pattern = "Restored", plot_dt_mean$row_var), "Restored", "Resistant")
+
+    # geom_line(data = plot_dt_mean, aes(x = group, y = dt_mean,
+    #             group = type, colour = type))
+
+hfe_factor_levels <- c("HFE Unaffected", "HFE Affected as HFD", "HFE Affected diff HFD", "HFE Other")
+
+plot_dt$row_var <- factor(plot_dt$row_var, levels = hfe_factor_levels)
+plot_dt_mean$row_var <- factor(plot_dt_mean$row_var, levels = hfe_factor_levels)
+
+
+pie_var <- table(plot_dt_raw$row_var)
+
+pie_dt <- data.frame("values" = as.numeric(unname(pie_var)), "group" = factor(names(pie_var), ordered = TRUE))
+pie_dt$group_2 <- "HFE"
+
+pie_dt$group <- factor(pie_dt$group, levels = hfe_factor_levels)
+# pie_dt$group_3 <- ifelse(grepl("Up", x = pie_dt$group), "Up", "Down")
+pie_dt$group_res_dir <- paste(pie_dt$group_2, pie_dt$group_3)
+
+# color_list <- c("lightre", "goldenrod1", "orange")
+
+
+pdf("HFE_genes_barplot.pdf")
+ggplot(pie_dt, aes(x = group, y = values, fill = group, 
+                    label = values)) + 
+    geom_col(size = 0.005) +
+    geom_text(size = 4, position = position_stack(vjust = 0.5)) + 
+    theme_minimal() + ylab("Number of genes") + xlab(NULL) + 
+    theme(legend.title = element_blank()) + scale_fill_brewer(palette = "Pastel1")
+# + scale_fill_manual(values = color_list)
+dev.off()
+```
+
+```{r, fig.width=14}
+pdf("HFE_genes_lineplots.pdf", width = 16)
+ggplot(plot_dt_mean) + 
+        geom_line(aes(x = variable, y = dt_mean, group = row_var, colour = row_var), alpha = 0.6) + 
+        geom_ribbon(aes(x = variable, ymin = lowerQ, group = row_var, ymax = upperQ, fill = row_var), alpha = 0.2) + 
+        theme_minimal() + ylab("Mean Expression") + xlab("Experimental Group") + facet_grid(cols = vars(row_var)) + 
+        theme(legend.title = element_blank()) + scale_fill_brewer(palette = "Pastel1") +
+        scale_color_brewer(palette = "Pastel1") + theme_minimal()
+    
+ggplot(plot_dt) +
+    geom_line(aes(x = variable, y = value, group = ENSEMBLID, colour = row_var), alpha = 0.5) +
+    ylab("Mean Expression") + xlab("Experimental Group") + 
+    facet_grid(cols = vars(row_var)) + 
+    guides(colour = guide_legend(override.aes = list(alpha = 1))) +
+    scale_color_brewer(palette = "Pastel1") + theme_minimal() + theme(legend.title = element_blank())
+dev.off()
+
+
+```
+
+
+```{r, fig.height=4}
+ggplot(pie_dt, aes(x = group_2, y = values, fill = group, colour = group_3, label = values)) + geom_col(size = 0.05) + 
+        geom_text(size = 3, position = position_stack(vjust = 0.5)) + 
+        theme_minimal() + ylab("Number of genes") + xlab(NULL) + 
+        theme(legend.title = element_blank()) + scale_color_brewer(palette = "Pastel1") 
+
+ggplot(plot_dt_mean) + 
+        geom_line(aes(x = group, y = dt_mean, group = type, colour = type), alpha = 0.6) + 
+        geom_ribbon(aes(x = group, ymin = lowerQ, group = type, ymax = upperQ, fill = type), alpha = 0.1) + 
+        facet_grid(cols = vars(facet_var_mean)) + 
+        theme_minimal() + ylab("Mean Expression") + xlab("Experimental Group") + theme(legend.title = element_blank()) + 
+        geom_line(data = plot_dt, aes(x = variable, y = value, group = ENSEMBLID, colour = row_var))
+```
+
+```{r}
+VennDiagram::venn.diagram(x =
+list("Restored"  = names(hfd_int_var)[grepl("Restored", hfd_int_var)],
+"Resistant" = names(hfd_int_var)[grepl("Resistant", hfd_int_var)],
+"HFE Unaffected" = names(hfe_var)[grepl("HFE Unaffected", hfe_var)]), filename = "hfe_unaffected_venn"
+)
+VennDiagram::venn.diagram(x =
+list("Restored"  = names(hfd_int_var)[grepl("Restored", hfd_int_var)],
+"Resistant" = names(hfd_int_var)[grepl("Resistant", hfd_int_var)],
+"HFE Unaffected" = names(hfe_var)[grepl("HFE Unaffected", hfe_var)]), filename = "hfe_unaffected_venn.png"
+)
+VennDiagram::venn.diagram(x =
+list("Restored"  = names(hfd_int_var)[grepl("Restored", hfd_int_var)],
+"Resistant" = names(hfd_int_var)[grepl("Resistant", hfd_int_var)],
+"HFE Affected" = names(hfe_var)[grepl("HFE Affected", hfe_var)]), filename = "hfe_affected_venn.png",
+)
+intersect(names(hfd_int_var)[grepl("Resistant", hfd_int_var)], names(hfe_var)[grepl("HFE Unaffected", hfe_var)])
+
+```
+
+```{r}
+interesting_genes <- intersect(names(hfd_int_var)[grepl("Resistant", hfd_int_var)], names(hfe_var)[grepl("HFE Unaffected", hfe_var)])
+
+enrich_res <- multi_enrich(list("Interesting_Genes" = interesting_genes), universe = NULL, OrgDb = org.Mm.eg.db,
+keyType = "ENSEMBL", simplify = TRUE, enrichFun = "ora")
+
+```
+

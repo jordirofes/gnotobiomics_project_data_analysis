@@ -1,0 +1,125 @@
+---
+title: "DNAmet_feb2023"
+output: html_document
+date: "2023-01-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+
+DNAme <- readRDS("prom_meth.RDS.gz")
+
+dmr_DNAme <- DNAme[["dmr_matrix"]]
+CpG_DNAme <- DNAme[["methylation_matrix"]]
+
+#dmr_DNAme
+class(dmr_DNAme)
+
+dmr_DNAme <- dplyr::select(dmr_DNAme, -chr,
+                           -start, -end, -rid,
+                           -n_overlap_CpGs)
+
+cond_DNAme <- data.frame(samplename=colnames(dmr_DNAme))
+
+cond_DNAme$type_gfcv <- stri_sub(cond_DNAme$samplename, 1,2)
+cond_DNAme$gfcv <- stri_sub(cond_DNAme$samplename, 1,1)
+cond_DNAme$sex <- stri_sub(cond_DNAme$samplename, 2,2)
+cond_DNAme$batch <- stri_sub(cond_DNAme$samplename, 4,4)
+
+dmr_DNAme_t <- as.data.frame(t(dmr_DNAme))
+
+
+rownames(dmr_DNAme_t) <- cond_DNAme$samplename
+
+
+#CpG_DNAme
+class(CpG_DNAme)
+
+CpG_DNAme <- dplyr::select(CpG_DNAme, -chr,
+                           -start, -end, -rid,
+                           -n_overlap_CpGs)
+
+
+CpG_DNAme_t <- as.data.frame(t(CpG_DNAme))
+
+
+rownames(CpG_DNAme_t) <- cond_DNAme$samplename
+
+rownames(cond_DNAme) <- cond_DNAme$samplename
+```
+
+
+
+```{r}
+
+DMR_object <- readRDS("dmr_annotation.RDS.gz")
+
+all_dmrs <- as.data.frame(row.names = 1:21514,DMR_object[["all_dmrs"]])
+dim(all_dmrs)
+
+merged_dmrs <- as.data.frame(DMR_object[["dmrs_merged"]])
+dim(merged_dmrs)
+```
+
+###PCA merged_dmrs
+```{r}
+DNAme <- readRDS("prom_meth.RDS.gz")
+
+dmr_matrix <- DNAme[["dmr_matrix"]]
+
+#put ID to regions create metadata df
+dmr_matrix$feature_id <- rownames(dmr_matrix)
+
+merged_dmrs <- dplyr::rename(merged_dmrs, chr=seqnames)
+
+merged_dmrs$feature_id <- paste0(merged_dmrs$chr,":",
+                                 merged_dmrs$start,
+                                "_",merged_dmrs$end)
+
+dmr_matrix_id <- dplyr::inner_join(merged_dmrs,
+                                   dmr_matrix,
+                                   by=c("feature_id","chr","start","end"))
+
+dim(dmr_matrix_id)
+View(dmr_matrix_id)
+table(isUnique(dmr_matrix_id$feature_id))
+
+rownames(dmr_matrix_id) <- dmr_matrix_id$feature_id
+
+colnames(dmr_matrix_id[1:21])
+
+
+meta_dmr_id <- dmr_matrix_id[,1:21]
+
+dmr_matrix_id2 <- dmr_matrix_id[,22:61]
+
+# PCA dmr_matrix_id2
+
+dmr_matrix_id2_t <- as.data.frame(t(dmr_matrix_id2))
+
+dim(dmr_matrix_id2_t)
+
+p_dmr <-mixOmics::pca(dmr_matrix_id2_t, ncomp = 6, center = TRUE, scale = T,
+         max.iter = 500, tol = 1e-09, logratio = 'none',   ilr.offset = 0.001,
+         V = NULL, multilevel = NULL)
+
+plotIndiv(p_dmr, ind.names = T, group = cond_DNAme$type_gfcv, legend = T, title= "dmr methylation by type_gfcv .99",ellipse = T, ellipse.level = 0.99)
+
+plotIndiv(p_dmr, ind.names = T, group = cond_DNAme$gfcv, legend = T, title= "dmr methylation by gfcv .99",ellipse = T, ellipse.level = 0.99)
+
+plotIndiv(p_dmr, ind.names = T, group = cond_DNAme$sex, legend = T, title= "dmr methylation by sex .99",ellipse = T, ellipse.level = 0.99)
+
+plotIndiv(p_dmr, ind.names = T, group = cond_DNAme$batch, legend = T, title= "dmr methylation by batch .99",ellipse = T, ellipse.level = 0.99)
+
+```
+
+```{r}
+# write.csv(dmr_matrix_id, "DNAmet_DMR_data.csv")
+# write.csv(cond_DNAme, "DNAmet_metadata.csv")
+```
+

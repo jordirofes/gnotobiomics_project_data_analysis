@@ -1,0 +1,506 @@
+---
+title: "DMR Analysis"
+output: html_document
+date: "2023-10-17"
+params:
+  file_dir: "/home/rstudio/bioinf-d/lima_coverage/"
+  output_dir: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/"
+  threads: 1
+  file_metadata_path: "/home/rstudio/bioinf-d/lima_results_methylseq/lima_metadata.csv"
+  file_path_var: "file_path"
+  
+  genome_cpgs_name: "BSgenome.Mmusculus.UCSC.mm39"
+  pipeline: "Bismark_cov"
+  stranded: TRUE
+  zero_based: FALSE
+  collapse_strands: TRUE
+  
+  max_fraction_missing_in_group: 0.2
+  
+  group_var: "group"
+  cutoff: 0.05
+  bpSpan: 500
+  minInSpan: 11 
+  maxGapSmooth: 2000
+  maxGap: 200 
+  maxPerms: 10
+  
+  genome_id: "mm39"
+  annotation_genome: "TxDb.Mmusculus.UCSC.mm39.knownGene"
+  organism_db: "org.Mm.eg.db"
+  
+  optional_regions_bedgraph_path: "/home/rstudio/bioinf-d/ncode_regulatory_regions_Mus_musculus/mm39-cCREs_CFmm10.bed" 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, 
+                      message = FALSE)
+```
+
+```{r}
+library(methrix)
+library(annotatr)
+library(AnnotationHub)
+library(ChIPseeker)
+library(plotly)
+library(ggplot2)
+library(bsseq)
+library(dplyr)
+library(matrixStats)
+library(params$annotation_genome, character.only = TRUE)
+library(params$organism_db, character.only = TRUE)
+```
+
+
+## Loading the bedgraph files & the metadata
+
+```{r}
+bsseq_files <- list.files(params$file_dir, 
+            pattern = '*\\.cov\\.gz$|*\\.bedGraph\\.gz$', full.names = TRUE)
+
+# meta_data <- data.frame("file_path" = bsseq_files)
+# rownames(meta_data) <- sapply(strsplit(basename(bsseq_files), "_"), function(x){x[[1]]})
+# meta_data$Condition <- substr(x = rownames(meta_data), start = 5, stop = 5)
+
+# write.csv(meta_data, "../bioinf-d/lima_results_methylseq/lima_metadata.csv", row.names = TRUE)
+
+meta_data <- read.csv(params$file_metadata_path, header = TRUE, row.names = 1, stringsAsFactors = TRUE)
+meta_data <- meta_data[match(x = bsseq_files, meta_data[[params$file_path_var]]),]
+
+methrix_obj_path <- paste0(params$output_dir, "merged_methrix.rds")
+
+if(!file.exists(methrix_obj_path)){
+  genome_cpgs <- suppressWarnings(methrix::extract_CPGs(params$genome_cpgs_name))
+
+  merged_methrix <- methrix::read_bedgraphs(n_threads = params$threads,
+    files = bsseq_files,
+    ref_cpgs = genome_cpgs,
+    pipeline = params$pipeline, 
+    coldata = meta_data , 
+    zero_based = params$zero_based, 
+    stranded = params$stranded, 
+    collapse_strands = params$collapse_strands
+  )
+  methrix_report_dir <- paste0(params$output_dir, "methrix_report/")
+  
+  if(!dir.exists(methrix_report_dir)){dir.create(methrix_report_dir)}
+  
+  methrix_report(meth = merged_methrix, output_dir = methrix_report_dir)
+  
+  merged_methrix <- methrix::mask_methrix(m = merged_methrix, low_count = 5, 
+                                        high_quantile = 0.99, n_cores = 1)
+  merged_methrix <- methrix::remove_uncovered(merged_methrix)
+  colData(merged_methrix)$sample_name <- rownames(colData(merged_methrix))
+
+  saveRDS(merged_methrix, methrix_obj_path)
+          
+} else{
+  merged_methrix <- readRDS(methrix_obj_path)
+}
+```
+
+## PCA Plots {.tabset}
+
+### All regions
+
+```{r}
+top_cpgs_pca <- methrix::methrix_pca(m = merged_methrix, top_var = 10000)
+
+
+methrix::plot_pca(top_cpgs_pca, m = merged_methrix, col_anno = params$group_var, 
+                  show_labels = TRUE, pc_x = "PC1", pc_y = "PC2")
+
+fig <- plot_ly(x = top_cpgs_pca$PC_matrix[,1], 
+              y = top_cpgs_pca$PC_matrix[,2], 
+              z = top_cpgs_pca$PC_matrix[,3], 
+              color = colData(merged_methrix)[[params$group_var]])
+fig <- fig %>% add_markers()
+fig <- fig %>% layout(scene = list(xaxis = list(title = 'PC1'),
+                                   yaxis = list(title = 'PC2'),
+                                   zaxis = list(title = 'PC3')))
+fig
+```
+
+### Specific Regions {.tabset}
+
+```{r}
+full_regions <- grep(params$genome_id, builtin_annotations(), value = TRUE)
+any_region <- length(full_regions) != 0
+
+full_regions <- grep("5UTRs|introns|3UTRs|shores|enhancers|promoters|exons|intergenic", 
+                     full_regions, value = TRUE)
+```
+
+
+```{r, eval = any_region, results='asis'}
+for(region_id in full_regions){
+  region_annotations <- build_annotations(genome = params$genome_id, annotations = region_id)
+  
+  
+  cat("\n")
+  cat("\n")
+  cat("####", region_id, "\n")
+  cat("\n")
+  cat("\n")
+  region_cpgs <- methrix::methrix_pca(m = merged_methrix, 
+                                      ranges = region_annotations, 
+                                      top_var = 10000)
+  cat("\n")
+  cat("\n")
+  print(methrix::plot_pca(region_cpgs, m = merged_methrix, col_anno = params$group_var, 
+                    show_labels = TRUE, pc_x = "PC1", pc_y = "PC2"))
+  cat("\n")
+  cat("\n")
+}
+```
+
+## DMR Calling
+
+### DMRSeq
+
+```{r, eval = FALSE}
+dmrseq_path <- paste0(params$output_dir, "dmrseq_results.rds")
+
+if(!file.exists(dmrseq_path)){
+  bsseq_obj <- methrix::methrix2bsseq(merged_methrix)
+  
+  delayed_cov <- getCoverage(bsseq_obj, type="Cov") == 0
+  
+  # loci.idx <- which(DelayedMatrixStats::rowSums2(getCoverage(bsseq_obj, type="Cov")==0) < params$max_fraction_missing)
+  
+  loci.idx <- lapply(levels(bsseq_obj$Condition), function(cond_level){
+    which((DelayedMatrixStats::rowSums2(delayed_cov, cols = bsseq_obj[[params$group_var]] == cond_level)/sum(bsseq_obj[[params$group_var]] == cond_level)) < params$max_fraction_missing_in_group)
+  })
+  
+  loci.idx <- Reduce(intersect, loci.idx)
+  
+  bsseq_obj <- bsseq_obj[loci.idx,]
+  
+  ctrs_list <- combn(levels(merged_methrix[[params$group_var]]), 2)
+  
+  rm(merged_methrix)
+  rm(loci.idx)
+  rm(delayed_cov)
+  
+  local_res_ctrs <- list()
+  
+  set.seed(1234)
+  for(row_ids in seq_len(ncol(ctrs_list))){
+    ctrs_ids <- ctrs_list[,row_ids]
+    set.seed(1234)
+    local_res_ctrs[[paste0(ctrs_ids[2:1], collapse = "-")]] <- dmrseq::dmrseq(
+        bs = bsseq_obj[,bsseq_obj[[params$group_var]] %in% ctrs_ids], cutoff = params$cutoff, 
+        testCovariate = params$group_var, 
+        bpSpan = params$bpSpan, minInSpan = params$minInSpan, 
+        maxGapSmooth = params$maxGapSmooth, maxGap = params$maxGap, 
+        maxPerms = params$maxPerms, 
+        BPPARAM = BiocParallel::SerialParam())
+  }
+  saveRDS(local_res_ctrs, dmrseq_path)
+  merged_methrix <- readRDS(methrix_obj_path)  
+} else{
+  local_res_ctrs <- readRDS(dmrseq_path)  
+}
+
+library(GenomicRanges)
+library(IRanges)
+
+lapply(local_res_ctrs, function(x){
+  sum(x$qval <= 0.05)
+})
+```
+
+
+```{r, eval = FALSE}
+## Merge Option A - disjoint regions
+# Most Accuracy but includes duplicated and might cut DMR related to the same gene
+
+local_res_disjoin <- disjoin(Reduce(c, local_res_ctrs))
+
+for(ctrs_ranges_name in names(local_res_ctrs)){
+  ctrs_ranges <- local_res_ctrs[[ctrs_ranges_name]]
+  
+  colnames(mcols(ctrs_ranges)) <- paste(ctrs_ranges_name, colnames(mcols(ctrs_ranges)), sep = ".") 
+  
+  found_overlaps <- findOverlaps(query = ctrs_ranges, local_res_disjoin)
+  
+  # largest_distinct_overlaps <- lapply(unique(found_overlaps@from), function(unique_id){
+  #   matched_overlaps <- found_overlaps[found_overlaps@from == unique_id,]
+  #   matched_overlaps[which.max(lengths(local_res_disjoin)[matched_overlaps@to]),]
+  # })
+  # 
+  # # Optional - Keep the largest found overlap
+  
+  for(col_name in colnames(mcols(ctrs_ranges))){
+    if(grepl("index", col_name)){next}
+    mcols(local_res_disjoin)[[col_name]] <- NA  
+    mcols(local_res_disjoin)[found_overlaps@to,col_name] <- mcols(ctrs_ranges)[found_overlaps@from, col_name]
+  }
+  mcols(local_res_disjoin)[[paste(ctrs_ranges_name, "id", sep = ".")]] <- NA
+  mcols(local_res_disjoin)[found_overlaps@to, paste(ctrs_ranges_name, "id", sep = ".")] <- found_overlaps@from
+}
+
+qval_cols <- mcols(local_res_disjoin)[,grepl("qval", colnames(mcols(local_res_disjoin)))]
+
+any_sig <- apply(qval_cols, 1, function(x){
+  sum(x <= 0.1, na.rm = TRUE) >= 1
+})
+
+local_res_merged <- local_res_disjoin[any_sig,]
+local_res_merged
+
+local_res_merged_filt <- local_res_merged[lengths(local_res_merged) > quantile(lengths(local_res_merged), 0.1)]
+local_res_merged_filt
+```
+
+```{r, eval = FALSE}
+## Mean methylation quantification
+merged_reduced_res <- methrix::get_region_summary(m = merged_methrix, regions = local_res_merged_filt)
+
+methrix_colnames <- colnames(merged_methrix)
+mehtrix_colData <- colData(merged_methrix)
+rm(merged_methrix)
+
+local_res_merged_filt <- local_res_merged_filt[merged_reduced_res$rid]
+```
+
+```{r, eval = FALSE}
+## Annotation
+txdb <- base::get(params$annotation_genome)
+
+peakAnnoList <- lapply(list("All_DMRs" = local_res_merged_filt), annotatePeak, TxDb=txdb, 
+                        tssRegion=c(-3000, 3000), verbose=FALSE)
+
+ChIPseeker::plotAnnoBar(peakAnnoList)
+
+annotated_dt <- ChIPseeker::as.GRanges(peakAnnoList$All_DMRs)
+
+colnames(mcols(annotated_dt)) <- gsub("pval", "p.value", colnames(mcols(annotated_dt)))
+colnames(mcols(annotated_dt)) <- gsub("qval", "adj.p.value", colnames(mcols(annotated_dt)))
+
+# p_val_cols <- grepl("adj.p.value", colnames(mcols(annotated_dt)))
+# na_vals <- is.na(mcols(annotated_dt)[,p_val_cols])                                 
+
+loaded_org_db <- base::get(params$organism_db)
+
+mcols(annotated_dt)$geneSymbol <- mapIds(x = loaded_org_db, keys = mcols(annotated_dt)$geneId, 
+                              column = "SYMBOL", keytype = "ENTREZID")
+mcols(annotated_dt)$geneName <- mapIds(x = loaded_org_db, keys = mcols(annotated_dt)$geneId, 
+                              column = "GENENAME", keytype = "ENTREZID")
+mcols(annotated_dt)$n_overlap_CpGs <- merged_reduced_res$n_overlap_CpGs
+
+dna_met_exp <- SummarizedExperiment(
+  assays = as.data.frame(merged_reduced_res)[,colnames(merged_reduced_res) %in% methrix_colnames],
+  rowRanges = annotated_dt,
+  colData = mehtrix_colData)
+```
+
+
+```{r, eval = FALSE}
+annotati<on_regions <- apply(as.data.frame(rowData(dna_met_exp)[c("annotation", "geneName")]), 1, paste, collapse = " ")
+
+min_nas_unique_regions <- sapply(unique(annotation_regions), function(x){
+  matched_rd <- rowData(dna_met_exp)[annotation_regions == x,]
+  matched_rd_ids <- matched_rd[,grepl("\\.id$", colnames(matched_rd))]
+  rownames(matched_rd)[which.min(rowCounts(as.matrix(matched_rd_ids), value = NA))]
+})
+
+dna_met_exp <- dna_met_exp[min_nas_unique_regions,]
+
+table(rowRanges(dna_met_exp)$annotation)
+dna_met_exp
+
+p_val_cols <- grep("adj.p.value", colnames(rowData(dna_met_exp)), value = TRUE)
+for(id in p_val_cols){
+    rowData(dna_met_exp)[[id]][is.na(rowData(dna_met_exp)[[id]])] <- 1
+}
+
+# saveRDS(dna_met_exp, "D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/DNA_met/LIMA_model/dna_met_exp.rds")
+saveRDS(dna_met_exp, paste0(params$output_dir, "dna_met_exp.rds"))
+```
+
+## Optional Regions Methylation
+
+```{r}
+if(!is.null(params$optional_regions_bedgraph_path) & file.exists(params$optional_regions_bedgraph_path)){
+  optional_regions <- read.table(params$optional_regions_bedgraph_path)
+  colnames(optional_regions) <- c("seqnames", "start", "end")
+  optional_regions <- makeGRangesFromDataFrame(optional_regions, ignore.strand=TRUE, keep.extra.columns=TRUE)
+  
+  found_regions_mean_meth <- get_region_summary(m = merged_methrix, regions = optional_regions)
+  
+  sample_cols <- colnames(found_regions_mean_meth) %in% merged_methrix$sample_name
+  
+  found_regions <- optional_regions[found_regions_mean_meth$rid]
+  
+  mcols(found_regions) <- cbind(as.data.frame(found_regions_mean_meth)[,!sample_cols], mcols(found_regions))
+  
+  optional_regions_exp <- SummarizedExperiment(assays = as.data.frame(found_regions_mean_meth)[,sample_cols], 
+                                                colData = mehtrix_colData,
+                                                rowRanges = found_regions)
+  saveRDS(optional_regions_exp, paste0(params$output_dir, "dna_met_exp_unsupervised_regions.rds"))
+}
+```
+
+```{r}
+## Merge Option B - reduce
+# local_res_reduced <- reduce(Reduce(c, local_res_ctrs))
+# local_res_reduced
+# 
+# for(ctrs_ranges_name in names(local_res_ctrs)){
+#   ctrs_ranges <- local_res_ctrs[[ctrs_ranges_name]]
+#   
+#   colnames(mcols(ctrs_ranges)) <- paste(ctrs_ranges_name, colnames(mcols(ctrs_ranges)), sep = ".") 
+#   
+#   found_overlaps <- findOverlaps(query = ctrs_ranges, local_res_reduced)
+#   
+#   for(col_name in colnames(mcols(ctrs_ranges))){
+#     if(grepl("index", col_name)){next}
+#     mcols(local_res_reduced)[col_name] <- NA  
+#     mcols(local_res_reduced)[found_overlaps@to,col_name] <- mcols(ctrs_ranges)[found_overlaps@from, col_name]
+#   }
+# }
+# 
+# qval_cols <- mcols(local_res_reduced)[,grepl("qval", colnames(mcols(local_res_reduced)))]
+# any_sig <- apply(qval_cols, 1, function(x){
+#   sum(x <= 0.1, na.rm = TRUE) >= 1
+# })
+# local_res_merged_r <- local_res_reduced[any_sig,]
+# local_res_merged_r
+
+################# Comparing merge methodologies
+# trackViewer::plotGRanges(local_res_merged, local_res_merged_r, range = GRanges(seqnames = "chr1", 
+#                                             ranges = IRanges(start = 4877830, 
+#                                                              end = 4877913)))
+# 
+# merged_disjoint_res <- methrix::get_region_summary(m = merged_methrix, regions = local_res_merged)
+# 
+# merged_reduced_res <- methrix::get_region_summary(m = merged_methrix, regions = local_res_merged_r)
+# 
+# 
+# local_res_merged
+# local_res_merged_r
+
+
+# pca_disj <- methrix_pca(m = merged_methrix, ranges = local_res_merged)
+# plot_pca(pca_disj, m = merged_methrix, col_anno = "Condition")
+# pca_disj_f <- methrix_pca(m = merged_methrix, ranges = local_res_merged_filt)
+# plot_pca(pca_disj_f, m = merged_methrix, col_anno = "Condition", pc_x = "PC1", pc_y = "PC2")
+# 
+# pca_red <- methrix_pca(m = merged_methrix, ranges = local_res_merged_r)
+# plot_pca(pca_red, m = merged_methrix, col_anno = "Condition")
+##############
+```
+
+
+<!-- ### DMR Global Test (Then non-parametric pair-wise comparissons) -->
+
+<!-- ```{r} -->
+<!-- library(bsseq) -->
+<!-- # merged_methrix <- methrix::subset_methrix(merged_methrix, contigs = "chr11") -->
+<!-- merged_methrix$Condition <- factor(merged_methrix$Condition,  -->
+<!--                                     levels = c("C", "H", "I", "E"),  -->
+<!--                                     labels = c("CNT", "HFD", "INT", "HFE")) -->
+<!-- bsseq_obj <- methrix::methrix2bsseq(merged_methrix) -->
+
+<!-- delayed_cov <- getCoverage(bsseq_obj, type="Cov") == 0 -->
+
+<!-- # loci.idx2 <- which(DelayedMatrixStats::rowSums2(getCoverage(bsseq_obj, type="Cov")==0) == 0) -->
+
+<!-- loci.idx <- lapply(levels(bsseq_obj$Condition), function(cond_level){ -->
+<!--   which((DelayedMatrixStats::rowSums2(delayed_cov, cols = bsseq_obj$Condition == cond_level)/sum(bsseq_obj$Condition == cond_level)) < params$max_fraction_missing_in_group) -->
+<!-- }) -->
+<!-- loci.idx <- Reduce(intersect, loci.idx) -->
+
+<!-- bsseq_obj <- bsseq_obj[loci.idx,] -->
+
+<!-- ctrs_list <- combn(levels(merged_methrix$Condition), 2) -->
+<!-- rm(merged_methrix) -->
+<!-- rm(loci.idx) -->
+<!-- rm(delayed_cov) -->
+
+<!-- set.seed(1234) -->
+<!-- local_res_ctrs <- dmrseq::dmrseq( -->
+<!--       bs = bsseq_obj, cutoff = 0.05,  -->
+<!--       testCovariate = "Condition",  -->
+<!--       bpSpan = 500, minInSpan = 11,  -->
+<!--       maxGapSmooth = 2000, maxGap = 200,  -->
+<!--       maxPerms = 10,  -->
+<!--       BPPARAM = BiocParallel::SerialParam()) -->
+
+<!-- # saveRDS(local_res_ctrs, "../bioinf-d/lima_methylation_calling_results/Results/dmrseq_results_.rds") -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- test_chr1 <- bsseq_obj[seqnames(rowRanges(bsseq_obj)) == "chr1",] -->
+<!-- set.seed(1234) -->
+<!-- local_res_ctrs <- dmrseq::dmrseq( -->
+<!--       bs = test_chr1, cutoff = 0.5,  -->
+<!--       testCovariate = "Condition",  -->
+<!--       bpSpan = 500, minInSpan = 11,  -->
+<!--       maxGapSmooth = 2000, maxGap = 200,  -->
+<!--       maxPerms = 1,  -->
+<!--       BPPARAM = BiocParallel::SerialParam()) -->
+
+<!-- ``` -->
+<!-- # ```{r} -->
+<!-- # dmrseq::plotDMRs(BSseq = bsseq_obj[,bsseq_obj$Condition %in% c("H", "C")], regions = local_res_merged_r[!is.na(local_res_merged_r$`H-C.qval`) & local_res_merged_r$`H-C.qval` <= 0.05][5], testCovariate = "Condition") -->
+<!-- # ``` -->
+
+```{r}
+# global_res <- dmrseq::dmrseq(bs = bsseq_obj[,bsseq_obj$Condition %in% ctrs_list], 
+#                             cutoff = 0.05,
+#                             testCovariate = "Condition", block = TRUE,
+#                             BPPARAM = BiocParallel::MulticoreParam(workers = params$threads))
+#
+# local_res_005 <- dmrseq::dmrseq(bs = bsseq_obj[,bsseq_obj$Condition %in% ctrs_list], cutoff = 0.05, 
+#                             testCovariate = "Condition", 
+#                             bpSpan = 500, minInSpan = 11, 
+#                             maxGapSmooth = 2000, maxGap = 200, 
+#                             maxPerms = 10, 
+#                             BPPARAM = BiocParallel::MulticoreParam(workers = params$threads))
+# 
+# local_res_005_sm <- dmrseq::dmrseq(bs = bsseq_obj[,bsseq_obj$Condition %in% ctrs_list], cutoff = 0.05, 
+#                             testCovariate = "Condition", smooth = FALSE,
+#                             bpSpan = 500, minInSpan = 11, 
+#                             maxGapSmooth = 2000, maxGap = 200, 
+#                             maxPerms = 10, 
+#                             BPPARAM = BiocParallel::MulticoreParam(workers = params$threads))
+# 
+# local_res3 <- dmrseq::dmrseq(bs = bsseq_obj[,bsseq_obj$Condition %in% ctrs_list], cutoff = 0.1, 
+#                             testCovariate = "Condition", 
+#                             bpSpan = 250, minInSpan = 11, 
+#                             maxGapSmooth = 2000, maxGap = 100, 
+#                             maxPerms = 10, 
+#                             BPPARAM = BiocParallel::MulticoreParam(workers = params$threads))
+# 
+# local_res_default <- dmrseq::dmrseq(
+#                             bs = bsseq_obj[,bsseq_obj$Condition %in% ctrs_list],
+#                             cutoff = 0.1, 
+#                             testCovariate = "Condition", 
+#                             bpSpan = 1000, minInSpan = 30, 
+#                             maxGapSmooth = 2500, maxGap = 1000, 
+#                             maxPerms = 2, 
+#                             BPPARAM = BiocParallel::MulticoreParam(workers = params$threads))
+# 
+# res_over <- overlapsRanges(local_res, local_res_default)
+# 
+# local_res <- dmrseq::dmrseq(bs = bsseq_obj, cutoff = 0.1, 
+#                             testCovariate = "Condition",
+#                             BPPARAM = BiocParallel::MulticoreParam(workers = params$threads))
+#
+# local_res_ctrs <- apply(ctrs_list, 2, function(ctrs){
+#   dmrseq::dmrseq(bs = bsseq_obj[,bsseq_obj$Condition %in% ctrs], cutoff = 0.1, 
+#                 testCovariate = "Condition", 
+#                 bpSpan = 500, minInSpan = 11, 
+#                 maxGapSmooth = 2000, maxGap = 200, 
+#                 maxPerms = 2, 
+#                 BPPARAM = BiocParallel::MulticoreParam(workers = params$threads))
+# })
+# 
+# dmrseq::plotDMRs(BSseq = bsseq_obj, regions = local_res[8], testCovariate = "Condition")
+# 
+# colData(merged_methrix)$Condition <- factor(colData(merged_methrix)$Condition, 
+#                                             levels = c("C", "H", "I", "E"))
+# t(combn(levels(merged_methrix$Condition), 2))
+```

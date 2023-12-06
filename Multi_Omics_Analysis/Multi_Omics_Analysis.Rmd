@@ -1,0 +1,578 @@
+---
+title: "Multi_Omics_Analysis"
+output: html_document
+date: "2023-05-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(knitr.duplicate.label = "allow")
+```
+
+## Required Packages
+
+```{r}
+library(MOFA2)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(MultiAssayExperiment)
+library(grDevices)
+library(rGREAT)
+library(msigdbr)
+library(DT)
+library(TxDb.Mmusculus.UCSC.mm39.refGene)
+source("../../Utility Functions/utilities.R")
+library(TreeSummarizedExperiment)
+```
+
+## Loaded matrices
+
+```{r}
+multi_omics_raw <- readRDS("./Merged_Multi_Omics.rds")
+multi_omics <- readRDS("./Multivariate_Merged_Multi_Omics.rds")
+names(experiments(multi_omics))
+
+filter_list <- c("16S", "Shotgun.cecum", "Shotgun.colon")
+
+# selected_omics <- lapply(filter_list, function(dt_name){
+#     omic_dt_names <- grep(dt_name, names(experiments(multi_omics)))
+#     omic_exp_list <- experiments(multi_omics[,,omic_dt_names])
+#     
+#     sig_vars_num <- sapply(omic_exp_list, function(omic_exp){
+#         var_dt <- rowData(omic_exp)
+#         p_val_dt <- var_dt[,grep("adj.p.value", colnames(var_dt))]
+#         sig_vars <- apply(p_val_dt, 1, function(p_vals){
+#             any(p_vals <= 0.05, na.rm = TRUE)
+#         })
+#         sum(unlist(sig_vars))
+#     })
+#     sig_vars_num
+# })
+# names(selected_omics) <- filter_list
+# 
+# a <- do.call(cbind, selected_omics)
+
+# selected_omics <- lapply(filter_list, function(dt_name){
+#     omic_dt_names <- grep(dt_name, names(experiments(multi_omics)))
+#     omic_exp_list <- experiments(multi_omics[,,omic_dt_names])
+#     
+#     sig_vars_num <- sapply(omic_exp_list, function(omic_exp){
+#         nrow(omic_exp)
+#     })
+#     sig_vars_num
+# })
+# names(selected_omics) <- filter_list
+# 
+# b <- do.call(cbind, selected_omics)
+```
+
+## Preparing the omics matrices 
+
+```{r}
+multi_omics_names <- names(experiments(multi_omics))
+
+multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S|unsupervised", multi_omics_names)]
+# multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("genus", multi_omics_names)])
+multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("specie", multi_omics_names)])
+```
+
+```{r}
+filtered_exps <- lapply(names(multi_omics), function(multi_omics_names){
+    multi_omics_exp <- experiments(multi_omics)[[multi_omics_names]]
+
+    if(grepl("RNASeq|DNA|Untargeted", multi_omics_names)){
+        if(grepl("RNASeq", multi_omics_names)){
+            cd_thr <- 0.85
+        } else if(grepl("unsupervised", multi_omics_names)){
+            cd_thr <- 0.99
+        } else if(grepl("DNA", multi_omics_names)){
+            cd_thr <- 0.5
+        } else{
+            cd_thr <- 0
+        }
+        var_cd <- apply(assay(multi_omics_exp), 1, function(var_dt){
+            sd(var_dt, na.rm = TRUE)/mean(var_dt, na.rm = TRUE)
+        })
+        multi_omics_exp <- multi_omics_exp[names(var_cd)[var_cd >= quantile(var_cd, cd_thr)],]
+    }
+    multi_omics_exp
+})
+names(filtered_exps) <- names(multi_omics)
+experiments(multi_omics) <- ExperimentList(filtered_exps)
+```
+
+```{r}
+multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = multi_omics)
+plot_data_overview(multi_omics_mofa)
+```
+
+X642C / X652C
+
+```{r}
+multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = multi_omics[,,multi_omics_selected])
+plot_data_overview(multi_omics_mofa)
+```
+
+## Parameters
+
+```{r}
+data_opts <- get_default_data_options(multi_omics_mofa)
+head(data_opts)
+
+model_opts <- get_default_model_options(multi_omics_mofa)
+head(model_opts)
+model_opts$num_factors <- 8
+
+train_opts <- get_default_training_options(multi_omics_mofa)
+head(train_opts)
+```
+
+## LIMA model {.tabset}
+
+```{r}
+multi_omics_mofa <- prepare_mofa(
+  object = multi_omics_mofa,
+  data_options = data_opts,
+  model_options = model_opts,
+  training_options = train_opts
+)
+
+outfile <- file.path(getwd(),"model.hdf5")
+multi_omics_mofa <- run_mofa(multi_omics_mofa, outfile, use_basilisk = TRUE)
+
+```
+
+### Downstream Analysis
+
+```{r}
+# file_path <- "./model.hdf5"
+# model <- load_model(file_path)
+colData(multi_omics)$sample <- colData(multi_omics)$samplename
+
+samples_metadata(multi_omics_mofa) <- left_join(samples_metadata(multi_omics_mofa), as.data.frame(colData(multi_omics)), by = "sample")
+
+plot_variance_explained(multi_omics_mofa) + theme(axis.text.x = element_text(angle = 90))
+
+p <- plot_factor(multi_omics_mofa, group_by = "group.y", factors = 1:5, 
+                 color_by = "group.y", 
+                 add_violin = TRUE)
+
+p <- p + 
+  scale_color_manual(values=c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")) +
+  scale_fill_manual(values=c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green"))
+print(p)
+```
+
+```{r, fig.height=12, fig.width=12}
+plot_factors(multi_omics_mofa, 
+  factors = 1:6,
+  color_by = "group.y"
+)
+```
+
+```{r}
+pca_dt <- MOFA2::get_factors(object = multi_omics_mofa, factors = 1:3)
+
+MOFA2::get_variance_explained(object = multi_omics_mofa, factors = 1:3)
+
+library(plotly)
+
+d3plot <- plot_ly(x = pca_dt$group1[,1], y = pca_dt$group1[,2], z = pca_dt$group1[,3], color = multi_omics_mofa@samples_metadata$group.y)
+d3plot <- d3plot %>% add_markers()
+# d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
+#                      yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
+#                      zaxis = list(title = paste0('PC4', "(", pcvar[4], "%)"))))
+d3plot
+```
+
+
+
+```{r}
+weight_dt <- get_weights(object = multi_omics_mofa, factors = 2, as.data.frame = TRUE)
+```
+
+```{r}
+factor_ids <- c(1,2,3,4,5)
+output_dir <- "D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omics_Analysis/Results/MOFA2_Results/"
+
+var_exp_dt <- MOFA2::get_variance_explained(multi_omics_mofa)[[2]][[1]]/100
+
+keep_var_list <- list()
+
+for(id in factor_ids){
+    
+    keep_var_list[id] <- list(c())
+    
+    weight_dt <- get_weights(multi_omics_mofa, factors = id)
+
+    pdf(paste0(output_dir, "factor_", id, "_top_variable_heatmaps.pdf"))
+    for(view_id in MOFA2::views_names(multi_omics_mofa)){
+        exp_dt <- MOFA2::get_data(multi_omics_mofa, views = view_id)[[1]][[1]]
+        exp_metadata <- MOFA2::samples_metadata(multi_omics_mofa)
+        
+        feature_n_percent <- var_exp_dt[id,view_id]
+        feature_n <- ceiling(max(min(nrow(exp_dt)*feature_n_percent, 2000), 2))
+        factor_weight_dt <- weight_dt[[view_id]]
+        
+        # hist(abs(factor_weight_dt[,1]))
+        # sum(abs(factor_weight_dt[,1]) > 1)
+        # 
+        samples_found <- !matrixStats::colAlls(x = exp_dt, value = NA)
+        rownames(exp_metadata) <- exp_metadata$samplename
+        
+        keep_vars <- rownames(factor_weight_dt)[order(abs(factor_weight_dt[,1]), decreasing = TRUE)][seq_len(feature_n)]
+        
+        keep_var_list[[id]] <- c(keep_var_list[[id]], gsub(paste0("_", view_id), "", keep_vars)) 
+                                 
+        heatMapFun(exp_dt[keep_vars,samples_found], metadata = exp_metadata[samples_found,], stratificationVar = "group.y", 
+                cdQuantile = 0, 
+                plot_name = paste(view_id, "Top", feature_n, "Variables in factor", id, "(By absolute weight)"), 
+                show_colnames = ifelse(length(keep_vars) >= 100, FALSE, TRUE), show_rownames = TRUE,
+                clustering_distance_rows = "euclidean")
+        
+    }
+    dev.off()
+}
+
+```
+
+
+
+### GREAT Enrichment & Region Analysis {.tabset}
+
+```{r}
+library(msigdbr)
+txdb <- "TxDb.Mmusculus.UCSC.mm39.refGene"
+h_gene_sets = msigdbr(species = "Mus musculus", category = "H")
+
+h_gene_sets = split(h_gene_sets$entrez_gene, h_gene_sets$gs_name)
+h_gene_sets = lapply(h_gene_sets, as.character)  # just to make sure gene IDs are all in character.
+```
+
+```{r}
+sig_tables <- lapply(factor_ids, function(id){
+    multi_omics[keep_var_list[[id]],,"DNA_Methylation.liver"][["DNA_Methylation.liver"]]
+})
+names(sig_tables) <- paste("Factor", seq_along(sig_tables))
+    
+set.seed(1234)
+great_results <- lapply(sig_tables, function(ctrs_res){
+    if(nrow(ctrs_res) == 0){return(NA)}
+    sub_granges <- rowRanges(ctrs_res)
+    mcols(sub_granges) <- mcols(sub_granges)[!colnames(mcols(sub_granges)) %in% 
+                                               c("seqnames", "ranges", "strand", 
+                                                "seqlevels", "seqlengths",
+                                                "isCircular", "start", "end", 
+                                                "width", "element")]  
+    return(great(gr = sub_granges, gene_sets = h_gene_sets, 
+                tss_source = txdb))
+})
+
+contrs_result_sig_list <- lapply(great_results, function(gr_res){
+    if(!is(gr_res, "GreatObject")){
+        return(data.frame())
+    }
+    return(getEnrichmentTable(gr_res))
+})
+contrs_names <- names(contrs_result_sig_list)
+template <- c(
+    "#### `r contrs_names[{{i}}]` \n",
+    "```{r, echo = FALSE}\n",
+    "datatable(contrs_result_sig_list[[{{i}}]], options = list(scrollX = TRUE))",
+    "```\n",
+    "\n"
+)
+```
+
+```{r}
+tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
+                                          contrs_names = contrs_names, template = template)
+```
+
+`r knit(text=unlist(tables_chunk))`
+
+### Region Annotation
+
+```{r}
+omic_dt_list <- c("All Results" = multi_omics[["DNA_Methylation.liver"]], sig_tables[1:2])
+
+dmr_annotation_plot(omic_dt = omic_dt_list)
+# test_dt <- factor_tables[1:2,]
+# fisher.test(factor_tables[1,])
+```
+
+### Chromosome Plots
+
+```{r, fig.height=6, fig.width=8}
+possible_chromosomes  <- unique(seqnames(rowRanges(multi_omics[["DNA_Methylation.liver"]])))
+dmr_annotation_plot(omic_dt_list, annotation_labels = possible_chromosomes, 
+                    annotation_metadata_var = "seqnames", x_lab = "Chromosome Proportions")
+```
+
+
+```{r}
+# possible_annotations <- c("Intron", "Promoter", "Distal Intergenic", "3' UTR", "5' UTR", "Exon", "Downstream")
+# 
+# factor_tables <- lapply(c("All Results" = multi_omics[["DNA_Methylation.liver"]], sig_tables[1:3]), function(exp_dt){
+#     exp_annotation <- sapply(possible_annotations, function(x){
+#         found_anno <- grepl(pattern = x, rowData(exp_dt)$annotation)
+#         sum(found_anno)
+#     })
+#     exp_annotation
+#     # table(unlist(exp_annotation))
+# })
+# factor_tables <- do.call(rbind, factor_tables)
+# factor_annotation_dt <-factor_tables/rowSums(factor_tables)
+# 
+# plot_dt <- reshape2::melt(factor_annotation_dt)
+# plot_dt$Var1 <- factor(plot_dt$Var1, levels = rev(levels(plot_dt$Var1)))
+# ggplot(plot_dt, aes(x = value, y = Var1, fill = Var2)) + geom_col() + scale_fill_brewer(palette = "Set2") + theme_minimal() + xlab("Region Proportions") + ylab(NULL) + theme(legend.title = element_blank())
+```
+
+<!-- ## LIMA full unsupervised -->
+
+<!-- ```{r} -->
+<!-- multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S|DNA_Methylation.liver", multi_omics_names)] -->
+<!-- # multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("genus", multi_omics_names)]) -->
+<!-- multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("specie", multi_omics_names)]) -->
+
+<!-- multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = multi_omics[,,multi_omics_selected]) -->
+<!-- plot_data_overview(multi_omics_mofa) -->
+<!-- ``` -->
+
+<!-- ## Parameters -->
+
+<!-- ```{r} -->
+<!-- data_opts <- get_default_data_options(multi_omics_mofa) -->
+<!-- head(data_opts) -->
+
+<!-- model_opts <- get_default_model_options(multi_omics_mofa) -->
+<!-- head(model_opts) -->
+<!-- model_opts$num_factors <- 8 -->
+
+<!-- train_opts <- get_default_training_options(multi_omics_mofa) -->
+<!-- head(train_opts) -->
+<!-- ``` -->
+
+<!-- ## Model and training -->
+
+<!-- ```{r} -->
+<!-- multi_omics_mofa <- prepare_mofa( -->
+<!--   object = multi_omics_mofa, -->
+<!--   data_options = data_opts, -->
+<!--   model_options = model_opts, -->
+<!--   training_options = train_opts -->
+<!-- ) -->
+
+<!-- outfile <- file.path(getwd(),"model_us.hdf5") -->
+<!-- multi_omics_mofa <- run_mofa(multi_omics_mofa, outfile, use_basilisk = TRUE) -->
+
+<!-- ``` -->
+
+<!-- ## Downstream Analysis -->
+
+<!-- ```{r} -->
+<!-- # file_path <- "./model.hdf5" -->
+<!-- # model <- load_model(file_path) -->
+<!-- colData(multi_omics)$sample <- colData(multi_omics)$samplename -->
+
+<!-- samples_metadata(multi_omics_mofa) <- left_join(samples_metadata(multi_omics_mofa), as.data.frame(colData(multi_omics)), by = "sample") -->
+
+<!-- plot_variance_explained(multi_omics_mofa) + theme(axis.text.x = element_text(angle = 90)) -->
+
+<!-- p <- plot_factor(multi_omics_mofa, group_by = "group.y", factors = 1:5,  -->
+<!--                  color_by = "group.y",  -->
+<!--                  add_violin = TRUE) -->
+
+<!-- p <- p +  -->
+<!--   scale_color_manual(values=c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")) + -->
+<!--   scale_fill_manual(values=c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")) -->
+<!-- print(p) -->
+<!-- ``` -->
+
+<!-- ```{r, fig.height=12, fig.width=12} -->
+<!-- plot_factors(multi_omics_mofa,  -->
+<!--   factors = 1:6, -->
+<!--   color_by = "group.y" -->
+<!-- ) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- pca_dt <- MOFA2::get_factors(object = multi_omics_mofa, factors = 1:3) -->
+
+<!-- MOFA2::get_variance_explained(object = multi_omics_mofa, factors = 1:3) -->
+
+<!-- library(plotly) -->
+
+<!-- d3plot <- plot_ly(x = pca_dt$group1[,1], y = pca_dt$group1[,2], z = pca_dt$group1[,3], color = multi_omics_mofa@samples_metadata$group.y) -->
+<!-- d3plot <- d3plot %>% add_markers() -->
+<!-- # d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")), -->
+<!-- #                      yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")), -->
+<!-- #                      zaxis = list(title = paste0('PC4', "(", pcvar[4], "%)")))) -->
+<!-- d3plot -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- plot_weights(multi_omics_mofa,  -->
+<!--   view = 1, -->
+<!--   factor = 2, -->
+<!--   nfeatures = 10,     # Number of features to highlight -->
+<!--   scale = T,          # Scale weights from -1 to 1 -->
+<!--   abs = F            # Take the absolute value? -->
+<!-- ) -->
+
+<!-- weight_dt <- get_weights(object = multi_omics_mofa, factors = 2, as.data.frame = TRUE) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- for(view_id in seq_len(length(multi_omics_selected))){ -->
+<!--     plot_data_heatmap(multi_omics_mofa, -->
+<!--       view = view_id,         # view of interest -->
+<!--       factor = 2,             # factor of interest -->
+<!--       features = 40,          # number of features to plot (they are selected by weight) -->
+
+<!--       # extra arguments that are passed to the `pheatmap` function -->
+<!--       cluster_rows = TRUE, cluster_cols = TRUE, -->
+<!--       show_rownames = TRUE, show_colnames = FALSE, annotation_samples = "group.y", -->
+<!--     ) -->
+<!-- } -->
+<!-- ``` -->
+
+
+## GFCV
+
+## Loaded matrices
+
+```{r}
+library(MOFA2)
+multi_omics_raw <- readRDS("./Merged_Multi_Omics_gfcv.rds")
+multi_omics <- readRDS("./Multivariate_Merged_Multi_Omics_gfcv.rds")
+names(experiments(multi_omics))
+
+filter_list <- c("16S")
+
+selected_omics <- lapply(filter_list, function(dt_name){
+    omic_dt_names <- grep(dt_name, names(experiments(multi_omics)))
+    omic_exp_list <- experiments(multi_omics[,,omic_dt_names])
+    
+    sig_vars_num <- sapply(omic_exp_list, function(omic_exp){
+        var_dt <- rowData(omic_exp)
+        p_val_dt <- var_dt[,grep("adj.p.value", colnames(var_dt))]
+        sig_vars <- apply(p_val_dt, 1, function(p_vals){
+            any(p_vals <= 0.05, na.rm = TRUE)
+        })
+        sum(unlist(sig_vars))
+    })
+    sig_vars_num
+})
+names(selected_omics) <- filter_list
+
+a <- do.call(cbind, selected_omics)
+
+selected_omics <- lapply(filter_list, function(dt_name){
+    omic_dt_names <- grep(dt_name, names(experiments(multi_omics)))
+    omic_exp_list <- experiments(multi_omics[,,omic_dt_names])
+    
+    sig_vars_num <- sapply(omic_exp_list, function(omic_exp){
+        nrow(omic_exp)
+    })
+    sig_vars_num
+})
+names(selected_omics) <- filter_list
+
+b <- do.call(cbind, selected_omics)
+```
+
+## Preparing the omics matrices 
+
+```{r}
+multi_omics_names <- names(experiments(multi_omics))
+
+multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S", multi_omics_names)]
+# multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("genus", multi_omics_names)])
+multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("specie", multi_omics_names)])
+multi_omics_selected
+```
+
+```{r}
+filtered_exps <- lapply(multi_omics_selected, function(multi_omics_names){
+    multi_omics_exp <- experiments(multi_omics)[[multi_omics_names]]
+
+    if(grepl("RNASeq", multi_omics_names)){
+        var_cd <- apply(assay(multi_omics_exp), 1, function(var_dt){
+            sd(var_dt, na.rm = TRUE)/mean(var_dt, na.rm = TRUE)
+        })
+        multi_omics_exp <- multi_omics_exp[names(var_cd)[var_cd >= quantile(var_cd, 0)],]
+    }
+    multi_omics_exp
+})
+names(filtered_exps) <- multi_omics_selected
+experiments(multi_omics) <- ExperimentList(filtered_exps)
+```
+```{r}
+multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = multi_omics)
+plot_data_overview(multi_omics_mofa)
+```
+
+
+```{r}
+multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = multi_omics[,,multi_omics_selected])
+plot_data_overview(multi_omics_mofa)
+```
+
+## Parameters
+
+```{r}
+data_opts <- get_default_data_options(multi_omics_mofa)
+head(data_opts)
+
+model_opts <- get_default_model_options(multi_omics_mofa)
+head(model_opts)
+model_opts$num_factors <- 8
+
+train_opts <- get_default_training_options(multi_omics_mofa)
+head(train_opts)
+```
+
+## Model and training
+
+```{r}
+multi_omics_mofa <- prepare_mofa(
+  object = multi_omics_mofa,
+  data_options = data_opts,
+  model_options = model_opts,
+  training_options = train_opts
+)
+
+outfile <- file.path(getwd(),"model.hdf5")
+multi_omics_mofa <- run_mofa(multi_omics_mofa, outfile, use_basilisk = TRUE)
+
+```
+
+## Downstream Analysis
+
+```{r}
+# file_path <- "./model.hdf5"
+# model <- load_model(file_path)
+colData(multi_omics)$sample <- colData(multi_omics)$samplename
+
+samples_metadata(multi_omics_mofa) <- left_join(samples_metadata(multi_omics_mofa), as.data.frame(colData(multi_omics)), by = "sample")
+
+plot_variance_explained(multi_omics_mofa) + theme(axis.text.x = element_text(angle = 90))
+
+p <- plot_factor(multi_omics_mofa, group_by = "group.y", factors = 1:5, 
+                 color_by = "group.y", 
+                 add_violin = TRUE)
+
+p <- p + 
+  scale_color_manual(values=c("CVM"="black", "CVF"="red", "GFM"="blue", "GFF"="green")) +
+  scale_fill_manual(values=c("CVM"="black", "CVF"="red", "GFM"="blue", "GFF"="green"))
+print(p)
+```
+
+## Appendix
+
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+
+```

@@ -1,0 +1,110 @@
+---
+title: "Untargeted Metabolomics Analysis"
+author: "Jordi Rofes Herrera"
+date: "27/1/2022"
+output: html_document
+params:
+    file_dir: "./RP_Positive/"
+    metadata_file: "./RP_Positive/LC_MS_metadata.csv"
+    output_dir: "./Hermes_Results/RP_Positive/"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Packages
+
+```{r}
+library(xcms)
+library(MSnbase)
+library(BiocParallel)
+library(ggplot2)
+library(plotly)
+```
+
+```{r}
+library(readxl)
+gf_lima_meta <- read.csv(params$metadata_file)
+```
+
+
+## Data loading
+
+```{r}
+quant_files <- list.files(path = params$file_dir, full.names = TRUE)
+file_names <- quant_files[sub(pattern = "\\.[mM][zZ][xX]?[mM][lL]$", replacement = "", 
+                              x = basename(quant_files)) %in% gf_lima_meta$injection_order]
+findOrder <- function(files, phenodata, pheno_var){
+    samp <- sub(pattern = "\\.[mM][zZ][xX]?[mM][lL]$", replacement = "",
+                x =  basename(files))
+    if(length(pheno_var) == 1){
+        if(pheno_var == "rownames"){
+            ordering <- rownames(phenodata)
+        } else{
+            ordering <- phenodata[[pheno_var]]
+        }
+    } else{
+        ordering <- pheno_var
+    }
+    if(!all(ordering %in% samp)){
+        stop("Filenames do not agree with the phenodata variable. Change the names accordingly")
+    }
+    return(order(sapply(samp, function(x){which(ordering == x)})))
+}
+file_order <- findOrder(file_names, phenodata = gf_lima_meta, pheno_var = "injection_order")
+quant_files <- file_names[file_order]
+```
+
+
+```{r}
+ms_data <- readMSData(files = quant_files, pdata = AnnotatedDataFrame(data = gf_lima_meta), centroided. = TRUE, mode = "onDisk")
+ms_data <- filterEmptySpectra(ms_data)
+```
+
+```{r}
+register(SnowParam())
+ms_data <- findChromPeaks(ms_data, param = CentWaveParam(ppm = 10, peakwidth = c(5, 50)))
+
+saveRDS(ms_data, paste0(params$output_dir,"xcmsnexp_chrom_peaks.rds"))
+```
+
+```{r}
+ms_data <- readRDS(paste0(params$output_dir,"xcmsnexp_chrom_peaks.rds"))
+
+ms_data <- refineChromPeaks(ms_data, param = MergeNeighboringPeaksParam())
+# saveRDS(ms_data, paste0(params$output_dir,"xcmsnexp_chrom_peaks_merged.rds"))
+```
+
+```{r}
+#ms_data <- readRDS(paste0(params$output_dir,"xcmsnexp_chrom_peaks_merged.rds"))
+ms_data <- adjustRtime(ms_data, param = ObiwarpParam())
+plotAdjustedRtime(filterFile(ms_data, 3:10), peakGroupsPch = 1,
+                  peakGroupsCol = "#00ce0040")
+
+
+# saveRDS(ms_data, paste0(params$output_dir,"xcmsnexp_chrom_rt_corrected.rds"))
+```
+
+```{r}
+# ms_data <- readRDS(paste0(params$output_dir,"xcmsnexp_chrom_rt_corrected.rds"))
+
+pdp <- PeakDensityParam(sampleGroups = gf_lima_meta$groups_m,
+                        minFraction = 0.4, bw = 5, binSize = 0.01)
+ms_data <- groupChromPeaks(ms_data, param = pdp)
+ms_data <- fillChromPeaks(ms_data, param = FillChromPeaksParam())
+saveRDS(ms_data, file = paste0(params$output_dir, "xcmsnexp_filled.rds"))
+saveRDS(quantify(ms_data, value = "into"), file =  paste0(params$output_dir, "summarized.rds"))
+# write.csv(assay(xcms_dt), paste0(params$output_dir,"xcms_quant_matrix.csv"))
+# xcms_dt <- readRDS("./Hermes_Results/Hilic_Positive/xcmsnexp_filled.rds")
+```
+
+```{r}
+library(qHermes)
+library(xcms)
+ms_data <- readRDS(paste0(params$output_dir, "xcmsnexp_filled.rds"))
+hermes_dt <- readRDS(paste0(params$output_dir,"filteredSoiLists.rds"))
+ms_data <- mergeRHermesXCMSFeatures(XCMSnExp = ms_data, RHermesExp = hermes_dt, SOI = 4)
+xcms_dt <- quantify(ms_data, value = "into")
+saveRDS(xcms_dt, file =  paste0(params$output_dir, "summarized_hermes_xcms.rds"))
+```

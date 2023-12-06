@@ -1,0 +1,188 @@
+---
+title: "16S LIMA Processing"
+output: html_document
+date: "2023-04-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading packages
+
+```{r}
+library(dplyr)
+library(stringi)
+library(PCAtools)
+library(mixOmics)
+library(compositions)
+```
+
+
+## Initial processing
+
+### LIMA
+
+```{r}
+organ_dir <- list.dirs(".", full.names = TRUE, recursive = FALSE)
+organ_dir
+
+organ_dt_list <- lapply(organ_dir, function(organ_dt){
+    meta_files <- list.files(organ_dt, pattern = ".txt$", full.names = TRUE)
+    
+    meta_files_proc <- lapply(meta_files, function(meta_file_path){
+        meta_f <- read.table(file = meta_file_path, sep = "\t", row.names = 1)
+        meta_f <- dplyr::select(meta_f, !contains(c("CM", "CF")))
+        colnames(meta_f) <- gsub("X_", "", colnames(meta_f))
+        meta_f <- as.data.frame(t(meta_f))
+        meta_f <- meta_f %>% select_if(colSums(.) != 0)
+        t(meta_f)
+    })
+    names(meta_files_proc) <- gsub(pattern = ".txt$", "", basename(meta_files))
+    meta_files_proc
+})
+names(organ_dt_list) <- basename(organ_dir)
+
+organ_dt_list <- lapply(organ_dt_list, function(organ_dt){
+    if(all(sapply(organ_dt, ncol) == 0)){
+        return(NULL)
+    } else{
+        return(organ_dt)
+    }
+})
+organ_dt_list <- organ_dt_list[!sapply(organ_dt_list, is.null)]
+
+saveRDS(organ_dt_list, "16S_lima_data_list.rds")
+```
+
+```{r}
+metadata_list <- data.frame("samplename" = colnames(organ_dt_list$cecum$feature_table_class))
+metadata_list$group <- substr(x = metadata_list$samplename, start = 4, stop = 4)
+metadata_list$group <- factor(metadata_list$group, levels = c("C", "H", "I", "E"), 
+                              labels = c("CNT", "HFD", "INT", "HFE"))
+
+metadata_list$sample_id <- substr(x = metadata_list$samplename, start = 1, stop = 3)
+metadata_list
+
+metadata_list <- list(cecum = metadata_list)
+
+saveRDS(metadata_list, "16S_lima_metadata_list.rds")
+```
+
+```{r}
+organ_dt_list_proc <- lapply(names(organ_dt_list), function(organ_name){
+    organ_dt <- organ_dt_list[[organ_name]]
+    organ_metadata <- metadata_list[[organ_name]]
+    
+    lapply(organ_dt, function(hierarchy){
+        keep_vars <- apply(hierarchy, 1, function(dt_var){
+            group_dt <- tapply(dt_var, INDEX = organ_metadata$group, function(var_group){
+                sum(var_group != 0)/length(var_group)
+            })
+            
+            any(group_dt > 0.8)    
+        })
+        
+        hierarchy[keep_vars,]
+    })
+})
+        
+names(organ_dt_list_proc) <- names(organ_dt_list)
+
+saveRDS(organ_dt_list_proc, "16S_lima_data_list.rds")
+
+```
+
+
+```{r}
+pca_res <- lapply(seq_along(organ_dt_list_proc), function(organ_id){
+    organ <- organ_dt_list_proc[[organ_id]]
+    organ_meta <- metadata_list[[organ_id]]
+    lapply(organ, function(hierarchy){
+        
+        hierarchy <- clr(t(hierarchy))
+        #pca(mat = hierarchy, metadata = organ_meta, scale = FALSE)
+        mixOmics::pca(hierarchy, ncomp = 6, center = TRUE, scale = TRUE,
+         max.iter = 500, tol = 1e-09, logratio = 'none',   ilr.offset = 0.001,
+         V = NULL, multilevel = NULL)
+    })
+})
+names(pca_res) <- names(organ_dt_list_proc)
+
+lapply(seq_along(pca_res), function(organ_id){
+    organ <- pca_res[[organ_id]]
+    organ_meta <- metadata_list[[organ_id]]
+
+    lapply(seq_along(organ), function(hierarchy_id){
+        hierarchy <- organ[[hierarchy_id]]
+        
+        # biplot(pcaobj = hierarchy, x = "PC1", y = "PC2", colby = "sex", colkey = c("M" = "blue", "F" = "red"), ellipse = FALSE)
+        #biplot(pcaobj = hierarchy, x = "PC1", y = "PC2", colby = "batch", ellipse = FALSE)
+        p <- plotIndiv(hierarchy, ind.names = T, group = organ_meta$group, 
+                legend = T, title= names(organ)[hierarchy_id], 
+                ellipse = T, ellipse.level = 0.99)
+    })
+})
+```
+
+
+```{r}
+
+bx_dt <- lapply(seq_along(organ_dt_list_proc), function(organ_id){
+    organ <- organ_dt_list_proc[[organ_id]]
+    organ_meta <- metadata_list[[organ_id]]
+    
+    lapply(organ, function(hierarchy){
+        hierarchy <- as.data.frame(clr(t(hierarchy)))
+        #pca(mat = hierarchy, metadata = organ_meta, scale = FALSE)
+        sapply(names(hierarchy), function(x){
+            boxplot(hierarchy[[x]] ~ organ_meta$group, ylab = x)
+        })
+    })
+})
+```
+
+```{r}
+stat_res <- lapply(seq_along(organ_dt_list_proc), function(organ_id){
+    organ <- organ_dt_list_proc[[organ_id]]
+    organ_meta <- metadata_list[[organ_id]]
+    
+    names_comp <- apply(t(combn(levels(organ_meta$group), m = 2))[,2:1], 1, paste, collapse = "-")
+    comp_mat <- as.data.frame(matrix(NA, ncol = 2, nrow = length(names_comp)))
+    rownames(comp_mat) <- names_comp
+    colnames(comp_mat) <- c("mean rank diff", "p.value")
+    
+    lapply(organ, function(hierarchy){
+        #hierarchy <- as.data.frame(clr(t(hierarchy)))
+        hierarchy <- as.data.frame(t(hierarchy))
+        #pca(mat = hierarchy, metadata = organ_meta, scale = FALSE)
+        var_results <- lapply(hierarchy, function(dt_var){
+            kruskal_res <- kruskal.test(x = dt_var, organ_meta$group)
+            if(kruskal_res$p.value <= 0.05){
+                return(DescTools::ConoverTest(x = dt_var, organ_meta$group, method = "none")[[1]])
+            } else{
+                return(comp_mat)
+            }
+        })
+        
+        comp_list <- lapply(names_comp, function(idv_comp){
+            results_list <- lapply(var_results, function(results_mat){
+                if(idv_comp %in% rownames(results_mat)){
+                    return(results_mat[idv_comp,])} 
+                else{
+                    return(rep(NA, 3))
+                }
+            })
+            results_list <- do.call(rbind, results_list)
+            results_list$adj.p.value <- p.adjust(results_list$p.value, method = "fdr")
+            results_list
+        })
+        names(comp_list) <- names_comp
+        comp_list
+    })
+})
+names(stat_res) <- names(organ_dt_list_proc)
+
+saveRDS(stat_res, "./16S_results_list.rds")
+```
+

@@ -1,0 +1,153 @@
+---
+title: "Integrative_Correlations_Master_Script"
+output: html_document
+date: "2023-02-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(MultiAssayExperiment)
+library(SummarizedExperiment)
+library(TreeSummarizedExperiment)
+library(dplyr)
+library(openxlsx)
+library(DT)
+library(knitr)
+library(igraph)
+library(RCy3)
+```
+
+
+## Tests
+
+<!-- # ```{r} -->
+<!-- # rmarkdown::render(input = "./IntegrativeCorrelations_feb2023.Rmd",  -->
+<!-- #                   output_file = "./integrative_correlations_09.html",  -->
+<!-- #                   clean = TRUE,  -->
+<!-- #                   params = list(corr_threshold = 0.9)) -->
+<!-- # rmarkdown::render(input = "./IntegrativeCorrelations_feb2023.Rmd",  -->
+<!-- #                   output_file = "./integrative_correlations_085.html",  -->
+<!-- #                   clean = TRUE,  -->
+<!-- #                   params = list(corr_threshold = 0.85)) -->
+<!-- # rmarkdown::render(input = "./IntegrativeCorrelations_feb2023.Rmd",  -->
+<!-- #                   output_file = "./integrative_correlations_08.html",  -->
+<!-- #                   clean = TRUE,  -->
+<!-- #                   params = list(corr_threshold = 0.8)) -->
+<!-- #  -->
+<!-- # ``` -->
+
+## Correlation Network Script
+
+```{r}
+multi_omic_dt <- readRDS("D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omics_Analysis/Multivariate_Merged_Multi_Omics.rds")
+network_omics <- list("All Omics" = names(assays(multi_omic_dt)))
+
+network_omics$`All Omics` <- grep("Untargeted|Targeted|RNASeq|species|metaerg_kegg|Metallomics|PTM|DNA_Methylation.liver",
+                                  network_omics$`All Omics`, value = TRUE)
+
+# lapply(experiments(multi_omic_dt), function(x){colnames(rowData(x))})
+
+variables_dicts <- lapply(network_omics[[1]], function(omic_name){
+    if(omic_name == "RNASeq.liver"){
+        return("gene_lab")
+    } else if(omic_name == "Untargeted_Metabolomics.liver"){
+        return("HFD-CNT.PutativeMetabolites")
+        #return("HFD-CNT.formula")
+    } else if(grepl("DNA_Methylation", omic_name)){
+        return("geneName")
+    } else{
+        return(NA)
+    }
+})
+names(variables_dicts) <- network_omics[[1]]
+variables_dicts[is.na(variables_dicts)] <- NULL
+rmarkdown::render(input = "./Correlations_Script.Rmd",
+                  output_file = "./correlation_networks_09_ch.html",
+                  params = list(
+                        corr_threshold = 0.9,
+                        multi_omic_path = "D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omics_Analysis/Multivariate_Merged_Multi_Omics.rds",
+                        group_metadata_var = "group",
+                        sample_levels_2_correlate = c("CNT", "HFD"),
+                        filter_variable_2_correlate = list(
+                            "HFD Altered" = quote(`HFD-CNT.adj.p.value` <= 0.05)
+                        ),
+                        omic_list_2_correlate = network_omics,
+                        rowData_variable_name_list = variables_dicts,
+                        draw_networks = TRUE,
+                        add_autocorrelations = FALSE,
+                        keep_full_correlations = TRUE,
+                        output_dir = "D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omic_Correlations/LIMA_Correlations/",
+                        output_suffix = "hfc_cnt_09_ch")
+                  )
+
+rmarkdown::render(input = "./Correlations_Script.Rmd",
+                  output_file = "./correlation_networks_09_chi.html",
+                  params = list(
+                        corr_threshold = 0.9,
+                        multi_omic_path = "D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omics_Analysis/Multivariate_Merged_Multi_Omics.rds",
+                        group_metadata_var = "group",
+                        sample_levels_2_correlate = c("CNT", "HFD", "INT"),
+                        filter_variable_2_correlate = list(
+                            "HFD Altered" = quote(`HFD-CNT.adj.p.value` <= 0.05)
+                        ),
+                        omic_list_2_correlate = network_omics,
+                        rowData_variable_name_list = variables_dicts,
+                        draw_networks = TRUE,
+                        add_autocorrelations = FALSE,
+                        keep_full_correlations = TRUE,
+                        output_dir = "D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omic_Correlations/LIMA_Correlations/",
+                        output_suffix = "hfc_cnt_09_chi")
+                  )
+
+```
+
+## Correlation Networks GFCV
+
+```{r}
+multi_omic_dt <- readRDS("D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omics_Analysis/Multivariate_Merged_Multi_Omics_gfcv.rds")
+network_omics <- list("All Omics" = names(assays(multi_omic_dt)))
+
+network_omics$`All Omics` <- grep("Untargeted|Targeted|RNASeq|species|metaerg_kegg|Metallomics|PTM|DNA_Methylation",
+                                  network_omics$`All Omics`, value = TRUE)
+
+grepl("GFM_CVM.adj.p.value", lapply(experiments(multi_omic_dt), function(x){colnames(rowData(x))}))
+# lapply(experiments(multi_omic_dt), function(x){colnames(rowData(x))})
+
+variables_dicts <- lapply(network_omics[[1]], function(omic_name){
+    if(omic_name == "RNASeq.liver"){
+        return("gene_lab")
+    } else if(omic_name == "Untargeted_Metabolomics.liver"){
+        return("CVF_CVM.PutativeMetabolites")
+        #return("HFD-CNT.formula")
+    } else if(grepl("16S|^Shotgun", omic_name)){
+        return("specie_name_short")
+    } else{
+        return(NA)
+    }
+})
+names(variables_dicts) <- network_omics[[1]]
+variables_dicts[is.na(variables_dicts)] <- NULL
+rmarkdown::render(input = "./Correlations_Script.Rmd",
+                  output_file = "./correlation_networks_09_gfcv.html",
+                  params = list(
+                        corr_threshold = 0.9,
+                        multi_omic_path = "D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omics_Analysis/Multivariate_Merged_Multi_Omics_gfcv.rds",
+                        group_metadata_var = "group",
+                        sample_levels_2_correlate = c("CVM", "CVF", "GFF", "GFM"),
+                        filter_variable_2_correlate = list(
+                            "GFCV_Sig" = quote(`GFF_CVF.adj.p.value` <= 0.05 & `GFM_CVM.adj.p.value` <= 0.05)
+                        ),
+                        omic_list_2_correlate = network_omics,
+                        rowData_variable_name_list = variables_dicts,
+                        draw_networks = TRUE,
+                        add_autocorrelations = FALSE,
+                        keep_full_correlations = TRUE,
+                        fold_change_variable = "GFM_CVM.log2FC",
+                        output_dir = "D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omic_Correlations/GFCV_Correlations/",
+                        output_suffix = "09_gfcv")
+                  )
+```
+

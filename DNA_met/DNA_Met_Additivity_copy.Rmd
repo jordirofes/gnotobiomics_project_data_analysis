@@ -1,0 +1,64 @@
+---
+title: "DNA_Methylation_Additivity"
+author: "Jordi Rofes Herrera"
+date: "2023-06-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+## Loading the data
+
+```{r}
+DNAme <- readRDS("prom_meth.RDS.gz")
+
+dmr_DNAme <- DNAme[["dmr_matrix"]]
+CpG_DNAme <- DNAme[["methylation_matrix"]]
+```
+
+## Additivity
+
+```{r}
+library(ProteoNet)
+library(ggplot2)
+gf_cv_metadata <- data.frame("Samplename" = colnames(dmr_DNAme), "group" = substr(x = colnames(dmr_DNAme), start = 1, 2))
+mod_mat <- model.matrix(~ group + 0, gf_cv_metadata)
+colnames(mod_mat) <- gsub("group", "", colnames(mod_mat))
+
+fc_mat <- ProteoNet:::fold_change_calc(dmr_DNAme, mod_mat, contrs = c("CM-GF", "CF-GF", "GM-GF"), geometric_mean = FALSE, log2_dt = FALSE)
+
+
+ggplot(fc_mat) + 
+    geom_point(aes(x = `GM-GF` + `CF-GF`, y = `CM-GF`, color = `CM-GF`)) + 
+    theme_minimal() + 
+    ylab("log2(CM-GF)") + xlab("log2(GM-GF) + log2(CF-GF)") + 
+    geom_smooth(method = "lm", aes(x = `GM-GF` + `CF-GF`, y = `CM-GF`))
+
+additivity_fc <- lm(`CM-GF` ~ `GM-GF` + `CF-GF`, data = fc_mat)
+summary(additivity_fc)
+
+df <- data.frame(x = predict(additivity_fc), y = additivity_fc$model$`CM-GF`)
+ggplot(df, aes(x=x, y=y)) +
+    geom_point(aes(color=y)) +
+    ylab("log2(CM-GF)") +
+    xlab("0.0854 + 0.699*log2(GM-GF) + 0.551*log2(CF-GF)") +
+    geom_text(aes(x = -1, y = 3, label = "R^2 = 0.816")) +
+    theme_minimal() +
+    geom_smooth(method = "lm", se = F)
+```
+
+
+```{r}
+library(plotly)
+d3plot <- plot_ly(x = fc_mat$`GM-CM`, y = fc_mat$`CF-CM`, 
+                          z = fc_mat$`GF-CM`, color = fc_mat$`GF-CM`)
+d3plot <- d3plot %>% add_markers()
+d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = "GM-CM"),
+                            yaxis = list(title = "CF-CM"),
+                            zaxis = list(title = "GF-CM")))
+        
+print(d3plot)
+```
+

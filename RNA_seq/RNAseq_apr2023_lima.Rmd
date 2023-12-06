@@ -1,0 +1,340 @@
+---
+title: "LIMA model analysis"
+output: html_document
+date: "2023-04-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Packages
+
+```{r}
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(stringi)
+library(DESeq2)
+library(dplyr)
+library(mixOmics)
+library(sva)
+library(edgeR)
+library(IHW)
+library(biomaRt)
+library(plotly)
+library(ggplot2)
+source("../../Utility Functions/utilities.R")
+```
+
+## Loading the data
+
+```{r,include=TRUE, results='hide'}
+myFactors <- read.csv("MERGED_gfcv&LIMA_metadata.csv",
+                         stringsAsFactors = T,
+                         colClasses = "factor" ,
+                         row.names = 1)
+
+myCounts <- read.csv("MERGED_gfcv&LIMA_raw_counts.csv",
+                         stringsAsFactors = F,
+                         colClasses = c("character",rep("numeric",74)),
+                         row.names = 1)
+```
+
+### Model data frames and metadata
+Create 2 different data frames for each model, with counts and metadata
+```{r}
+#counts GFCV
+myLIMAcounts <- dplyr::select(myCounts, contains("X"))
+
+myLIMAcounts <- as.data.frame(t(myLIMAcounts))
+
+#metadata GFCV
+myLIMAfactors <- subset(myFactors, gfcv == "")
+
+all(gsub("X", "", rownames(myLIMAcounts)) == myLIMAfactors$samplename)
+myLIMAfactors$samplename_old <- myLIMAfactors$samplename
+myLIMAfactors$samplename <- make.names(myLIMAfactors$samplename)
+
+rownames(myLIMAfactors) <- myLIMAfactors$samplename
+
+write.csv(myLIMAfactors, file = "RNASeq_lima_metadata.csv")
+```
+
+### Length function
+Create a function to calculate transcript length from GTF file (Sonia Tarazona)
+```{r}
+gtf2length <-  function (mydir, myfile) {
+  
+  mygtf = read.delim(file.path(mydir, myfile), header = FALSE, as.is = TRUE)
+  
+  colnames(mygtf) = c("entity", "start", "end", "gene", "transcript")
+  
+  mygtf = mygtf[which(mygtf[,"entity"] == "exon"),-1]
+  
+  mylength = abs(mygtf[,"end"]-mygtf[,"start"]) + 1
+  
+  trans.length = aggregate(mylength, 
+                           by = list("gene" = mygtf[,"gene"],
+                                     "transcript" = mygtf[,"transcript"]), sum)
+  
+  gene.length = aggregate(trans.length[,"x"],
+                          by = list("gene" = trans.length[,"gene"]), median)
+  
+  colnames(gene.length)[2] = "length"
+
+  gene.length
+  
+}
+```
+
+### Transcript length calculation
+Calculate transcript length from GTF file
+```{r}
+mydir <- "./"
+myfile <- "mmuGTF.txt"
+
+lengthGTF <- data.frame(gtf2length(mydir,myfile))
+
+lengthGTF <- data.frame(ensembl_gene_id=lengthGTF$gene,
+                        lengthGTF=lengthGTF$length)
+
+lengthGTF$ensembl_gene_id <- stri_sub(lengthGTF$ensembl_gene_id, 1,18)
+```
+
+
+### TPM calculation
+Calculate TPM
+```{r}
+tpm <- function(counts, lengths) {
+  rate <- counts / lengths
+  rate / sum(rate) * 1e6
+}
+
+myLIMAcounts_t <- as.data.frame(t(myLIMAcounts))
+
+myLIMAcounts_t$ensembl_gene_id <- rownames(myLIMAcounts_t)
+
+lengthGTF <- dplyr::inner_join(lengthGTF,
+                               myLIMAcounts_t,
+                               by="ensembl_gene_id")
+
+lengthGTF <- dplyr::select(lengthGTF,
+                           ensembl_gene_id,
+                           lengthGTF)
+
+myLIMAcounts_t <- dplyr::select(myLIMAcounts_t,
+                                -ensembl_gene_id)
+
+rownames(lengthGTF) <- lengthGTF$ensembl_gene_id
+
+lengthGTF <- dplyr::select(lengthGTF, lengthGTF)
+
+dim(lengthGTF)
+dim(myLIMAcounts_t)
+
+limaTPM <- data.frame(ensembl_gene_id=rownames(myLIMAcounts_t),NA)
+
+for (i in 1:ncol(myLIMAcounts_t)){ 
+  TPM <- tpm(myLIMAcounts_t[,i],lengthGTF)
+  limaTPM[,i] <- cbind(data.frame(TPM))
+  colnames(limaTPM) <- colnames(myLIMAcounts_t[,i])
+}
+
+colnames(limaTPM) <- colnames(myLIMAcounts_t)
+
+rownames(limaTPM) <- rownames(myLIMAcounts_t)
+```
+
+
+###Filtering 80% and TPM > 0.1
+Filtering out genes with TPM > 0.1, output in counts 
+```{r}
+
+# filtering 80% from TPM
+dim(limaTPM)
+
+limaTPMall_t <- as.data.frame(t(limaTPM))
+
+dim(limaTPMall_t)
+
+myLIMAfactors$groups_m <- factor(myLIMAfactors$groups_m, 
+                                 levels = c("CNT","HFD", 
+                                            "INT", "HFE"))
+
+groups <- levels(myLIMAfactors$groups_m)
+cutoff <- 0.2
+thresholds <- round(table(myLIMAfactors$groups_m) * cutoff)
+selected_cols <- lapply(groups, function(i){
+  gr <- rownames(myLIMAfactors[myLIMAfactors$groups_m == i,])
+  ceros <- limaTPMall_t[gr,] == 0
+  selc_gr <- which(colSums(ceros) < thresholds[i])
+  return(selc_gr)
+})
+selected_index <- unique(unlist(selected_cols))
+myLIMAcountsTPM_80 <- limaTPMall_t[,selected_index]
+
+dim(myLIMAcountsTPM_80)
+myLIMAcountsTPM_80 <- as.data.frame(t(myLIMAcountsTPM_80))
+dim(myLIMAcountsTPM_80)
+
+# Filtering TPM>0.1 after the 80% filter
+
+dim(myLIMAcountsTPM_80)
+myLIMAcountsTPM_80 <- myLIMAcountsTPM_80 %>% dplyr::mutate(aver = rowSums(.)/ncol(myLIMAcountsTPM_80))
+
+myLIMAcountsTPM_80ord <- dplyr::arrange(myLIMAcountsTPM_80, aver)
+
+dim(myLIMAcountsTPM_80ord)
+  
+myLIMAcountsTPM_80ord_f <- dplyr::filter(myLIMAcountsTPM_80ord, aver > 0.1)
+
+dim(myLIMAcountsTPM_80ord_f) # same results, the order does not matter
+
+myLIMAcountsTPM_80ord_f <- dplyr::select(myLIMAcountsTPM_80ord_f, -aver)
+
+dim(myLIMAcountsTPM_80ord_f)
+
+```
+
+###80% and 0.1 filtered, raw counts
+Only keep genes that appear in 80% of the samples in at least one group. 
+```{r}
+myLIMAcountsTPM_80_f_id <- data.frame(ensembl_gene_id=rownames(myLIMAcountsTPM_80ord_f))
+
+
+dim(myLIMAcounts_t)
+myLIMAcounts_t$ensembl_gene_id <- rownames(myLIMAcounts_t)
+
+
+
+# keep raw counts for genes with 80% filter
+myLIMAcounts80 <- dplyr::inner_join(myLIMAcountsTPM_80_f_id,
+                                    myLIMAcounts_t,
+                                    by="ensembl_gene_id")
+
+dim(myLIMAcounts80)
+
+rownames(myLIMAcounts80) <- myLIMAcounts80$ensembl_gene_id
+
+myLIMAcounts80 <- dplyr::select(myLIMAcounts80, -ensembl_gene_id)
+
+
+#Eliminate genes with variance 0
+dim(myLIMAcounts80)
+gene_var <- data.frame(gene_var=apply(myLIMAcounts80, 1, var))
+dim(gene_var)
+gene_var_id <- dplyr::filter(gene_var,gene_var>0) # Michael Love against that
+dim(gene_var_id)
+
+
+
+##################################################
+##################################################
+##### Matrix to use for DESeq2 and downstream# ###
+                dim(myLIMAcounts80)############# #
+##################################################
+##################################################
+
+#write_xlsx(myLIMAcounts80, "myLIMAcounts80.xlsx")
+write.csv(myLIMAcounts80, file = "LIMA_transcriptomics_filtered.csv", 
+          row.names = TRUE)
+
+# dim(myLIMAcounts80)
+# 
+# myLIMAcounts80_t <- as.data.frame(t(myLIMAcounts80))
+# 
+# dim(myLIMAcounts80_t)
+# 
+# 
+# p_rna_raw <-mixOmics::pca(myLIMAcounts80_t, ncomp = 6, center = T, scale = T,
+#          max.iter = 500, tol = 1e-09, logratio = 'none',   ilr.offset = 0.001,
+#          V = NULL, multilevel = NULL)
+# 
+# metapei_id <- data.frame(ensembl_gene_id=rownames(myLIMAcounts80))
+# 
+# 
+# save(metapei_id, file="GFCV_metaepi1_20k_ensembl_gene_id_80filter.Rdata")
+
+#write_xlsx(metapei_id, "GFCV_metaepi1_20k_ensembl_gene_id_80filter.xlsx")
+
+```
+
+```{r}
+raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = t(myLIMAcounts),
+                                      colData = myLIMAfactors,
+                                      design= ~ 0 + groups_m)
+
+vst_dt <- t(assay(vst(raw_lima_DESeq, blind = FALSE)))
+vst_pca <- prcomp(vst_dt, scale. = FALSE)
+
+pca_plot(pca_data = vst_pca, pc_x = 1, pc_y = 2, group_var = myLIMAfactors$groups_m, ellipse_var = myLIMAfactors$groups_m, allElipse = TRUE)
+
+pcvar <- round(vst_pca$sdev^2/sum(vst_pca$sdev^2)*100, 2)
+
+d3plot <- plot_ly(x = vst_pca$x[,1], y = vst_pca$x[,2], z = vst_pca$x[,3], color = myLIMAfactors$groups_m)
+d3plot <- d3plot %>% add_markers()
+d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
+                     yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
+                     zaxis = list(title = paste0('PC3', "(", pcvar[3], "%)"))))
+d3plot
+
+##################
+f80_lima_DESeq <- DESeqDataSetFromMatrix(countData = myLIMAcounts80,
+                                      colData = myLIMAfactors,
+                                      design= ~ 0 + groups_m)
+vst_dt <- t(assay(vst(f80_lima_DESeq, blind = FALSE)))
+vst_pca <- prcomp(vst_dt, scale. = FALSE)
+
+pca_plot(pca_data = vst_pca, pc_x = 1, pc_y = 2, group_var = myLIMAfactors$groups_m, ellipse_var = myLIMAfactors$groups_m, allElipse = TRUE)
+
+pcvar <- round(vst_pca$sdev^2/sum(vst_pca$sdev^2)*100, 2)
+
+d3plot <- plot_ly(x = vst_pca$x[,1], y = vst_pca$x[,2], z = vst_pca$x[,3], color = myLIMAfactors$groups_m)
+d3plot <- d3plot %>% add_markers()
+d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
+                     yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
+                     zaxis = list(title = paste0('PC3', "(", pcvar[3], "%)"))))
+d3plot
+```
+
+
+## Statistical Analysis
+
+```{r}
+lima_80_dt <- read.csv("./LIMA_transcriptomics_filtered.csv", row.names = 1)
+myLIMAfactors <- read.csv("./RNASeq_lima_metadata.csv", row.names = 1, stringsAsFactors = TRUE)
+
+myLIMAfactors$group <- factor(myLIMAfactors$groups_m, levels = c("CNT", "HFD", "INT", "HFE"))
+
+
+lima_DESeq <- DESeqDataSetFromMatrix(countData = lima_80_dt,
+                                      colData = myLIMAfactors,
+                                      design= ~ 0 + group)
+
+lima_DESeq <- DESeq(lima_DESeq, test = "Wald")
+
+ctrs_vec <- t(combn(levels(myLIMAfactors$group), m = 2))
+ctrs_vec <- ctrs_vec[,2:1]
+
+ctrs_vec_nm <- apply(ctrs_vec, 1, paste, collapse = "-")
+
+ctrs_vec <- cbind("group", ctrs_vec)
+
+ctrs_vec <- lapply(seq_len(nrow(ctrs_vec)), function(ctrs){
+    ctrs_vec[ctrs,]
+})
+
+lima_DESeq_results <- lapply(ctrs_vec, function(ctrs){results(lima_DESeq, contrast = ctrs,
+                                                            pAdjustMethod = "fdr")})
+
+sapply(lima_DESeq_results, summary)
+names(lima_DESeq_results) <- ctrs_vec_nm
+
+lima_DESeq_results <- lapply(lima_DESeq_results, function(ctrs){
+    ctrs$padj[is.na(ctrs$padj)] <- 1
+    ctrs
+})
+
+saveRDS(lima_DESeq_results, "RNASeq_lima_results_noihw_list.rds")
+```
+

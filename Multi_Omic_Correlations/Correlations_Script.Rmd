@@ -1,0 +1,573 @@
+---
+title: "Correlation_Script"
+author: "Jordi Rofes Herrera"
+date: "2023-09-21"
+output: html_document
+params:
+    corr_threshold: 0.9
+    multi_omic_path: "D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omics_Analysis/Multivariate_Merged_Multi_Omics.rds"
+    group_metadata_var: "group"
+    
+    sample_levels_2_correlate: !r c("CNT", "HFD", "INT")
+    
+    filter_variable_2_correlate: !r list("HFD Altered" = quote(`HFD-CNT.adj.p.value` <= 0.05))
+    omic_list_2_correlate: !r list("Test Correlations" = c("RNASeq.liver", "DNA_Methylation.liver"))
+    rowData_variable_name_list: !r list("RNASeq.liver" = "gene_lab", "Untargeted_Metabolomics.liver" = "HFD-CNT.PutativeMetabolites", "Shotgun.colon.species" = "specie_name_short", "DNA_Methylation.liver" = "geneName")
+    add_fold_change: TRUE
+    fold_change_variable: "HFD-CNT.log2FC"
+    
+    add_clustering: TRUE
+    cluster_algorithm: "Infomaps"
+    
+    draw_cluster_scatter_plots: TRUE
+    draw_networks: TRUE
+    add_autocorrelations: FALSE
+    keep_full_correlations: TRUE
+    draw_cytoscape: TRUE
+    
+    output_dir: "./LIMA_Correlations/"
+    output_suffix: "hfc_cnt_09_ch"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+options(knitr.duplicate.label = "allow")
+```
+
+```{r, message=FALSE, warning=FALSE}
+## Necessary Packages
+
+library(MultiAssayExperiment)
+library(SummarizedExperiment)
+library(TreeSummarizedExperiment)
+library(dplyr)
+library(openxlsx)
+library(DT)
+library(knitr)
+library(igraph)
+library(RCy3)
+library(ggplot2)
+```
+
+```{r}
+## Loading the objects
+if(!dir.exists(params$output_dir)){dir.create(params$output_dir)}
+
+multi_omic_dt <- readRDS(params$multi_omic_path)
+
+omic_names_dup <- sapply(strsplit(names(experiments(multi_omic_dt)), "\\."), function(x){x[[1]]})
+
+unique_omics <- unique(omic_names_dup)
+
+omic_colors <- RColorBrewer::brewer.pal(n = length(unique_omics), name = "Set3")
+
+col_list <- lapply(seq_along(unique_omics), function(omic_id){
+    omic_name <- unique_omics[omic_id]
+    omic_num <- length(omic_names_dup[omic_names_dup == omic_name])
+    omic_col <- omic_colors[omic_id]
+    
+    col_ramp <- colorRampPalette(colors = c(omic_col, "white"))(omic_num + 8)[seq_len(omic_num)]
+    return(col_ramp)
+})
+color_vect <- unlist(col_list)
+names(color_vect) <- names(experiments(multi_omic_dt))
+
+exp_list <- lapply(names(experiments(multi_omic_dt)), function(omic_names){
+    omic_dt <- experiments(multi_omic_dt)[[omic_names]]
+    rownames(omic_dt) <- paste0(omic_names, ".", rownames(omic_dt))
+    omic_dt
+})
+names(exp_list) <- names(experiments(multi_omic_dt))
+experiments(multi_omic_dt) <- ExperimentList(exp_list)
+rm(exp_list)
+```
+
+```{r}
+## Correlations
+multi_omic_filtered_list <- lapply(params$filter_variable_2_correlate, 
+                                function(ctrs_exprs){
+    if(is(ctrs_exprs, "name") | is(ctrs_exprs, "expression") | is(ctrs_exprs, "call")){
+        keep_rows_list <- lapply(experiments(multi_omic_dt), function(omic_dt){
+            omic_rowdata <- rowData(omic_dt)
+            rownames(omic_rowdata)[which(eval(ctrs_exprs, envir = omic_rowdata))]
+        })
+        multi_omic_dt[keep_rows_list,,]    
+    } else{
+        return(multi_omic_dt)
+    }
+})
+
+if(!all(is.na(params$rowData_variable_name_list)) && 
+    all(names(params$rowData_variable_name_list) %in% names(multi_omic_dt))){
+    variable_dictionary <- lapply(names(params$rowData_variable_name_list), function(dataset_name){
+        
+        dataset_var <- rowData(multi_omic_dt[[dataset_name]])[params$rowData_variable_name_list[[dataset_name]]]
+        dataset_vector <- unlist(dataset_var[[1]])
+        names(dataset_vector) <- rownames(dataset_var)
+        
+        dataset_vector
+    })
+    names(variable_dictionary) <- names(params$rowData_variable_name_list)
+    
+} else{
+    variable_dictionary <- NA
+}
+
+if(params$add_fold_change){
+    fold_change_dictionary <- lapply(experiments(multi_omic_dt), function(exp_dt){
+        if(params$fold_change_variable %in% colnames(rowData(exp_dt))){
+            dict_vect <- rowData(exp_dt)[[params$fold_change_variable]]
+            names(dict_vect) <- rownames(exp_dt)    
+        } else{
+            dict_vect <- rep(NA, length(rownames(exp_dt)))
+            names(dict_vect) <- rownames(exp_dt)
+        }
+        dict_vect
+    })
+}
+
+omic_variable_correlation_list <- lapply(multi_omic_filtered_list, function(multi_omic_filtered){
+    omic_cor_list <- lapply(params$omic_list_2_correlate, function(omic_names){
+        
+        keep_omic <- sapply(omic_names, function(omic_name){nrow(assay(multi_omic_filtered[,,omic_name])) != 0})
+        omic_names <- omic_names[keep_omic]
+        
+        
+            
+        if(params$add_autocorrelations){
+            multi_omic_autocorrelations <- lapply(assays(multi_omic_filtered[,,omic_names]), 
+                                              function(omic_assays){cor(t(omic_assays))})    
+        } else{
+            multi_omic_autocorrelations <- lapply(omic_names,
+                                              function(omic_assay_names){
+                                                omic_assay <- assay(multi_omic_filtered[,,omic_assay_names])
+                                                var_names <- rep(omic_assay_names, nrow(omic_assay))
+                                                names(var_names) <- rownames(omic_assay)
+                                                var_names
+                                            })
+            multi_omic_autocorrelations <- do.call(c, multi_omic_autocorrelations)
+        }
+        
+        omic_combn <- combn(omic_names, m = 2)
+        cor_thr_list <- lapply(as.data.frame(omic_combn), function(omic_name_pairs){
+            intersect_samples <- Reduce(intersect, 
+                                lapply(experiments(multi_omic_filtered[,,omic_name_pairs]),
+                                    function(exp_data){
+                                        colnames(exp_data)[exp_data[[params$group_metadata_var]] %in%
+                                                    params$sample_levels_2_correlate]}))
+            multi_omic_filtered_2 <- multi_omic_filtered[,intersect_samples, omic_name_pairs]
+            print(omic_name_pairs)
+            keep_var <- unlist(lapply(assays(multi_omic_filtered_2), 
+                                function(omic_assay){
+                                    rownames(omic_assay)[rowSums(omic_assay) != 0]
+                                }))
+            multi_omic_filtered_2 <- multi_omic_filtered_2[keep_var,,]
+            
+            multi_omic_filtered_assays <- assays(multi_omic_filtered_2)
+            
+            cor_mat <- cor(t(multi_omic_filtered_assays[[omic_name_pairs[1]]]), 
+                t(multi_omic_filtered_assays[[omic_name_pairs[2]]]))
+            cor_mat
+        })  
+        names(cor_thr_list) <- apply(omic_combn, 2, paste0, collapse = "-")
+        
+        list("Autocorrelations" = multi_omic_autocorrelations, 
+            "Multi_Omic_Correlations" = cor_thr_list)
+        
+        # cor_thr_list <- mapply(function(omic_1_name, omic_2_name){
+        #     
+        #     omic_pair_names <- c(omic_1_name, omic_2_name)
+        #     
+        #     intersect_samples <- Reduce(intersect, 
+        #                         lapply(experiments(multi_omic_filtered[,,omic_pair_names]),
+        #                             function(exp_data){
+        #                                 colnames(exp_data)[exp_data[[params$group_metadata_var]] %in%
+        #                                             params$sample_levels_2_correlate]}))
+        #     multi_omic_filtered_2 <- multi_omic_filtered[,intersect_samples, omic_pair_names]
+        #     multi_omic_filtered_assays <- assays(multi_omic_filtered_2)
+        #     cor_mat <- cor(t(multi_omic_filtered_assays[[omic_1_name]]), 
+        #         t(multi_omic_filtered_assays[[omic_2_name]]))
+        #     
+        # }, omic_1_name = omic_names[-length(omic_names)], 
+        #     omic_2_name = omic_names[-1], SIMPLIFY = FALSE)
+        # names(cor_thr_list) <- merged_names
+        # 
+        # list("Autocorrelations" = multi_omic_autocorrelations, 
+        #     "Multi_Omic_Correlations" = cor_thr_list)
+    }) 
+    return(omic_cor_list[!sapply(omic_cor_list, function(x){all(is.na(x))})])
+})
+```
+
+## Correlation Networks
+
+```{r}
+merge_disjoint_edge_attributes <- function(graph, attr_to_merge){
+    
+    graph_edge_attr_names <- edge_attr_names(graph)
+    
+    for(attr_name in attr_to_merge){
+        
+        graph_edge_attr_found <- graph_edge_attr_names[grep(paste0(attr_name, "_*[0123456789]*$"), 
+                                    x = graph_edge_attr_names)]
+        
+        attr_data <- lapply(graph_edge_attr_found, function(x){
+            get.edge.attribute(graph = graph, name = x)
+        })
+        attr_data <- do.call(cbind, attr_data)
+        edge_attr(graph, name = attr_name) <- apply(attr_data, 1, 
+                                                            FUN = function(x){
+            x[!is.na(x)][1]
+        })
+        
+        attr_to_remove_vec <- grep(paste0(attr_name, "_[0123456789]+$"), 
+                                    x = graph_edge_attr_names, value = TRUE)
+        for(attr_to_remove in attr_to_remove_vec){
+            graph <- remove.edge.attribute(graph = graph, 
+                            name = attr_to_remove)  
+        }
+            
+    }
+    return(graph)
+}
+```
+
+
+```{r}
+omic_variable_networks <- lapply(names(omic_variable_correlation_list), 
+                                function(omic_variable_correlation_name){
+    
+    omic_variable_correlation <- omic_variable_correlation_list[[omic_variable_correlation_name]]
+    
+    lapply(omic_variable_correlation, function(omic_correlation){
+        
+        omic_graph_list <- lapply(names(omic_correlation$Multi_Omic_Correlations), function(omic_name){
+            
+            # if(omic_name == "Shotgun.cecum.class-Functional_Shotgun.colon.cogs"){browser()}
+            omic_graph <- graph_from_incidence_matrix(omic_correlation$Multi_Omic_Correlations[[omic_name]],
+                                                    mode = "out", directed = FALSE, weighted = TRUE)
+            
+            omic_graph <- igraph::subgraph.edges(
+                    omic_graph, 
+                    eids = E(omic_graph)[abs(edge_attr(omic_graph, "weight")) >= params$corr_threshold]
+            )
+            
+            print(omic_name)
+            edge_attr(omic_graph, name = "Edge_Type") <- omic_name
+            
+            omic_graph
+        })
+        omic_graph_merge <- graph.union(omic_graph_list)
+        
+        if(params$add_autocorrelations){
+            autocor_graph <- lapply(names(omic_correlation$Autocorrelations), function(omic_name_auto){
+                omic_autocorr <- omic_correlation$Autocorrelations[[omic_name_auto]]
+                
+                omic_autocorr_graph <- graph_from_adjacency_matrix(omic_autocorr, weighted = TRUE)
+                omic_autocorr_graph <- igraph::subgraph.edges(
+                    omic_autocorr_graph, 
+                    eids = E(omic_autocorr_graph)[abs(edge_attr(omic_autocorr_graph, 
+                                                            "weight")) >= params$corr_threshold]
+                )
+                
+                vertex_attr(omic_autocorr_graph, "Node_Omic") <- omic_name_auto
+                edge_attr(omic_autocorr_graph, "Edge_Type") <- "Autocorrelation"
+                omic_autocorr_graph
+            })
+            autocor_graph <- disjoint_union(autocor_graph)
+            omic_graph_merge <- graph.union(autocor_graph, omic_graph_merge)
+        }
+        
+        omic_graph_merge <- merge_disjoint_edge_attributes(graph = omic_graph_merge, 
+                                                c("weight", "Edge_Type"))
+        if(!params$add_autocorrelations){
+            vertex_attr(omic_graph_merge, 
+                        name = "Node_Omic") <- omic_correlation$Autocorrelations[names(V(omic_graph_merge))]
+        }
+        
+        if(!all(is.na(variable_dictionary))){
+            vertex_attr(omic_graph_merge, "Readable_Name") <- sapply(names(V(omic_graph_merge)), 
+                                                                    function(v_name){
+                omic_id <- vertex_attr(omic_graph_merge, name = "Node_Omic", index = v_name)
+                if(omic_id %in% names(variable_dictionary)){
+                    variable_dictionary[[omic_id]][v_name]
+                } else{
+                    return(v_name)
+                }
+            })
+        }
+        if(!all(is.na(fold_change_dictionary))){
+            vertex_attr(omic_graph_merge, params$fold_change_variable) <- sapply(names(V(omic_graph_merge)),
+                                                                    function(v_name){
+                omic_id <- vertex_attr(omic_graph_merge, name = "Node_Omic", index = v_name)
+                if(omic_id %in% names(fold_change_dictionary)){
+                    fold_change_dictionary[[omic_id]][v_name]
+                } else{
+                    return(v_name)
+                }
+            })
+        }
+        if(params$add_clustering){
+            set.seed(1234)
+            vertex_attr(omic_graph_merge, 
+                        name = "Clustering") <- switch(params$cluster_algorithm, "Infomaps" = {
+                as.character(membership(cluster_infomap(graph = omic_graph_merge, 
+                            e.weights = rep(1, length(E(omic_graph_merge))), 
+                            v.weights = rep(1, length(V(omic_graph_merge))))))
+            })
+            
+        }
+        
+        omic_graph_merge
+    })
+})
+names(omic_variable_networks) <-names(omic_variable_correlation_list)
+```
+
+```{r, eval=params$draw_cluster_scatter_plots}
+library(reshape)
+
+lapply(omic_variable_networks, function(omic_networks){
+    lapply(omic_networks, function(omic_network){
+        pdf(paste0(params$output_dir, "cluster_correlation_scatter_plots_", params$output_suffix, ".pdf"))
+        lapply(unique(vertex_attr(omic_network, name = "Clustering")), function(clu_id){
+            vertex_ids_clu <- names(V(omic_network))[vertex_attr(omic_network, name = "Clustering") == clu_id]
+            dt_to_plot <- experiments(multi_omic_dt[vertex_ids_clu, 
+                                                    multi_omic_dt$group %in% params$sample_levels_2_correlate])
+            dt_to_plot <- dt_to_plot[sapply(dt_to_plot, nrow) != 0]
+            dt_to_plot
+            
+            group_var_dict <- multi_omic_dt$group
+            names(group_var_dict) <- multi_omic_dt$samplename
+            
+            plot_dt <- lapply(names(dt_to_plot), function(omic_exp_name){
+                omic_exp <- dt_to_plot[[omic_exp_name]]
+                melted_dt <- melt(as.matrix(assay(omic_exp)))
+                colnames(melted_dt)[1:2] <- c("var_id", "sample_name")
+                # melted_dt$var_id <- factor(gsub(paste0(omic_exp_name, "."), "", melted_dt$var_id))
+                melted_dt$omic_name <- factor(omic_exp_name)
+                melted_dt$group <- factor(group_var_dict[melted_dt$sample_name])
+                melted_dt
+            })
+            plot_dt <- do.call(rbind, plot_dt)
+                    
+            plot_dt$sample_name <- factor(
+                plot_dt$sample_name, 
+                levels = multi_omic_dt$samplename[order(colData(multi_omic_dt)[[params$group_metadata_var]])]
+            )
+            plot_dt$sample_name <- droplevels(plot_dt$sample_name)
+            
+            var_ids <- unique(plot_dt$var_id)
+            var_ids_omic <- sapply(var_ids, function(x){unique(plot_dt$omic_name[plot_dt$var_id == x])})
+            
+            # label_dt <- data.frame("var_id" = var_ids, "omic" = var_ids_omic)
+            # label_dt
+            labels_dt <- distinct(plot_dt[,c("var_id", "omic_name")])
+            labels_dt <- labels_dt[order(labels_dt$omic_name),]
+            labels_dt$long_name <- apply(labels_dt, 1, function(x){
+                if(!(x[[2]] %in% names(variable_dictionary))){return(x[[1]])}
+                
+                found_name <- variable_dictionary[[x[2]]][[x[1]]]
+                if(!is.null(found_name)){
+                    found_name
+                } else{
+                    x[[1]]
+                }
+            })
+            
+            # labels_dt$long_name <- sapply(as.character(labels_dt$long_name), 
+            #     function(x){
+            #         if(length(strsplit(x, "")[[1]]) > 50){
+            #               return(stringr::str_trunc(x, width = 50, side = "center"))
+            #         } else{
+            #             return(x)
+            #         }
+            # })
+            # plot_dt$long_name <- factor(sapply(plot_dt$var_id, function(x){
+            #     labels_dt$long_name[labels_dt$var_id == x]}), levels = labels_dt$long_name)
+            # 
+            
+            plot_dt$var_id <- factor(plot_dt$var_id)
+            
+            legend_colors <- color_vect[as.character(sapply(levels(plot_dt$var_id), function(x){
+                labels_dt$omic_name[labels_dt$var_id == x]}))]
+            
+            p <- ggplot(plot_dt, aes(x = sample_name, y = value, color = omic_name, 
+                                     group = var_id, shape = var_id)) + 
+                geom_point() + geom_smooth(se = FALSE, span = 0.5) + theme_minimal() + 
+                theme(axis.text.x = element_text(angle = 90), 
+                        legend.position = "right", 
+                        legend.justification = "top", 
+                        legend.title = element_blank(), 
+                        plot.title = element_text(hjust = 0.5),
+                        legend.spacing.y = unit(0.1, "cm")) + 
+                ggtitle(paste("Cluster", clu_id)) + 
+                xlab(NULL) + ylab("Normalized Values") + 
+                scale_color_manual(values = color_vect) + 
+                guides(shape = guide_legend(label.theme = element_text(size = 0.5),
+                                            order = 2,  byrow = TRUE,
+                                            override.aes = list(
+                                                color = legend_colors
+                                            ),
+                                            keyheight = 0.05), 
+                       col = guide_legend(order = 1)) + 
+                scale_shape_manual(values = rep(16, length(unique(plot_dt$var_id))))
+                # annotate(x = 20, y = 10, geom = "text", label = labels_dt$var_id)
+            print(p)
+        }) 
+        dev.off()
+    })
+})
+
+saveRDS(omic_variable_networks, file = paste0(params$output_dir, "network_results_", 
+                                                params$output_suffix, ".rds"))
+```
+
+
+```{r, eval=params$draw_cytoscape}
+cytoscapePing()
+
+shape_vect <- RCy3::getNodeShapes()[seq_along(unique_omics)]
+shape_vect[is.na(shape_vect)] <- "ELLIPSE"
+
+shape_vect_ext <- unlist(lapply(seq_along(shape_vect), function(omic_id){
+    omic_name <- unique_omics[omic_id]
+    shape_omic <- shape_vect[omic_id]
+    omic_num <- length(omic_names_dup[omic_names_dup == omic_name])
+    
+    return(rep(shape_omic, omic_num))
+}))
+names(shape_vect_ext) <- names(experiments(multi_omic_dt))
+
+for(omic_variable_network in omic_variable_networks){
+    for(omic_network in omic_variable_network){
+        # vertex.color = vertex_attr(test_sub, name = "Node_Omic")
+        plot.igraph(omic_network, vertex.size = 0.5, edge.size = 0.1, 
+                    vertex.label.cex = 0.2, edge.arrow.size = 0.1, 
+                    layout = layout_as_tree(omic_network))
+        
+        RCy3::createNetworkFromIgraph(omic_network)
+        RCy3::copyVisualStyle(from.style = "default", 
+                              to.style = params$output_suffix)
+        RCy3::setVisualStyle(params$output_suffix)
+        # RCy3::setNodeColorMapping(table.column = "Node_Omic", 
+        #                           table.column.values = names(color_vect), 
+        #                           colors = color_vect, 
+        #                           mapping.type = "discrete", params$output_suffix)
+        RCy3::setNodeShapeMapping(table.column = "Node_Omic", 
+                                  table.column.values = names(shape_vect_ext), 
+                                  shapes = shape_vect_ext, style.name = params$output_suffix)
+        
+        RCy3::setNodeColorMapping(table.column = make.names(params$fold_change_variable), 
+                                colors = colorRampPalette(colors = c("blue", 
+                                                                    "white", 
+                                                                    "red")),
+                                style.name = params$output_suffix)
+        RCy3::setEdgeColorMapping(table.column = "weight", 
+                                colors = colorRampPalette(colors = c("blue", 
+                                                                    "red")), 
+                                style.name = params$output_suffix)
+    }
+}
+```
+
+<!-- # ```{r} -->
+<!-- # omic_variable_correlation_df_list <- lapply(omic_variable_networks, -->
+<!-- #                                             function(omic_networks){ -->
+<!-- #      lapply(omic_networks, function(omic_network){ -->
+<!-- #          -->
+<!-- #         omic_dt_results <- lapply(names(omic_correlation_list), function(omic_names){ -->
+<!-- #             omic_network <- igraph::subgraph.edges(omic_network,  -->
+<!-- #                 eids = E(omic_network)[edge_attr(omic_network, "weight") >= 0.9] -->
+<!-- #             )     -->
+<!-- #              -->
+<!-- #              -->
+<!-- #             if(!all(is.na(variable_dictionary))){ -->
+<!-- #                 cor_var_mat_readable <- data.frame( -->
+<!-- #                     "V1" = variable_dictionary[[colnames(cor_var_mat)[1]]][cor_var_mat[[1]]], -->
+<!-- #                     "V2" = variable_dictionary[[colnames(cor_var_mat)[2]]][cor_var_mat[[2]]]) -->
+<!-- #                 colnames(cor_var_mat_readable) <- colnames(cor_var_mat) -->
+<!-- #                  -->
+<!-- #                 return(cor_var_mat_readable) -->
+<!-- #             } -->
+<!-- #             return(cor_var_mat) -->
+<!-- #         }) -->
+<!-- #         names(omic_dt_results) <- names(omic_correlation_list) -->
+<!-- #         omic_dt_results -->
+<!-- #     }) -->
+<!-- # }) -->
+<!-- # # Saving the merged results -->
+<!-- # omic_variable_correlation_list_merged <- lapply(omic_variable_correlation_df_list,  -->
+<!-- #                                                 function(omic_variable_correlation){ -->
+<!-- #     lapply(omic_variable_correlation, function(omic_correlation){ -->
+<!-- #          -->
+<!-- #         merged_correlations <- Reduce(full_join, omic_correlation) -->
+<!-- #              -->
+<!-- #         if(params$keep_full_correlations){ -->
+<!-- #             full_corrrelations <- !apply(merged_correlations, 1,  -->
+<!-- #                                             function(x){any(is.na(x))}) -->
+<!-- #              -->
+<!-- #             if(any(full_corrrelations)){ -->
+<!-- #                 merged_correlations <- merged_correlations[full_corrrelations,]     -->
+<!-- #             } else{ -->
+<!-- #                 cat("\n") -->
+<!-- #                 warning("Full correlations not found. Returning whole matrix.") -->
+<!-- #             } -->
+<!-- #         } -->
+<!-- #         return(merged_correlations) -->
+<!-- #     }) -->
+<!-- # }) -->
+<!-- #  -->
+<!-- #  -->
+<!-- # for(feature_filtered_set_name in names(omic_variable_correlation_list_merged)){ -->
+<!-- #     results_excel <- createWorkbook() -->
+<!-- #     feature_filtered_set <- omic_variable_correlation_list_merged[[feature_filtered_set_name]] -->
+<!-- #      -->
+<!-- #     for(omic_set_name in names(feature_filtered_set)){ -->
+<!-- #         addWorksheet(wb = results_excel, sheetName = omic_set_name) -->
+<!-- #         openxlsx::writeData(wb = results_excel, sheet = omic_set_name,  -->
+<!-- #                             x = feature_filtered_set[[omic_set_name]]) -->
+<!-- #     } -->
+<!-- #     saveWorkbook(wb = results_excel, file = paste0(params$output_dir,  -->
+<!-- #                                                     feature_filtered_set_name, -->
+<!-- #                                                     ".correlation_results.xlsx"),  -->
+<!-- #                 overwrite = TRUE) -->
+<!-- # } -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- #  -->
+<!-- #  -->
+<!-- #  -->
+<!-- # ## Correlation Results {.tabset} -->
+<!-- #  -->
+<!-- # ```{r, include=FALSE} -->
+<!-- # datatable(data = iris) -->
+<!-- # ``` -->
+
+<!-- # ```{r, results='asis'} -->
+<!-- # for(i in names(omic_variable_correlation_list_merged)){ -->
+<!-- #         cat("### ", i, "{.tabset} \n"); -->
+<!-- #         for(z in names(omic_variable_correlation_list_merged[[i]])){ -->
+<!-- #             dt_to_table <- as.data.frame(omic_variable_correlation_list_merged[[i]][[z]]) -->
+<!-- #             num_vars <- sapply(dt_to_table, is.numeric) -->
+<!-- #              -->
+<!-- #             cat("####", z, "\n") -->
+<!-- #             # if(!any(is.na(enrich_plot_data[[i]][[z]]))){ -->
+<!-- #             #     knit_print(enrich_plot_data[[i]][[z]][[1]]) -->
+<!-- #             #     knit_print(enrich_plot_data[[i]][[z]][[2]]) -->
+<!-- #             # } -->
+<!-- #             cat("\n") -->
+<!-- #             cat(knit_print( datatable(dt_to_table, -->
+<!-- #                                       options = list(scrollX = TRUE, pageLength = 5 -->
+<!-- #                                       )) %>% -->
+<!-- #                                 formatRound(columns = colnames(dt_to_table)[num_vars], digits = 3)), "\n"); -->
+<!-- #             cat("\n") -->
+<!-- #         } -->
+<!-- #     } -->
+<!-- # ``` -->
+
+## Appendix
+
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+
+```

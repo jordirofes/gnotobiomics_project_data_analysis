@@ -1,0 +1,131 @@
+---
+title: "shotgun_metagenomics_functional_jun2023"
+author: "Jordi Rofes Herrera"
+date: "2023-06-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required packages
+
+```{r}
+library(DESeq2)
+```
+
+
+## Loading the data
+
+```{r}
+functional_paths <- list.files("./CNT_HFD_HFE_INT/P200045_NEW/report_functional/", recursive = TRUE, pattern = "counts_all", full.names = TRUE)
+
+functional_counts <- lapply(functional_paths, function(func_tool_path){
+    read.table(func_tool_path, sep = "\t", header = TRUE, row.names = 1)
+})
+names(functional_counts) <- gsub("_counts_all.tsv", "", basename(functional_paths))
+```
+
+## Pre-processing
+
+```{r}
+organ_dt <- lapply(c("cecum", "colon"), function(organ){
+    shotgun_data <- lapply(functional_counts, function(shotgun_table){
+        colnames(shotgun_table)[38] <- paste0(colnames(shotgun_table)[38], "I")
+        if(organ == "cecum"){
+            shotgun_table <- shotgun_table[grepl("CE", colnames(shotgun_table))]
+            colnames(shotgun_table) <- gsub("CE", "X", colnames(shotgun_table))
+        } else if(organ == "colon"){
+            shotgun_table <- shotgun_table[grepl("X", colnames(shotgun_table))]
+        }
+        shotgun_table <- shotgun_table[rowMeans(shotgun_table) != 0,]
+        shotgun_table
+    })
+    shotgun_data
+})
+names(organ_dt) <- c("cecum", "colon")
+```
+
+```{r}
+## Creating the metadata
+metadata_list <- lapply(organ_dt, function(organ){
+    lapply(organ, function(hierarchy){ 
+        hierarchy <- data.frame("samplename" = colnames(hierarchy))
+        hierarchy$group <- substr(x = hierarchy$samplename, start = 5, stop = 5)
+        hierarchy$group <- factor(hierarchy$group, levels = c("C", "H", "I", "E"), 
+                                      labels = c("CNT", "HFD", "INT", "HFE"))
+        hierarchy
+    })
+})
+```
+
+
+```{r}
+# Filtering taxons not present in atleast 80% of one group
+organ_dt_list_proc <- lapply(names(organ_dt), function(organ_name){
+    organ <- organ_dt[[organ_name]]
+    organ_metadata <- metadata_list[[organ_name]]
+    
+    organ_filt <- lapply(names(organ), function(hierarchy_name){
+        hierarchy_metadata <- organ_metadata[[hierarchy_name]]
+        hierarchy <- organ[[hierarchy_name]]
+        
+        keep_vars <- apply(hierarchy, 1, function(dt_var){
+            group_dt <- tapply(dt_var, INDEX = hierarchy_metadata$group, function(var_group){
+                sum(var_group != 0)/length(var_group)
+            })
+            
+            any(group_dt > 0.8)    
+        })
+        
+        hierarchy[keep_vars,]
+    })
+    names(organ_filt) <- names(organ)
+    organ_filt
+})
+names(organ_dt_list_proc) <- names(organ_dt)
+
+saveRDS(object = list("shotgun_data" = organ_dt_list_proc, "shotgun_metadata" = metadata_list), "./shotgun_functional_data_list.rds")
+```
+
+## Statistical Analysis
+
+```{r}
+stat_res <- lapply(names(organ_dt_list_proc), function(organ_name){
+    organ_data <- organ_dt_list_proc[[organ_name]]
+    organ_meta <- metadata_list[[organ_name]]
+  
+    organ_results <- lapply(names(organ_data), function(hierarchy_name){
+        hierarchy <- organ_data[[hierarchy_name]]
+        hierarchy_meta <- organ_meta[[hierarchy_name]]
+        names_comp <- apply(t(combn(levels(hierarchy_meta$group), m = 2))[,2:1], 1, paste, collapse = "-")
+        # comp_mat <- as.data.frame(matrix(NA, ncol = 2, nrow = length(names_comp)))
+        # rownames(comp_mat) <- names_comp
+        # colnames(comp_mat) <- c("mean rank diff", "pval")
+        # 
+        #hierarchy <- as.data.frame(clr(t(hierarchy)))
+        hierarchy <- as.data.frame(hierarchy)
+        #pca(mat = hierarchy, metadata = organ_meta, scale = FALSE)
+        
+        hierarchy_deseq <- DESeqDataSetFromMatrix(countData = hierarchy,
+                                                  colData = hierarchy_meta, design = ~ group + 0)
+        hierarchy_deseq <- DESeq(hierarchy_deseq, test = "Wald")
+        results_list <- lapply(names_comp, function(comp_name){
+            comp_vec <- c("group", strsplit(comp_name, "-")[[1]])
+            results(hierarchy_deseq, contrast = comp_vec, pAdjustMethod = "fdr")
+        })
+        # hierarchy_ancombc2 <- SummarizedExperiment(assays = hierarchy, 
+        #                                            colData = hierarchy_meta)
+        # ancom_res <- ancombc2(data = hierarchy_ancombc2, fix_formula = "~ group + 0", p_adj_method = "fdr", group = "group")
+        # 
+        names(results_list) <- names_comp
+        results_list
+    })
+    names(organ_results) <- names(organ_data)
+    organ_results
+})
+names(stat_res) <- names(organ_dt_list_proc)
+
+saveRDS(stat_res, "./shotgun_functional_results_list.rds")
+```

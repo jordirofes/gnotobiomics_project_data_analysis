@@ -1,0 +1,383 @@
+---
+title: "Shotgun_Metagenomics LIMA"
+output: html_document
+date: "2023-04-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading the data
+
+```{r}
+#library(ANCOMBC)
+library(DESeq2)
+library(SummarizedExperiment)
+library(TreeSummarizedExperiment)
+source("../../Utility Functions/utilities.R")
+```
+
+
+```{r}
+shotgun_data_path <- list.files("./CNT_HFD_HFE_INT/P200045_NEW/report_taxonomy/comp1/taxa_profiles/", full.names = TRUE)
+
+organ_dt <- lapply(c("cecum", "colon"), function(organ){
+    shotgun_data <- lapply(shotgun_data_path, function(shotgun_path){
+        shotgun_table <- read.table(shotgun_path, header = TRUE, row.names = 1, sep = "\t")
+        colnames(shotgun_table)[38] <- paste0(colnames(shotgun_table)[38], "I")
+        if(organ == "cecum"){
+            shotgun_table <- shotgun_table[grepl("CE", colnames(shotgun_table))]
+            colnames(shotgun_table) <- gsub("CE", "X", colnames(shotgun_table))
+        } else if(organ == "colon"){
+            shotgun_table <- shotgun_table[grepl("X", colnames(shotgun_table))]
+        }
+        shotgun_table <- shotgun_table[rowMeans(shotgun_table) != 0,]
+        shotgun_table
+    })
+    names(shotgun_data) <- gsub("_comp1.txt", "", basename(shotgun_data_path))
+    shotgun_data
+})
+names(organ_dt) <- c("cecum", "colon")
+
+```
+
+## Creating the metadata
+
+```{r}
+metadata_list <- lapply(organ_dt, function(organ){
+    lapply(organ, function(hierarchy){ 
+        hierarchy <- data.frame("samplename" = colnames(hierarchy))
+        hierarchy$group <- substr(x = hierarchy$samplename, start = 5, stop = 5)
+        hierarchy$group <- factor(hierarchy$group, levels = c("C", "H", "I", "E"), 
+                                      labels = c("CNT", "HFD", "INT", "HFE"))
+        hierarchy
+    })
+})
+```
+
+
+```{r}
+shotgun_data_list <- organ_dt
+shotgun_metadata_list <- metadata_list
+
+shotgun_data <- lapply(names(shotgun_data_list), function(organ_name){
+    organ_data <- shotgun_data_list[[organ_name]]
+    organ_metadata <- shotgun_metadata_list[[organ_name]]
+    # organ_results <- shotgun_results[[organ_name]]
+    
+    names(organ_metadata) <- sapply(strsplit(names(organ_metadata), "_"), function(x){x[3]})
+    names(organ_data) <- sapply(strsplit(names(organ_data), "_"), function(x){x[3]})
+    # names(organ_results) <- sapply(strsplit(names(organ_results), "_"), function(x){x[3]})
+    
+    organ_summ <- lapply(names(organ_data), function(hierarchy_names){
+        hierarchy_data <- organ_data[[hierarchy_names]]
+        hierarchy_metadata <- organ_metadata[[hierarchy_names]]
+        # hierarchy_results <- organ_results[[hierarchy_names]]
+        # hierarchy_results <- lapply(hierarchy_results, function(hierarchy_results_ind){
+        #     colnames(hierarchy_results_ind)[c(2,5:6)] <- c("log2FC","p.value", "adj.p.value")
+        #     hierarchy_results_ind
+        # })
+        # merged_rowdata <- do.call(cbind, hierarchy_results)
+        # # if(organ_name == "colon"){browser()}
+        hierarchy_ids <- c("sk", "p", "c", "o", "f", "g", "s")
+        hierarchy_ranks <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+        
+        max_rank <- grep(stringr::str_to_title(hierarchy_names), hierarchy_ranks)
+        
+        hierarchy_ids <- hierarchy_ids[seq_len(max_rank)]
+        hierarchy_ranks <- hierarchy_ranks[seq_len(max_rank)]
+        
+        hierarchycal_tree <- lapply(rownames(hierarchy_data), function(sp_name){
+            hierarchy_found <- c()
+            
+            for(h_id_num in seq_along(hierarchy_ids)){
+                h_id <- hierarchy_ids[h_id_num]
+                
+                found_id <- grep(paste0("^", h_id, "__"), 
+                                strsplit(sp_name, ";")[[1]], value = TRUE)
+                
+                if(length(found_id)){
+                    found_dt <- gsub(paste0(h_id, "__"), "", found_id)
+                    if(found_dt == "" || grepl("uncultured|unknown|unidentified|metagenome", found_id, ignore.case = TRUE)){
+                        hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
+                                                            hierarchy_found[h_id_num - 1], 
+                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
+                    } else{
+                        hierarchy_found[h_id_num] <- found_dt
+                    }
+                } else{
+                    hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
+                                                            hierarchy_found[h_id_num - 1], 
+                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
+                }    
+            }
+            return(hierarchy_found)
+        })
+        
+        # hierarchycal_tree <- lapply(rownames(hierarchy_data), function(sp_name){
+        #     sapply(hierarchy_ids, function(h_id){
+        #         found_id <- grep(paste0("^", h_id, "__"), 
+        #                         strsplit(sp_name, ";")[[1]], value = TRUE)
+        #         if(length(found_id)){
+        #             found_dt <- gsub(paste0(h_id, "__"), "", found_id)
+        #             if(found_dt == ""){return("Unknown")} else{
+        #                 return(found_dt)
+        #             }
+        #         } else{
+        #             return(NA)
+        #         }
+        #     })
+        # })
+        hierarchycal_tree <- do.call(rbind, hierarchycal_tree)
+        colnames(hierarchycal_tree) <- hierarchy_ranks
+
+        # summ_exp <- TreeSummarizedExperiment(assays = list("counts" = as.matrix(hierarchy_data)), 
+        #                     colData = hierarchy_metadata,
+        #                     rowData = cbind(hierarchycal_tree, merged_rowdata))
+        summ_exp <- TreeSummarizedExperiment(assays = list("counts" = as.matrix(hierarchy_data)),
+                            colData = hierarchy_metadata,
+                            rowData = hierarchycal_tree)
+        rowData(summ_exp)$old_names <- rownames(summ_exp)
+        
+        summ_exp <- mia::agglomerateByRank(x = summ_exp, rank = hierarchy_ranks[max_rank])
+        summ_exp <- mia::addTaxonomyTree(summ_exp)
+        
+        rowData(summ_exp)$specie_names <- rownames(summ_exp)
+        
+        
+        # x <- summ_exp
+        # tree <- taxonomyTree(x)
+        # rownames(x) <- getTaxonomyLabels(x, with_rank = TRUE, 
+        #     resolve_loops = TRUE, make_unique = FALSE)
+        # rowNodeLab = rownames(x)
+        # colTree = NULL 
+        # colNodeLab = NULL
+        # whichRowTree = 1 
+        # whichColTree = 1
+        # 
+        # # test_1 <- TreeSummarizedExperiment:::.replace_tree(x, value = tree, nodeLab = rowNodeLab, whichTree = 1)
+        # test_2 <- test_replace(x, value = tree, nodeLab = rowNodeLab, whichTree = 1)
+        
+        
+        # sp_names <- lapply(strsplit(rownames(summ_exp), ";[skpcfg]{1,2}__"), function(x){
+        #     x <- x[x != ""]
+        #     x[length(x)]
+        # })
+        
+        # sp_names <- lapply(seq_along(rownames(summ_exp)), function(i){
+        #     x <- rownames(summ_exp)[i]
+        #     while(grepl(";[skpcofg]{1,2}__$", x)){
+        #         x <- gsub(";[skpocfg]{1,2}__$", "", x)[[1]]
+        #     }
+        #     x <- strsplit(x, ";")[[1]]
+        #     if(length(x) > 1){
+        #         x <- paste(x[c(length(x)-1, length(x))], collapse = ";")
+        #     }
+        #     x <- paste0(x, i, sep = "_")
+        #     x
+        # })
+        # rowData(summ_exp)$specie_name_short <- sp_names
+        
+        # rownames(summ_exp) <- sapply(sp_names, function(x){make.names(stringr::str_trunc(x, 15, "left"))})
+        summ_exp
+    })
+    names(organ_summ) <- names(organ_data)
+    organ_summ
+})
+names(shotgun_data) <- names(shotgun_data_list)
+```
+
+```{r}
+lapply(names(shotgun_data), function(organ_names){
+    organ <- shotgun_data[[organ_names]]
+    lapply(names(organ), function(hierarchy_names){
+        
+        group_var <- colData(organ[[hierarchy_names]])[["group"]]
+        hierarchy <- organ[[hierarchy_names]]
+        alpha_div <- vegan::diversity(x = assay(hierarchy), index = "shannon", MARGIN = 2)
+        
+        boxplot(alpha_div ~ group_var, main = paste(organ_names, hierarchy_names, sep = "_"), 
+                xlab = "Group", ylab = "Shannon Index")
+    })
+})
+```
+
+## Test aggregated phylum
+
+```{r}
+agglomerated_dt <- lapply(names(shotgun_data), function(organ_names){
+    
+    hierarchy_sp <- shotgun_data[[organ_names]]$species
+    agglomerated_dt <- mia::agglomerateByRank(x = hierarchy_sp, rank = "Phylum")
+    alpha_div <- vegan::diversity(x = assay(agglomerated_dt), index = "shannon", MARGIN = 2)
+    group_var <- agglomerated_dt$group
+    
+    boxplot(alpha_div ~ group_var, main = paste("Aggregated", organ_names, "phylum", sep = "_"), 
+            xlab = "Group", ylab = "Shannon Index")
+    agglomerated_dt
+})
+names(agglomerated_dt) <- names(shotgun_data)
+
+n1 <- rownames(agglomerated_dt$cecum)
+n2 <- gsub("Phylum:", "", rownames(shotgun_data$cecum$phylum))
+n2[!n2 %in% n1]
+
+
+```
+
+
+
+```{r}
+# Filtering taxons not present in atleast 80% of one group
+shotgun_data_proc <- lapply(names(shotgun_data), function(organ_name){
+    organ <- shotgun_data[[organ_name]]
+
+    organ_filt <- lapply(names(organ), function(hierarchy_name){
+        
+        hierarchy <- organ[[hierarchy_name]]
+        hierarchy_metadata <- colData(organ[[hierarchy_name]])
+        
+        keep_vars <- apply(assay(hierarchy), 1, function(dt_var){
+            group_dt <- tapply(dt_var, INDEX = hierarchy_metadata$group, function(var_group){
+                sum(var_group != 0)/length(var_group)
+            })
+            
+            any(group_dt >= 0.8)    
+        })
+        
+        hierarchy[keep_vars,]
+    })
+    names(organ_filt) <- names(organ)
+    organ_filt
+})
+names(shotgun_data_proc) <- names(shotgun_data)
+```
+
+```{r}
+lapply(names(shotgun_data_proc), function(organ_names){
+    organ <- shotgun_data_proc[[organ_names]]
+    lapply(names(organ), function(hierarchy_names){
+        group_var <- colData(organ[[hierarchy_names]])[["group"]]
+        hierarchy <- organ[[hierarchy_names]]
+        alpha_div <- vegan::diversity(x = assay(hierarchy), index = "shannon", MARGIN = 2)
+        
+        boxplot(alpha_div ~ group_var, main = paste(organ_names, hierarchy_names, sep = "_"))
+    })
+})
+```
+
+```{r}
+# library(phyloseq)
+# library(mia)
+# library(matrixStats)
+# test_s_uf <- SummarizedExperiment(assays = list("counts" = as.matrix(organ_dt$cecum$table_fwd_species)), colData = metadata_list$cecum$table_fwd_species)
+# 
+# test_s_f <- SummarizedExperiment(assays = list("counts" = as.matrix(organ_dt_list_proc$cecum$table_fwd_species)), colData = metadata_list$cecum$table_fwd_species)
+# 
+# test_s_f05 <- test_s_uf[getPrevalence(test_s_uf) >= 0.5,]
+# 
+# 
+# mia::getTopFeatures(x = test_s_uf, method = "mean")
+# mia::getRareFeatures(test_s_uf)
+# hist(getPrevalence(test_s_uf))
+# 
+# mia::getTopFeatures(x = test_s_f, method = "mean")
+# mia::getRareFeatures(test_s_f)
+# hist(getPrevalence(test_s_f), breaks = 10)
+# 
+# mia::getTopFeatures(x = test_s_f05, method = "mean")
+# mia::getRareFeatures(test_s_f05)
+# hist(getPrevalence(test_s_f05), breaks = 5)
+# 
+# 
+# mia::
+```
+
+
+
+```{r}
+# stat_res <- lapply(seq_along(shotgun_data), function(hierarchy_id){
+#     hierarchy <- shotgun_data[[hierarchy_id]]
+#     hierarchy_meta <- metadata_list[[hierarchy_id]]
+#     
+#     names_comp <- apply(t(combn(levels(hierarchy_meta$group), m = 2))[,2:1], 1, paste, collapse = "-")
+#     comp_mat <- as.data.frame(matrix(NA, ncol = 2, nrow = length(names_comp)))
+#     rownames(comp_mat) <- names_comp
+#     colnames(comp_mat) <- c("mean rank diff", "pval")
+#     
+#     #hierarchy <- as.data.frame(clr(t(hierarchy)))
+#     hierarchy <- as.data.frame(hierarchy)
+#     #pca(mat = hierarchy, metadata = organ_meta, scale = FALSE)
+#     var_results <- lapply(hierarchy, function(dt_var){
+#         kruskal_res <- kruskal.test(x = dt_var, hierarchy_meta$group)
+#         if(kruskal_res$p.value <= 0.05){
+#             return(DescTools::ConoverTest(x = dt_var, hierarchy_meta$group, method = "fdr")[[1]])
+#         } else{
+#             return(comp_mat)
+#         }
+#     })
+#     
+#     comp_list <- lapply(names_comp, function(idv_comp){
+#         results_list <- lapply(var_results, function(results_mat){
+#             if(idv_comp %in% rownames(results_mat)){
+#                 return(results_mat[idv_comp,])} 
+#             else{
+#                 return(rep(NA, 3))
+#             }
+#         })
+#         results_list <- do.call(rbind, results_list)
+#         # results_list$adj.p.value <- p.adjust(results_list$pval, method = "fdr")
+#         results_list
+#     })
+#     names(comp_list) <- names_comp
+#     comp_list
+# })
+# names(stat_res) <- names(shotgun_data)
+# 
+# saveRDS(stat_res, "./shotgun_results_list.rds")
+```
+
+
+```{r}
+shotgun_data_exp <- lapply(names(shotgun_data_proc), function(organ_name){
+    organ_data <- shotgun_data_proc[[organ_name]]
+  
+    organ_results <- lapply(names(organ_data), function(hierarchy_name){
+        hierarchy <- organ_data[[hierarchy_name]]
+        hierarchy_meta <- colData(hierarchy)
+        
+        names_comp <- apply(t(combn(levels(hierarchy_meta$group), m = 2))[,2:1], 1, paste, collapse = "-")
+        # comp_mat <- as.data.frame(matrix(NA, ncol = 2, nrow = length(names_comp)))
+        # rownames(comp_mat) <- names_comp
+        # colnames(comp_mat) <- c("mean rank diff", "pval")
+        # 
+        #hierarchy <- as.data.frame(clr(t(hierarchy)))
+        
+        #pca(mat = hierarchy, metadata = organ_meta, scale = FALSE)
+        
+        hierarchy_deseq <- DESeqDataSetFromMatrix(countData = as.data.frame(assay(hierarchy)),
+                                                  colData = hierarchy_meta, design = ~ group + 0)
+        hierarchy_deseq <- DESeq(hierarchy_deseq, test = "Wald")
+        results_list <- lapply(names_comp, function(comp_name){
+            comp_vec <- c("group", strsplit(comp_name, "-")[[1]])
+            results(hierarchy_deseq, contrast = comp_vec, pAdjustMethod = "fdr")
+        })
+        
+        # hierarchy_ancombc2 <- SummarizedExperiment(assays = hierarchy, 
+        #                                            colData = hierarchy_meta)
+        # ancom_res <- ancombc2(data = hierarchy_ancombc2, fix_formula = "~ group + 0", p_adj_method = "fdr", group = "group")
+        # 
+        names(results_list) <- names_comp
+        results_list <- do.call(cbind, results_list)
+        rowData(hierarchy) <- cbind(rowData(hierarchy), results_list)
+        hierarchy
+    })
+    names(organ_results) <- names(organ_data)
+    organ_results
+})
+names(shotgun_data_exp) <- names(shotgun_data_proc)
+
+saveRDS(shotgun_data_exp, "./shotgun_results_list.rds")
+```
+

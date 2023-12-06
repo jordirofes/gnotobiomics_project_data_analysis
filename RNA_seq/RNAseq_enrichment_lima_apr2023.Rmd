@@ -1,0 +1,411 @@
+---
+title: "RNA Seq LIMA Enrichments"
+output: html_document
+date: "2023-04-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(knitr.duplicate.label = "allow")
+```
+
+```{r}
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(DESeq2)
+library(sva)
+library(mixOmics)
+library(knitr)
+library(DT)
+library(clusterProfiler)
+library(dplyr)
+library(msigdbr)
+library(MultiAssayExperiment)
+source("../../Utility Functions/utilities.R")
+```
+
+## Loading the RNASeq results
+
+```{r}
+p_val_thr <- 0.05
+rna_seq_results <- readRDS("../Multi_Omics_Analysis/Multivariate_Merged_Multi_Omics.rds")
+rna_seq_results <- experiments(rna_seq_results)[["RNASeq.liver"]]
+
+contrs_names <- colnames(rowData(rna_seq_results))
+contrs_names <- gsub(".adj.p.value", "", 
+                    contrs_names[grep("adj.p.value", contrs_names)])
+
+sig_tables <- lapply(contrs_names, function(ctrs){
+    ctrs_col <- paste0(ctrs, ".adj.p.value")
+    ctrs_exprs <- parse(text = paste0("!is.na(`", ctrs_col, "`) & `", 
+                                       ctrs_col, "` <= ", p_val_thr))
+    row_dt <- rowData(rna_seq_results)
+    
+    subset(row_dt, eval(ctrs_exprs, envir = row_dt))
+})
+names(sig_tables) <- contrs_names
+
+sig_genes <- lapply(sig_tables, function(ctrs){
+    rownames(ctrs)
+})
+
+contrs_result_sig_list <- lapply(sig_tables, annotate_data, annotationPackage = org.Mm.eg.db)
+
+
+genes_gsea <- lapply(contrs_names, function(ctrs_name){
+    ctrs <- rowData(rna_seq_results)
+    fc_list <- ctrs[[paste0(ctrs_name, ".log2FC")]]
+    names(fc_list) <- rownames(ctrs)
+    fc_list
+})
+names(genes_gsea) <- contrs_names
+```
+
+# Enrichment analysis {.tabset}
+
+## Enrichment results full lists {.tabset}
+
+### Table results {.tabset}
+
+```{r}
+contrs_result_sig_list <- lapply(names(contrs_result_sig_list), function(ctrs_name){
+    ctrs <- contrs_result_sig_list[[ctrs_name]]
+    as.data.frame(ctrs[order(ctrs[[grep(pattern = paste0(ctrs_name, ".adj.p.value"), 
+                                    colnames(ctrs))]]),])
+})
+names(contrs_result_sig_list) <- contrs_names
+
+tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
+                                          contrs_names = contrs_names, template = c(
+    "#### `r contrs_names[{{i}}]` \n",
+    "```{r, echo = FALSE}\n",
+    "datatable(contrs_result_sig_list[[{{i}}]], options = list(scrollX = TRUE)) %>% formatRound(columns = colnames(contrs_result_sig_list[[{{i}}]])[sapply(contrs_result_sig_list[[{{i}}]], is.numeric)], digits = 3)",
+    "```\n",
+    "\n"
+))
+```
+
+`r knit(text=unlist(tables_chunk))`
+
+### ORA {.tabset}
+
+```{r, cache=TRUE}
+set.seed(123)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                               pvalueCutoff = 0.05, simplify_res = TRUE)
+
+enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_gsea)
+```
+
+```{r, results='asis', fig.height=8, fig.width=8}
+enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data)
+```
+
+### GSEA {.tabset}
+
+```{r}
+set.seed(123)
+enrich_results <- multi_enrich(dt_to_pathway = genes_gsea, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                               pvalueCutoff = 0.05, simplify_res = TRUE, enrichFun = "gsea")
+
+enrich_results <- lapply(enrich_results, function(ctrs){
+    lapply(ctrs, setReadable, OrgDb = "org.Mm.eg.db", keyType = "ENSEMBL")
+})
+
+enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_gsea)
+```
+
+```{r, results='asis', fig.height=8, fig.width=8}
+enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data)
+```
+
+
+### KEGG {.tabset}
+
+```{r}
+genes_entrez_ids <- lapply(genes_gsea, function(ctrs){
+    names(ctrs) <- mapIds(x = org.Mm.eg.db, names(ctrs), column = "ENTREZID", keytype = "ENSEMBL")
+    ctrs[names(ctrs)[!is.na(names(ctrs))]]
+})
+
+set.seed(123)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                               keggOrg = "mmu", keggKeyType = "kegg",
+                               pvalueCutoff = 0.05, simplify_res = TRUE, enrichFun = "kegg")
+
+# enrich_results <- lapply(enrich_results, function(ctrs){
+#     lapply(ctrs, setReadable, OrgDb = "org.Mm.eg.db", keyType = "ENSEMBL")
+# })
+
+enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids)
+```
+
+```{r, results='asis', fig.height=8, fig.width=8}
+enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data)
+```
+
+
+### WP {.tabset}
+
+```{r}
+set.seed(123)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr",  wpOrg = "Mus musculus",
+                               pvalueCutoff = 0.05, simplify_res = TRUE, enrichFun = "wp")
+
+# enrich_results <- lapply(enrich_results, function(ctrs){
+#     lapply(ctrs, setReadable, OrgDb = "org.Mm.eg.db", keyType = "ENSEMBL")
+# })
+
+enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids)
+```
+
+```{r, results='asis', fig.height=8, fig.width=8}
+enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data)
+```
+
+### MSIGDBR ORA {.tabset}
+
+```{r}
+set.seed(123)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr",  
+                               msigdbCategory = "H", msigdbSpc = "Mus musculus",
+                               pvalueCutoff = 0.05, simplify_res = TRUE, 
+                               enrichFun = "msigdbrORA")
+
+# enrich_results <- lapply(enrich_results, function(ctrs){
+#     lapply(ctrs, setReadable, OrgDb = "org.Mm.eg.db", keyType = "ENSEMBL")
+# })
+
+enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids)
+```
+
+```{r, results='asis', fig.height=8, fig.width=8}
+enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data)
+```
+
+### MSIGDBR GSEA {.tabset}
+
+```{r}
+set.seed(123)
+enrich_results <- multi_enrich(dt_to_pathway = genes_gsea, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                               msigdbCategory = "H", msigdbSpc = "Mus musculus",
+                               pvalueCutoff = 0.05, simplify_res = TRUE, 
+                               enrichFun = "msigdbrGSEA")
+
+# enrich_results <- lapply(enrich_results, function(ctrs){
+#     lapply(ctrs, setReadable, OrgDb = "org.Mm.eg.db", keyType = "ENSEMBL")
+# })
+
+enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids)
+```
+
+```{r, results='asis', fig.height=8, fig.width=8}
+enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data)
+```
+
+## Enrichment results subsets {.tabset}
+
+```{r}
+expression_list <- list(
+    "HFD Altered" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05)
+    ),
+        "INT Restored Up" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `INT-CNT.adj.p.value` > 0.05 & `HFD-CNT.log2FC` > 0
+    ), 
+    "INT Restored Down" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `INT-CNT.adj.p.value` > 0.05 & `HFD-CNT.log2FC` < 0
+    ),
+    "INT Restored Over Up" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` > 0 &
+        `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` > 0
+    ),
+    "INT Restored Over Down" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` > 0 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` < 0 &
+        `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` < 0
+    ),
+    "INT Resistant Over Up" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` > 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` > 0)
+    ),
+    "INT Resistant Over Down" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` < 0)
+    ),
+    "INT Resistant Up" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` > 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 & 
+        `INT-HFD.adj.p.value` > 0.05) 
+    ),
+    "INT Resistant Down" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 &
+        `INT-HFD.adj.p.value` > 0.05)
+    ),
+    "INT Resistant Half Up" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` > 0 & 
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` < 0 & 
+        `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` > 0)
+    ),
+    "INT Resistant Half Down" = quote(
+        (`HFD-CNT.adj.p.value` <= 0.05 & `HFD-CNT.log2FC` < 0 &
+        `INT-HFD.adj.p.value` <= 0.05 & `INT-HFD.log2FC` > 0 &
+        `INT-CNT.adj.p.value` <= 0.05 & `INT-CNT.log2FC` < 0)
+    ),
+    "HFE Unnaffected" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` > 0.05 & `HFE-HFD.adj.p.value` <= 0.05 
+    ),
+    "HFE Affected" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & `HFE-CNT.adj.p.value` <= 0.05 & `HFE-HFD.adj.p.value` > 0.05
+    ),
+    "HFE Other" = quote(
+        `HFD-CNT.adj.p.value` <= 0.05 & ((`HFE-CNT.adj.p.value` <= 0.05 & `HFE-HFD.adj.p.value` <= 0.05) |
+            (`HFE-CNT.adj.p.value` > 0.05 & `HFE-HFD.adj.p.value` > 0.05))
+    )
+)
+```
+
+```{r}
+expression_list_sub <- list("Restored Genes" = grep("Restored", names(expression_list), value = TRUE), 
+                            "Resistant Genes" = grep("Resistant", names(expression_list), value = TRUE))
+# hfd_affected_cols <- grep("Affected", names(expression_list))
+
+
+condition_OR <- function(eval_exprs){
+    Reduce(f = function(x, y){expr(!!x | !!y)},
+           x = eval_exprs)    
+}
+
+expression_list_sub <- lapply(expression_list_sub, function(eval_exprs){
+    eval_exprs <- expression_list[eval_exprs]
+    condition_OR(eval_exprs)
+})
+
+expression_list_sub$`HFE Unnaffected Genes` <- expression_list[[grep("HFE Unnaffected", names(expression_list), value = TRUE)]]
+expression_list_sub$`HFE Affected Genes` <- expression_list[[grep("HFE Affected", names(expression_list), value = TRUE)]]
+
+
+sig_tables <- lapply(expression_list_sub, function(ctrs){
+    row_dt <- rowData(rna_seq_results)
+    subset(row_dt, eval(ctrs, envir = row_dt))
+})
+
+sig_genes <- lapply(sig_tables, function(ctrs){
+    rownames(ctrs)
+})
+
+contrs_result_sig_list <- lapply(sig_tables, annotate_data, annotationPackage = org.Mm.eg.db)
+```
+
+
+### Table results {.tabset}
+
+```{r}
+contrs_result_sig_list <- lapply(contrs_result_sig_list, 
+                                function(x){as.data.frame(x)})
+
+tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
+                                          contrs_names = contrs_names[c(1,1,5,3)], template = c(
+    "#### `r contrs_names[{{i}}]` \n",
+    "```{r, echo = FALSE}\n",
+    "datatable(contrs_result_sig_list[[{{i}}]], options = list(scrollX = TRUE)) %>% formatRound(columns = colnames(contrs_result_sig_list[[{{i}}]])[sapply(contrs_result_sig_list[[{{i}}]], is.numeric)], digits = 3)",
+    "```\n",
+    "\n"
+))
+```
+
+`r knit(text=unlist(tables_chunk))`
+
+### ORA {.tabset}
+
+```{r}
+set.seed(123)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                               pvalueCutoff = 0.05, simplify_res = TRUE)
+enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_gsea[contrs_names[c(1,1,5,3)]])
+```
+
+```{r, results='asis', fig.height=8, fig.width=8}
+enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data)
+```
+
+### KEGG {.tabset}
+
+```{r}
+set.seed(123)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                               keggOrg = "mmu", keggKeyType = "kegg",
+                               pvalueCutoff = 0.05, simplify_res = TRUE, enrichFun = "kegg")
+
+# enrich_results <- lapply(enrich_results, function(ctrs){
+#     lapply(ctrs, setReadable, OrgDb = "org.Mm.eg.db", keyType = "ENSEMBL")
+# })
+
+enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids[contrs_names[c(1,1,5,3)]])
+```
+
+```{r, results='asis', fig.height=8, fig.width=8}
+enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data)
+```
+
+### WP {.tabset}
+
+```{r}
+set.seed(123)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr",  wpOrg = "Mus musculus",
+                               pvalueCutoff = 0.05, simplify_res = TRUE, enrichFun = "wp")
+
+# enrich_results <- lapply(enrich_results, function(ctrs){
+#     lapply(ctrs, setReadable, OrgDb = "org.Mm.eg.db", keyType = "ENSEMBL")
+# })
+
+enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids[contrs_names[c(1,1,5,3)]])
+```
+
+```{r, results='asis', fig.height=8, fig.width=8}
+enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data)
+```
+
+### MSIGDBR ORA {.tabset}
+
+```{r}
+set.seed(123)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr",  
+                               msigdbCategory = "H", msigdbSpc = "Mus musculus",
+                               pvalueCutoff = 0.05, simplify_res = TRUE, 
+                               enrichFun = "msigdbrORA")
+
+# enrich_results <- lapply(enrich_results, function(ctrs){
+#     lapply(ctrs, setReadable, OrgDb = "org.Mm.eg.db", keyType = "ENSEMBL")
+# })
+
+enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids)
+```
+
+```{r, results='asis', fig.height=8, fig.width=8}
+enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data)
+```

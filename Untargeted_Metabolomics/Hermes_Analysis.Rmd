@@ -1,0 +1,154 @@
+---
+title: "Hermes Analysis"
+author: "Jordi Rofes Herrera"
+date: "27/1/2022"
+output: html_document
+params:
+    ms1_dir: "D:/Untargeted_LIMMA_GF/TEST/Hermes_Files/"
+    qc_names: "HP_QC"
+    blank_names: "Blank"
+    met_db: "./HMDB_full_db.csv"
+    met_db_sep: ","
+    ppm_error: 10
+    instrument: "QTOF"
+    resolution: 30000
+    noise_int: 1000 
+    ionization: "-"
+    labelled: FALSE
+    ad_list: !r c("M+H", "M+NH4", "M+Na", "M+K", "M+")
+    min_max_mz: !r c(50, 1500)
+    add_charge: 1
+    add_mult: 1
+    soi_detection_type: "double"
+    soi_file_ids: !r c(1:3)
+    soi_blank_ids: !r c(4,4,4)
+    output_dir: "./Hermes_Results/Hilic_Positive/"
+    soi_filter_ids: !r c(1:2)
+    consensus: TRUE
+    soi_consensus: !r c(1:3)
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Packages
+
+```{r}
+library(RHermes)
+library(qHermes)
+library(readr)
+```
+
+## MS1 Processing
+
+```{r}
+ms1_files <- list.files(params$ms1_dir, full.names = TRUE, pattern = ".mzML$")
+
+ms1_qc_files <- ms1_files[grepl(pattern = params$qc_names, x = ms1_files)]
+ms1_blank_files <- ms1_files[grepl(pattern = params$blank_names, x = ms1_files)]
+
+ms1_files <- c(ms1_qc_files, ms1_blank_files) 
+# hmdb_db_ps <- read.table("D:/DadesArpe19/HMDB_parsed.tsv", sep = "\t")
+
+hermes_dt <- RHermesExp()
+```
+
+```{r}
+hermes_dt <- setExpParam(hermes_dt, params = ExpParam(ppm = params$ppm_error, res = params$resolution, 
+                                                     ion = params$ionization, minmz = params$min_max_mz[1], 
+                                                     maxmz = params$min_max_mz[2], nthr = params$noise_int, 
+                                                     instr = params$instrument))
+
+```
+
+```{r}
+hermes_dt <- setDB(hermes_dt, db = "custom", DBfile = params$met_db, 
+                  adlist = params$ad_list, adcharge = params$add_charge, admult = params$add_mult)
+```
+
+
+```{r}
+hermes_dt <- processMS1(struct = hermes_dt, files = ms1_files, labelled = params$labelled)
+saveRDS(hermes_dt, file = paste0(params$output_dir, "peakList.rds"))
+```
+
+## SOI processing
+
+```{r}
+# hermes_dt <- readRDS("./Hermes_Results/Hilic_Positive/peakList.rds")
+hermes_dt <- findSOI(struct = hermes_dt, params = getSOIpar(tag = params$soi_detection_type), 
+                     fileID = params$soi_file_ids, blankID = params$soi_blank_ids)
+saveRDS(hermes_dt, file = paste0(params$output_dir, "soiLists.rds"))
+```
+
+## SOI filtering
+```{r, eval=TRUE}
+hermes_dt <- readRDS(paste0(params$output_dir, "soiLists.rds"))
+for(i in params$soi_filter_ids){
+    hermes_dt <- filterSOI(hermes_dt, id = i, minint = 1000, isofidelity = TRUE)
+}
+saveRDS(hermes_dt, file = paste0(params$output_dir, "filteredSoiLists.rds"))
+```
+
+## Consensus SOIlist from QCs
+
+```{r, eval = params$consensus}
+#hermes_dt <- readRDS("./Hermes_Results/Hilic_Positive/filteredSoiLists.rds")
+library(magrittr)
+library(dplyr)
+library(data.table)
+library(qHermes)
+hermes_dt <- consensusSOI(hermes_dt, SOIids = params$soi_consensus, minSOI = 2)
+saveRDS(hermes_dt, file = paste0(params$output_dir,"filteredSoiLists.rds"))
+```
+
+## QHermes Quantification
+
+```{r}
+# quant_files <- list.files(path = "D:/Untargeted_LIMMA_GF/Hilic_Positive/", full.names = TRUE)
+# gf_lima_meta <- read.csv("./Hilic_Positive/LC_MS_metadata.csv")
+# file_names <- quant_files[sub(pattern = "\\.[mM][zZ][xX]?[mM][lL]$", replacement = "", x = basename(quant_files)) %in% gf_lima_meta$injection_order]
+# findOrder <- function(files, phenodata, pheno_var){
+#     samp <- sub(pattern = "\\.[mM][zZ][xX]?[mM][lL]$", replacement = "",
+#                 x =  basename(files))
+#     if(length(pheno_var) == 1){
+#         if(pheno_var == "rownames"){
+#             ordering <- rownames(phenodata)
+#         } else{
+#             ordering <- phenodata[[pheno_var]]
+#         }
+#     } else{
+#         ordering <- pheno_var
+#     }
+#     if(!all(ordering %in% samp)){
+#         stop("Filenames do not agree with the phenodata variable. Change the names accordingly")
+#     }
+#     return(order(sapply(samp, function(x){which(ordering == x)})))
+# }
+# file_order <- findOrder(file_names, phenodata = gf_lima_meta, pheno_var = "injection_order")
+# quant_files <- file_names[file_order]
+```
+
+```{r}
+# hermes_dt <- readRDS("./Hermes_Results/Hilic_Positive/filteredSoiLists.rds")
+# ms_data <- readMSData(files = quant_files, pdata = AnnotatedDataFrame(data = gf_lima_meta), centroided. = TRUE, mode = "onDisk")
+# ms_data <- filterEmptySpectra(ms_data)
+# 
+# ms_data <- fastSOIfromList(MSnExp = ms_data, hermes_dt, SOI_id = 4)
+# ms_data <- findSOIGroups(MSnExp = ms_data, sampleGroups = as.character(gf_lima_meta$groups_m), minfrac = 0.4)
+# ms_data <- fillChromPeaks(ms_data)
+# quant_matrix <- qHermes:::getQuantitativeMatrix(ms_data)
+# saveRDS(ms_data, file = "./Hermes_Results/Hilic_Positive/xcmsnexp_quant.rds")
+# saveRDS(quant_matrix, file = "./Hermes_Results/Hilic_Positive/quant_matrix.rds")
+```
+
+
+```{r}
+# ms_data2 <- readMSData(files = quant_files[3], pdata = AnnotatedDataFrame(data = gf_lima_meta), centroided. = TRUE, mode = "onDisk")
+# ms_data2 <- filterEmptySpectra(ms_data2)
+# # ms_data <- findChromPeaks(ms_data, param = CentWaveParam())
+# 
+# ms_data2 <- fastSOIfromList(MSnExp = ms_data2, hermes_dt, SOI_id = 4)
+```
+

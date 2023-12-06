@@ -1,0 +1,433 @@
+---
+title: "Multi Omics Merging"
+output: html_document
+date: "2023-04-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading packages
+
+```{r}
+library(MultiAssayExperiment)
+library(xcms)
+library(DESeq2)
+library(SummarizedExperiment)
+library(dplyr)
+library(vsn)
+library(compositions)
+library(ggplot2)
+library(plotly)
+library(impute)
+library(ggpubr)
+library(RColorBrewer)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(TreeSummarizedExperiment)
+library(mia)
+library(ape)
+source("../../Utility Functions/utilities.R")
+```
+
+## Loading the omics data
+
+```{r}
+### Multi Omics Metadata
+
+### RNA Seq
+rna_seq_data <- read.csv("../RNA_seq/LIMA_transcriptomics_filtered.csv", row.names = 1)
+rna_seq_results <- readRDS("../RNA_seq/RNASeq_lima_results_noihw_list.rds")
+rna_seq_metadata <- read.csv("../RNA_seq/RNASeq_lima_metadata.csv", row.names = 1, stringsAsFactors = T)
+rna_seq_metadata$group <- factor(rna_seq_metadata$groups_m, levels = c("CNT", "HFD", "INT", "HFE"))
+
+test_rows <- lapply(rna_seq_results, rownames)                ## Checkpoint 
+all(sapply(test_rows, function(x){all(x == test_rows[[1]])})) ##
+rm(test_rows)
+
+rna_seq_results <- lapply(rna_seq_results, function(ctrs_res){
+    colnames(ctrs_res)[c(2,5:6)] <- c("log2FC","p.value", "adj.p.value")
+    ctrs_res
+})
+
+rna_seq_results <- do.call(cbind, rna_seq_results)
+
+rna_seq_results$gene_name <- mapIds(org.Mm.eg.db, keys = rownames(rna_seq_data), 
+                                    column = c("GENENAME"), 
+                         keytype = "ENSEMBL", multiVals = "first")
+rna_seq_results$entrezID <- mapIds(org.Mm.eg.db, keys = rownames(rna_seq_data), 
+                                    column = c("ENTREZID"), 
+                         keytype = "ENSEMBL", multiVals = "first")
+rna_seq_results$symbol <- mapIds(org.Mm.eg.db, keys = rownames(rna_seq_data), 
+                                    column = c("SYMBOL"), 
+                         keytype = "ENSEMBL", multiVals = "first")
+rna_seq_results$gene_lab <- ifelse(!is.na(rna_seq_results$gene_name),
+                                   rna_seq_results$gene_name, 
+                                   rownames(rna_seq_results))
+
+rna_seq_data <- SummarizedExperiment(assays = rna_seq_data, 
+                                    colData = rna_seq_metadata[c("samplename",
+                                                                "group")],
+                                    rowData = rna_seq_results)
+
+### Metabolomics Untargeted
+unt_meta_paths <- list.dirs("../Untargeted_Metabolomics/Hermes_Results", recursive = FALSE)
+unt_meta_results <- lapply(unt_meta_paths, function(data_path){
+    readRDS(paste0(data_path, "/contrasts_results_anova_lima_list.rds"))
+})
+names(unt_meta_results) <- basename(unt_meta_paths)
+
+unt_meta_data <- lapply(names(unt_meta_results), function(unt_results_name){
+    unt_results_list <- unt_meta_results[[unt_results_name]]
+    
+    unt_results <- unt_results_list[["Contrasts_Results"]]
+    unt_results <- do.call(cbind, unt_results)
+    
+    rownames(unt_results) <- paste0(unt_results_name, ".", rownames(unt_results))
+    
+    unt_data <- unt_results_list[["qcrsc_corrected_data"]]
+    assay(unt_data) <- as.data.frame(assay(unt_data))
+    rownames(unt_data) <- paste0(unt_results_name, ".", rownames(unt_data))
+    unt_data$group <- factor(unt_data$groups_m, levels = c("CNT", "HFD", "INT", "HFE"))
+    unt_data$samplename <- make.names(unt_data$samplename)
+    colnames(unt_data) <- unt_data$samplename
+    # unt_data <- unt_data[,match(colnames(unt_meta_results$Hilic_Negative$qcrsc_corrected_data), 
+    #                             colnames(unt_data))]
+    # # Adding contrast data to rowData
+    if(!all(rownames(rowData(unt_data)) == rownames(unt_results))){stop("Rownames do not match")}
+    # rowData(unt_data) <- cbind(rowData(unt_data), unt_results)
+    # 
+    SummarizedExperiment(assays = as.data.frame(assay(unt_data)), 
+                         rowData = cbind(rowData(unt_data), unt_results), 
+                         colData = colData(unt_data), 
+                         metadata = metadata(unt_data))
+})
+names(unt_meta_data) <- names(unt_meta_results)
+unt_meta_data <- Reduce(combineRows, unt_meta_data)
+
+assay(unt_meta_data) <- as.data.frame(assay(unt_meta_data))
+
+### Metabolomics Targeted
+targ_meta_results <- readRDS("../epi_metabolomics/targeted_metabolomics_lima_results.rds")
+targ_meta_data_list <- readRDS("../epi_metabolomics/targeted_metabolomics_lima_data.rds")
+
+targ_meta_data_list <- lapply(targ_meta_data_list, function(organ){
+    colnames(organ) <- make.names(colnames(organ))
+    organ$samplename <- make.names(organ$samplename)
+    organ
+})
+targ_meta_data_list[sapply(targ_meta_data_list, function(x){
+    ncol(x) == 0
+})] <- NULL
+targ_meta_data_list$liver <- combineRows(targ_meta_data_list$liver, 
+                                         targ_meta_data_list$liver_scfa, 
+                                         delayed = FALSE)
+targ_meta_data_list$liver_scfa <- NULL
+
+targ_meta_results$liver <- mapply(function(liver_res, liver_scfa_res){
+    rbind(liver_res, liver_scfa_res)
+}, targ_meta_results$liver, targ_meta_results$liver_scfa, SIMPLIFY = FALSE)
+
+targ_meta_results[c("colon", "liver_scfa")] <- NULL
+
+targ_meta_data <- lapply(names(targ_meta_data_list), function(organ_name){
+    organ <- targ_meta_data_list[[organ_name]]
+    organ_results <- targ_meta_results[[organ_name]]
+    rowData(organ) <- do.call(cbind, organ_results)
+    organ
+})
+names(targ_meta_data) <- names(targ_meta_data_list)
+
+### Metagenomics 16S
+x16S_results <- readRDS("../16S_meta/16S_results_list.rds")
+x16S_data_list <- readRDS("../16S_meta/16S_lima_data_list.rds")
+x16S_metadata <- readRDS("../16S_meta/16S_lima_metadata_list.rds")
+
+x16S_data <- lapply(names(x16S_data_list), function(organ_id){
+    organ <- x16S_data_list[[organ_id]]
+    organ_metadata <- x16S_metadata[[organ_id]]
+    organ_results <- x16S_results[[organ_id]]
+    names(organ) <- sapply(strsplit(names(organ), "_"), function(x){x[3]})
+    names(organ_results) <- sapply(strsplit(names(organ_results), "_"), function(x){x[3]})    
+    hierarchy_dt <- lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        hierarchy_results <- organ_results[[hierarchy_name]]
+        colnames(hierarchy) <- make.names(colnames(hierarchy))
+    
+        merged_rowdata <- do.call(cbind, hierarchy_results)
+        hierarchy_ids <- c("D_0", "D_1", "D_2", "D_3", "D_4", "D_5", "D_6")
+        hierarchy_ranks <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+        
+        max_rank <- grep(stringr::str_to_title(hierarchy_name), hierarchy_ranks)
+        
+        hierarchy_ids <- hierarchy_ids[seq_len(max_rank)]
+        hierarchy_ranks <- hierarchy_ranks[seq_len(max_rank)]
+        
+        hierarchycal_tree <- lapply(rownames(hierarchy), function(sp_name){
+            hierarchy_found <- c()
+            
+            for(h_id_num in seq_along(hierarchy_ids)){
+                h_id <- hierarchy_ids[h_id_num]
+                
+                found_id <- grep(paste0("^", h_id, "__"), 
+                                strsplit(sp_name, ";")[[1]], value = TRUE)
+                
+                if(length(found_id)){
+                    found_dt <- gsub(paste0(h_id, "__"), "", found_id)
+                    found_dt <- gsub("\\[|\\]", "", found_dt)
+
+                    if(found_dt == "" || grepl("uncultured|unknown|unidentified|metagenome", found_dt, ignore.case = TRUE)){
+                        hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
+                                                            hierarchy_found[h_id_num - 1], 
+                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
+                    } else{
+                        hierarchy_found[h_id_num] <- found_dt
+                    }
+                } else{
+                    hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
+                                                            hierarchy_found[h_id_num - 1], 
+                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
+                }    
+            }
+            return(hierarchy_found)
+        })
+        
+        hierarchycal_tree <- do.call(rbind, hierarchycal_tree)
+        colnames(hierarchycal_tree) <- hierarchy_ranks
+        
+        summ_exp <- TreeSummarizedExperiment(assays = list("relabundance" = hierarchy), 
+                             colData = organ_metadata[c("samplename",
+                                                        "group")], 
+                             rowData = cbind(merged_rowdata, hierarchycal_tree))
+        rowData(summ_exp)$old_names <- rownames(summ_exp)
+        
+        summ_exp <- mia::agglomerateByRank(x = summ_exp, rank = hierarchy_ranks[max_rank])
+        summ_exp <- mia::addTaxonomyTree(summ_exp)
+        
+        rowData(summ_exp)$specie_names <- rownames(summ_exp)
+        
+        # sp_names <- lapply(seq_along(rownames(summ_exp)), function(i){
+        #     x <- rownames(summ_exp)[i]
+        #     while(grepl(";__$", x)){
+        #         x <- gsub(";__$", "", x)[[1]]
+        #     }
+        #     x <- strsplit(x, ";")[[1]]
+        #     if(length(x) > 1){
+        #         x <- paste(x[c(length(x)-1, length(x))], collapse = ";")
+        #     }
+        #     x <- paste0(x, i, sep = "_")
+        #     x
+        # })
+        # rowData(summ_exp)$specie_name_short <- sp_names
+        # 
+        # rownames(summ_exp) <- sapply(sp_names, function(x){make.names(stringr::str_trunc(x, 15, "left"))})
+        summ_exp
+    })
+    names(hierarchy_dt) <- names(organ)
+    hierarchy_dt
+})
+names(x16S_data) <- names(x16S_data_list)
+
+### Metagenomics Shotgun
+shotgun_data <- readRDS("../Shotgun_Metagenomics/shotgun_results_list.rds")
+
+### Shotgun Functional 
+
+shotgun_functional_results <- readRDS("../Shotgun_Metagenomics/shotgun_functional_results_list.rds")
+shotgun_functional_data_list <- readRDS("../Shotgun_Metagenomics/shotgun_functional_data_list.rds")
+
+shotgun_functional_data <- lapply(names(shotgun_functional_data_list$shotgun_data), function(organ_name){
+    organ_data <- shotgun_functional_data_list$shotgun_data[[organ_name]]
+    organ_metadata <- shotgun_functional_data_list$shotgun_metadata[[organ_name]]
+    organ_results <- shotgun_functional_results[[organ_name]]
+    # names(organ_metadata) <- sapply(strsplit(names(organ_metadata), "_"), function(x){x[3]})
+    # names(organ_data) <- sapply(strsplit(names(organ_data), "_"), function(x){x[3]})
+    # names(organ_results) <- sapply(strsplit(names(organ_results), "_"), function(x){x[3]})
+    
+    organ_summ <- lapply(names(organ_data), function(hierarchy_names){
+        hierarchy_data <- organ_data[[hierarchy_names]]
+        hierarchy_metadata <- organ_metadata[[hierarchy_names]]
+        hierarchy_results <- organ_results[[hierarchy_names]]
+        hierarchy_results <- lapply(hierarchy_results, function(hierarchy_results_ind){
+            colnames(hierarchy_results_ind)[c(2,5:6)] <- c("log2FC","p.value", "adj.p.value")
+            hierarchy_results_ind
+        })
+        merged_rowdata <- do.call(cbind, hierarchy_results)
+        
+        summ_exp <- SummarizedExperiment(assays = list("counts" = as.matrix(hierarchy_data)), 
+                            colData = hierarchy_metadata,
+                            rowData = merged_rowdata)
+        summ_exp
+    })
+    names(organ_summ) <- names(organ_data)
+    organ_summ
+})
+names(shotgun_functional_data) <- names(shotgun_functional_data_list$shotgun_data)
+
+
+### PTM modifications
+ptm_results <- readRDS("../PTM/ptm_results.rds")
+ptm_data_list <- readRDS("../PTM/ptm_data_list.rds")
+
+ptm_data_list$LIMA$PTM_Data <- t(ptm_data_list$LIMA$PTM_Data)
+colnames(ptm_data_list$LIMA$PTM_Data) <- make.names(colnames(ptm_data_list$LIMA$PTM_Data))
+
+ptm_metadata <- data.frame("samplename" = make.names(ptm_data_list$LIMA$PTM_Metadata$Replicate_Name),
+                           "group" = ptm_data_list$LIMA$PTM_Metadata$group)
+
+ptm_data <- SummarizedExperiment(assays = as.data.frame(ptm_data_list$LIMA$PTM_Data), 
+                                 colData = ptm_metadata,
+                                 rowData = do.call(cbind, ptm_results))
+    
+### Metallomics
+metal_results <- readRDS("../Metallomics/lima_metallomics_results_list.rds")
+metal_data_list <- readRDS("../Metallomics/lima_metallomics_list.rds")
+
+metal_data <- lapply(names(metal_data_list), function(organ_name){
+    organ_list <- metal_data_list[[organ_name]]
+    organ_data <- organ_list[["Metallomics_Data"]]
+    organ_data <- t(organ_data)
+    organ_results <- metal_results[[organ_name]]
+    # rownames(organ_data) <- paste0(organ_name, ".", rownames(organ_data))
+    colnames(organ_data) <- make.names(colnames(organ_data))
+    organ_metadata <- organ_list[["Metallomics_Metadata"]]
+    organ_metadata$group <- factor(organ_metadata$group, 
+                                   levels = c("CTN", "HFD", "INT", "HFE"), 
+                                   labels = c("CNT", "HFD", "INT", "HFE"))
+    organ_metadata$samplename <- make.names(organ_metadata$samplename)
+    rownames(organ_metadata) <- organ_metadata$samplename
+    
+    merged_rowdata <- do.call(cbind, organ_results)
+    # rownames(merged_rowdata) <- paste0(organ_name, ".", rownames(merged_rowdata))
+    # 
+    SummarizedExperiment(assays = as.data.frame(organ_data), 
+                         colData = organ_metadata[c("samplename", "group")],
+                         rowData = merged_rowdata)
+    
+})
+names(metal_data) <- names(metal_data_list)
+
+## DNA-Methylation - WGBSeq
+dna_met_data <- readRDS("../DNA_met/LIMA_model/dna_met_exp_non_smoothed.group.rds")
+colnames(dna_met_data) <- gsub("X652C", "X642C", colnames(dna_met_data))
+
+## DNA-Methylation - Unsupervised
+dna_met_data_unsupervised <- readRDS("../DNA_met/LIMA_model/dna_met_exp_unsupervised_regions_proc.rds")
+colnames(dna_met_data_unsupervised) <- gsub("X652C", "X642C", colnames(dna_met_data_unsupervised))
+```
+
+```{r}
+### Multi omics list
+omics_data_list <- c(list(
+    "DNA_Methylation.liver" = dna_met_data,
+    "DNA_Methylation_unsupervised.liver" = dna_met_data_unsupervised,
+    "RNASeq.liver" = rna_seq_data), 
+    unlist(list("Targeted_Metabolomics" = targ_meta_data), recursive = FALSE),
+    list("Untargeted_Metabolomics.liver" = unt_meta_data),
+    unlist(unlist(list("16S" = x16S_data), recursive = FALSE), recursive = FALSE),
+    unlist(unlist(list("Shotgun" = shotgun_data), recursive = FALSE), recursive = FALSE),
+    unlist(unlist(list("Functional_Shotgun" = shotgun_functional_data), recursive = FALSE), recursive = FALSE),
+    list("PTM.liver" = ptm_data),
+    unlist(list("Metallomics" = metal_data), recursive = FALSE))
+
+omics_data_list <- lapply(omics_data_list, function(omic_se){
+    if(any(colnames(omic_se) == "X686I")){
+        colnames(omic_se)[colnames(omic_se) == "X686I"] <- "X687I"
+    }
+    omic_se
+})
+
+omics_metadata <- data.frame("samplename" = unique(unlist(lapply(omics_data_list, colnames))))
+rownames(omics_metadata) <- omics_metadata$samplename
+omics_metadata$group <- factor(substr(omics_metadata$samplename, 5, 5), 
+                               levels = c("C", "H", "I", "E"), 
+                               labels = c("CNT", "HFD", "INT", "HFE"))
+
+multi_assay <- MultiAssayExperiment(experiments = omics_data_list, 
+                                    colData = omics_metadata)
+
+```
+
+## Fold Change Calculation
+
+```{r}
+ctrs_list <- names(unt_meta_results$Hilic_Negative$Contrasts_Results)
+
+experiment_list <- lapply(names(experiments(multi_assay)), function(mae_exp_name){
+    mae_exp <- experiments(multi_assay)[[mae_exp_name]]
+    p_val_cols <- grep("adj.p.value", colnames(rowData(mae_exp)))
+    for(p_val_col in p_val_cols){
+        rowData(mae_exp)[[p_val_col]][is.na(rowData(mae_exp)[[p_val_col]])] <- 1   
+    }
+    
+    if(!grepl("RNA|Shotgun", mae_exp_name)){
+        mod_mat <- model.matrix(~ group + 0, colData(mae_exp))
+        colnames(mod_mat) <- gsub("group", "", colnames(mod_mat))
+        
+        assay_dt <- assay(mae_exp)
+        assay_dt <- assay_dt + min(assay_dt[assay_dt != 0], na.rm = TRUE)/10
+        
+        fold_change_dt <- ProteoNet:::fold_change_calc(data = assay_dt, 
+                                     model_matrix = mod_mat, 
+                                     contrs = ctrs_list, log2_dt = FALSE, 
+                                     geometric_mean = TRUE)
+        colnames(fold_change_dt) <- paste0(colnames(fold_change_dt), ".log2FC")
+        rowData(mae_exp) <- cbind(rowData(mae_exp), fold_change_dt)
+    }
+    mae_exp
+})
+names(experiment_list) <- names(experiments(multi_assay))
+
+experiments(multi_assay) <- ExperimentList(experiment_list)
+
+saveRDS(multi_assay, "./Merged_Multi_Omics.rds")
+
+```
+
+
+## Multivariate processing
+
+```{r}
+multi_assay <- readRDS("./Merged_Multi_Omics.rds")
+## Data for VST
+lapply(assays(multi_assay), function(omic_dt){any(is.na(omic_dt))})
+
+proc_omics <- lapply(names(experiments(multi_assay)), function(omic_name){
+    param_list <- list()
+    function_list <- list()
+    omic_proc <- experiments(multi_assay)[[omic_name]]
+    if(grepl("DNA_Methylation", omic_name)){
+        function_list <- list(impute_knn_assay, scale_assay)
+    }
+    if(grepl("RNASeq|Functional_Shotgun", omic_name)){
+        function_list <- list(count_vst_deseq2, scale_assay)
+    }
+    if(grepl("Untargeted", omic_name)){
+        function_list <- list(impute_knn_assay, count_vst_deseq2, scale_assay)
+    }
+    if(grepl("Targeted", omic_name)){
+        function_list <- list(impute_knn_assay, scale_assay)
+    }
+    if(grepl("PTM", omic_name)){
+        function_list <- list(transformToMvalues, scale_assay)
+    }
+    if(grepl("16S|Shotgun", omic_name)){
+        function_list <- list(clr_proc, scale_assay)
+    }
+    if(grepl("Metallomics", omic_name)){
+        function_list <- list(scale_assay)
+    }
+    
+    for(fun in function_list){
+        omic_proc <- do.call(fun, c(list("omic_dt" = omic_proc), 
+                                    param_list))
+    }
+    omic_proc
+})
+names(proc_omics) <- names(assays(multi_assay))
+experiments(multi_assay) <- ExperimentList(proc_omics)
+
+saveRDS(multi_assay, "Multivariate_Merged_Multi_Omics.rds")
+```
+

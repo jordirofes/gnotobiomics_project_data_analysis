@@ -1,0 +1,156 @@
+---
+title: "Microbiome Analysis"
+author: "Jordi Rofes Herrera"
+date: "2023-11-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required packages
+
+```{r}
+library(vegan)
+library(TreeSummarizedExperiment)
+library(MultiAssayExperiment)
+library(ggplot2)
+library(ggpubr)
+library(plotly)
+library(scater)
+library(microbiome)
+library(phyloseq)
+library(mia)
+source("../../Utility Functions/utilities.R")
+```
+
+## Loading the multi omics object
+
+```{r}
+output_dir <- "D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omics_Analysis/Microbiome_Results/"
+multi_omics_raw <- readRDS("./Merged_Multi_Omics.rds")
+multi_omics_microbiome_raw <- multi_omics_raw[,,names(multi_omics_raw)[grep("Shotgun|16S", names(multi_omics_raw))]]
+multi_omics_microbiome_raw
+```
+
+
+```{r}
+x16s_shotgun_dt_raw <- multi_omics_microbiome_raw[,,grep("Shotgun|16S", names(multi_omics_microbiome_raw))] 
+
+names_comp <- as.data.frame(t(t(combn(levels(x16s_shotgun_dt_raw$group), m = 2))[,2:1]))
+
+colnames(names_comp) <- sapply(names_comp, function(x){paste(x, collapse = "-")})
+names_comp
+alpha_diversities <- lapply(names(experiments(x16s_shotgun_dt_raw)), function(x){
+    exp_dt <- experiments(x16s_shotgun_dt_raw)[[x]]
+    assay_dt <- assay(exp_dt)
+    assay_name <- assayNames(exp_dt)
+    
+    # alpha_diversities <- vegan::diversity(x = assay_dt, index = "shannon", MARGIN = 2)
+    if(grepl("Functional", x)){
+        return(NULL)
+    }
+    alpha_diversities <- mia:::.calc_faith(mat = assay(exp_dt), tree = mia::taxonomyTree(exp_dt))
+
+    # alpha_diversities <- estimateDiversity(x = exp_dt, assay.type = assay_name, index = "inverse_simpson")$inverse_simpson
+    
+    plot_dt <- as.data.frame(cbind(colData(exp_dt), data.frame("alpha_diversities" = alpha_diversities)))
+    
+    ggboxplot(data = plot_dt, x = "group", y = "alpha_diversities") +
+        stat_compare_means(comparisons = as.list(names_comp)) +
+        stat_compare_means(label.y = max(alpha_diversities) + max(max(alpha_diversities)*0.1, 2))
+})
+names(alpha_diversities) <- names(experiments(x16s_shotgun_dt_raw))
+
+pdf(paste0(output_dir, "alpha_diversities_faith.pdf"))
+alpha_diversities
+dev.off()
+```
+
+```{r}
+beta_div <- lapply(experiments(x16s_shotgun_dt_raw)[!grepl("Functional", names(experiments(x16s_shotgun_dt_raw)))], function(x){
+    
+    if(!"relabundance" %in% assayNames(x)){
+        x <- transformAssay(x,
+                          assay.type = "counts",
+                          method = "relabundance")    
+    }
+    
+    # Other metrics like Aitchison to clr-transformed data
+    x <- transformAssay(x,
+                          assay.type = "relabundance",
+                          method = "clr",
+                          pseudocount = TRUE)
+    x <- runMDS(x,
+              FUN = vegan::vegdist,
+              method = "euclidean",
+              assay.type = "clr",
+              name = "MDS_aitchison")
+
+    
+    p <- plotReducedDim(x, "MDS_aitchison",
+                    colour_by = "group")
+
+    # Calculate explained variance
+    e <- attr(reducedDim(x, "MDS_aitchison"), "eig")
+    rel_eig <- e / sum(e[e > 0])
+    
+    # Add explained variance for each axis
+    p <- p + labs(x = paste("PCoA 1 (", round(100 * rel_eig[[1]], 1), "%", ")", sep = ""),
+                  y = paste("PCoA 2 (", round(100 * rel_eig[[2]], 1), "%", ")", sep = ""))
+    
+    p
+    # meta_mds <- as.data.frame(metaMDS(vegdist(t(assay(x)), index = "bray"))$points)
+    # meta_mds$group <- colData(x)$group
+    # plot_pc(plot_dt = meta_mds[,c("MDS1", "MDS2")], group_var = meta_mds$group, 
+    #         x_lab = "Factor 1", y_lab = "Factor 2", ellipse_var = meta_mds$group)
+    
+    # ggplot(meta_mds, aes(x = MDS1, y =  MDS2, color = group)) + geom_point()
+})
+pdf(paste0(output_dir, "beta_diversity_aitchison.pdf"))
+print(beta_div)
+dev.off()
+```
+
+- There seems to be a functional structure of the microbiota in the colon that is not present in the cecum.
+
+## phyloseq data analysis
+
+```{r}
+
+phyloseq_list <- lapply(experiments(x16s_shotgun_dt_raw), FUN = function(x){
+    assay_name <- assayNames(x)
+    mia::makePhyloseqFromTreeSE(x, assay.type = assay_name)
+})
+
+phyloseq_list_filt <- phyloseq_list[grep("16S|^Shotgun", names(phyloseq_list))]
+
+composition_plots <- lapply(names(phyloseq_list_filt), function(x_name){
+    x <- phyloseq_list_filt[[x_name]]
+    rank_name <- strsplit(x_name, "\\.")[[1]]
+    rank_name <- stringr::str_to_title(rank_name[length(rank_name)])    
+    pseq <- transform(x, "compositional")
+    pseq <- aggregate_rare(pseq, level = rank_name, 
+                           detection = 1/100, prevalence = 50/100)
+    microbiome::plot_composition(pseq, sample.sort = "group") + ggtitle(x_name)
+})
+names(composition_plots) <- names(phyloseq_list_filt)
+pdf(paste0(output_dir, "relative_abundances.pdf"))
+composition_plots
+dev.off()
+```
+
+
+## Dominance of species
+
+```{r}
+lapply(names(x16s_shotgun_dt_raw), function(exp_names){
+    print(exp_names)
+    browser()
+    getUniqueFeatures(x16s_shotgun_dt_raw[[exp_names]])
+})
+
+```
+
+

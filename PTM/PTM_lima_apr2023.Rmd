@@ -1,0 +1,78 @@
+---
+title: "PTM Data Analysis"
+output: html_document
+date: "2023-04-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading the data
+
+```{r}
+library(car)
+library(DescTools)
+```
+
+
+```{r}
+ptm_data <- read.csv("./mydataLIMAptm_relabu.csv", row.names = 1)
+rownames(ptm_data) <- ptm_data$Replicate_Name
+
+ptm_metadata <- ptm_data[,1:2]
+ptm_data <- ptm_data[,3:ncol(ptm_data)]
+ptm_metadata$group <- factor(ptm_metadata$group, levels = c("C", "H", "I", "E"), 
+                              labels = c("CNT", "HFD", "INT", "HFE"))
+
+
+saveRDS(list("LIMA"= list("PTM_Data" = ptm_data, "PTM_Metadata" = ptm_metadata)),"./ptm_data_list.rds")
+```
+
+```{r}
+lapply(ptm_data, function(x){boxplot(x ~ ptm_metadata$group)})
+
+lapply(ptm_data, LeveneTest, group = ptm_metadata$group)
+lapply(ptm_data, function(x){
+    tapply(x, INDEX = ptm_metadata$group, FUN = function(y){
+        qqnorm(y)
+        qqline(y)
+    })
+})
+
+```
+
+```{r}
+names_comp <- apply(t(combn(levels(ptm_metadata$group), m = 2))[,2:1], 1, paste, collapse = "-")
+comp_mat <- as.data.frame(matrix(NA, ncol = 4, nrow = length(names_comp)))
+rownames(comp_mat) <- names_comp
+colnames(comp_mat) <- c("difference", "lower", "upper", "pvalue")
+
+tukey_results <- lapply(ptm_data, function(dt_var){
+    anova_res <- aov(dt_var ~ 0 + group, ptm_metadata)
+    anova_sum <- summary(anova_res)[[1]]["group","Pr(>F)"]
+    if(anova_sum <= 0.05){
+        return(TukeyHSD(anova_res, which = "group")[[1]])
+    } else{
+        return(comp_mat)
+    }
+})
+
+comp_results_list <- lapply(names_comp, function(name_comp){
+    comp_results <- lapply(tukey_results, function(dt_var){
+        if(name_comp %in% rownames(dt_var)){
+            return(dt_var[name_comp,])
+        } else{
+            return(rep(NA, 4))
+        }
+    })
+    comp_results <- as.data.frame(do.call(rbind, comp_results))
+    names(comp_results) <-  c("difference", "lower", "upper", "p.value")
+    comp_results$adj.p.value <- p.adjust(comp_results$p.value, method = "fdr")
+    comp_results
+})
+names(comp_results_list) <- names_comp
+
+saveRDS(comp_results_list, "./ptm_results.rds")
+```
+

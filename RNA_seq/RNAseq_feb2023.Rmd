@@ -1,0 +1,664 @@
+---
+title: "RNA seq Analysis"
+output: html_document
+date: "2023-02-01"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Packages
+
+```{r}
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(stringi)
+library(DESeq2)
+library(dplyr)
+library(mixOmics)
+library(sva)
+library(edgeR)
+library(IHW)
+library(biomaRt)
+```
+
+## Loading the data
+
+```{r,include=TRUE, results='hide'}
+myFactors <- read.csv("MERGED_gfcv&LIMA_metadata.csv",
+                         stringsAsFactors = T,
+                         colClasses = "factor" ,
+                         row.names = 1)
+
+myCounts <- read.csv("MERGED_gfcv&LIMA_raw_counts.csv",
+                         stringsAsFactors = F,
+                         colClasses = c("character",rep("numeric",74)),
+                         row.names = 1)
+```
+
+### Model data frames and metadata
+Create 2 different data frames for each model, with counts and metadata
+```{r}
+#counts GFCV
+myGFCVcounts <- dplyr::select(myCounts, -contains("X"))
+
+myGFCVcounts <- as.data.frame(t(myGFCVcounts))
+
+#metadata GFCV
+myGFCVfactors <- dplyr::slice(myFactors,37:74)
+
+#write.csv("gfcv_metadata.csv")
+#counts LIMA
+myLIMAcounts <- dplyr::select(myCounts, contains("X"))
+
+cln <- colnames(myLIMAcounts)
+
+cln <- gsub("X","",cln)
+
+colnames(myLIMAcounts) <- cln
+
+myLIMAcounts <- as.data.frame(t(myLIMAcounts))
+
+#metadata LIMA
+myLIMAfactors <- dplyr::slice(myFactors,1:36)
+```
+
+### Length function
+Create a function to calculate trasncript length from GTF file (Sonia Tarazona)
+```{r}
+gtf2length <-  function (mydir, myfile) {
+  
+  mygtf = read.delim(file.path(mydir, myfile), header = FALSE, as.is = TRUE)
+  
+  colnames(mygtf) = c("entity", "start", "end", "gene", "transcript")
+  
+  mygtf = mygtf[which(mygtf[,"entity"] == "exon"),-1]
+  
+  mylength = abs(mygtf[,"end"]-mygtf[,"start"]) + 1
+  
+  trans.length = aggregate(mylength, 
+                           by = list("gene" = mygtf[,"gene"],
+                                     "transcript" = mygtf[,"transcript"]), sum)
+  
+  gene.length = aggregate(trans.length[,"x"],
+                          by = list("gene" = trans.length[,"gene"]), median)
+  
+  colnames(gene.length)[2] = "length"
+
+  gene.length
+  
+}
+```
+
+### Transcript length calculation
+Calculate transcript length from GTF file
+```{r}
+mydir <- "./"
+myfile <- "mmuGTF.txt"
+
+lengthGTF <- data.frame(gtf2length(mydir,myfile))
+
+lengthGTF <- data.frame(ensembl_gene_id=lengthGTF$gene,
+                        lengthGTF=lengthGTF$length)
+
+lengthGTF$ensembl_gene_id <- stri_sub(lengthGTF$ensembl_gene_id, 1,18)
+```
+
+
+### TPM calculation
+Calculate TPM
+```{r}
+tpm <- function(counts, lengths) {
+  rate <- counts / lengths
+  rate / sum(rate) * 1e6
+}
+
+myGFCVcounts_t <- as.data.frame(t(myGFCVcounts))
+
+myGFCVcounts_t$ensembl_gene_id <- rownames(myGFCVcounts_t)
+
+lengthGTF <- dplyr::inner_join(lengthGTF,
+                               myGFCVcounts_t,
+                               by="ensembl_gene_id")
+
+lengthGTF <- dplyr::select(lengthGTF,
+                           ensembl_gene_id,
+                           lengthGTF)
+
+myGFCVcounts_t <- dplyr::select(myGFCVcounts_t,
+                                -ensembl_gene_id)
+
+rownames(lengthGTF) <- lengthGTF$ensembl_gene_id
+
+lengthGTF <- dplyr::select(lengthGTF, lengthGTF)
+
+dim(lengthGTF)
+dim(myGFCVcounts_t)
+
+gfcvTPM <- data.frame(ensembl_gene_id=rownames(myGFCVcounts_t),NA)
+
+for (i in 1:ncol(myGFCVcounts_t)){ 
+  sample <- myGFCVcounts_t[,i,drop=T]
+  TPM <- tpm(myGFCVcounts_t[,i],lengthGTF)
+  gfcvTPM[,i] <- cbind(data.frame(TPM))
+  colnames(gfcvTPM) <- colnames(myGFCVcounts_t[,i])
+}
+
+colnames(gfcvTPM) <- colnames(myGFCVcounts_t)
+
+rownames(gfcvTPM) <- rownames(myGFCVcounts_t)
+```
+
+
+###Filtering 80% and TPM > 0.1
+Filtering out genes with TPM > 0.1, output in counts 
+```{r}
+
+# filtering 80% from TPM
+dim(gfcvTPM)
+
+gfcvTPMall_t <- as.data.frame(t(gfcvTPM))
+
+dim(gfcvTPMall_t)
+
+myGFCVfactors$groups_m <- factor(myGFCVfactors$groups_m, 
+                                 levels = c("CVF","CVM", 
+                                            "GFF", "GFM"))
+
+groups <- levels(myGFCVfactors$groups_m)
+cutoff <- 0.2
+thresholds <- round(table(myGFCVfactors$groups_m) * cutoff)
+selected_cols <- lapply(groups, function(i){
+  gr <- rownames(myGFCVfactors[myGFCVfactors$groups_m == i,])
+  ceros <- gfcvTPMall_t[gr,] == 0
+  selc_gr <- which(colSums(ceros) < thresholds[i])
+  return(selc_gr)
+})
+selected_index <- unique(unlist(selected_cols))
+myGFCVcountsTPM_80 <- gfcvTPMall_t[,selected_index]
+
+dim(myGFCVcountsTPM_80)
+myGFCVcountsTPM_80 <- as.data.frame(t(myGFCVcountsTPM_80))
+dim(myGFCVcountsTPM_80)
+
+# Filtering TPM>0.1 after the 80% filter
+
+dim(myGFCVcountsTPM_80)
+myGFCVcountsTPM_80 <- myGFCVcountsTPM_80 %>% dplyr::mutate(aver = rowSums(.)/38)
+
+myGFCVcountsTPM_80ord <- dplyr::arrange(myGFCVcountsTPM_80, aver)
+
+dim(myGFCVcountsTPM_80ord)
+  
+myGFCVcountsTPM_80ord_f <- dplyr::filter(myGFCVcountsTPM_80ord, aver > 0.1)
+
+dim(myGFCVcountsTPM_80ord_f) # same results, the order does not matter
+
+myGFCVcountsTPM_80ord_f <- dplyr::select(myGFCVcountsTPM_80ord_f, -aver)
+
+dim(myGFCVcountsTPM_80ord_f)
+
+```
+
+###80% and 0.1 filtered, raw counts
+Only keep genes that appear in 80% of the samples in at least one group. 
+```{r}
+myGFCVcountsTPM_80_f_id <- data.frame(ensembl_gene_id=rownames(myGFCVcountsTPM_80ord_f))
+
+
+dim(myGFCVcounts_t)
+myGFCVcounts_t$ensembl_gene_id <- rownames(myGFCVcounts_t)
+
+
+
+# keep raw counts for genes with 80% filter
+myGFCVcounts80 <- dplyr::inner_join(myGFCVcountsTPM_80_f_id,
+                                    myGFCVcounts_t,
+                                    by="ensembl_gene_id")
+
+dim(myGFCVcounts80)
+
+rownames(myGFCVcounts80) <- myGFCVcounts80$ensembl_gene_id
+
+myGFCVcounts80 <- dplyr::select(myGFCVcounts80, -ensembl_gene_id)
+
+
+#Eliminate genes with variance 0
+dim(myGFCVcounts80)
+gene_var <- data.frame(gene_var=apply(myGFCVcounts80, 1, var))
+dim(gene_var)
+gene_var_id <- dplyr::filter(gene_var,gene_var>0) # Michael Love against that
+dim(gene_var_id)
+
+
+
+##################################################
+##################################################
+##### Matrix to use for DESeq2 and downstream# ###
+                dim(myGFCVcounts80)############# #
+##################################################
+##################################################
+
+#write_xlsx(myGFCVcounts80, "myGFCVcounts80.xlsx")
+write.csv(myGFCVcounts80, file = "GFCV_transcriptomics_filtered.csv", 
+          row.names = TRUE)
+
+dim(myGFCVcounts80)
+
+myGFCVcounts80_t <- as.data.frame(t(myGFCVcounts80))
+
+dim(myGFCVcounts80_t)
+
+
+p_rna_raw <-mixOmics::pca(myGFCVcounts80_t, ncomp = 6, center = T, scale = T,
+         max.iter = 500, tol = 1e-09, logratio = 'none',   ilr.offset = 0.001,
+         V = NULL, multilevel = NULL)
+
+
+pdf("GFCV_liv_PCAmixomics_raw80_jun2022.pdf")
+
+plotIndiv(p_rna_raw, ind.names = T, group = myGFCVfactors$gfcv, legend = T, title= "rna tpm liv by gfcv")
+
+plotIndiv(p_rna_raw, ind.names = T, group = myGFCVfactors$groups_m, legend = T, title= "rna tpm liv by group",ellipse = T, ellipse.level = 0.99)
+
+plotIndiv(p_rna_raw, ind.names = T, group = myGFCVfactors$sex, legend = T, title= "rna tpm liv by sex",ellipse = T, ellipse.level = 0.99)
+
+plotIndiv(p_rna_raw, ind.names = T, group = myGFCVfactors$batch,comp = c(1,2), legend = T, title= "rna tpm liv by batch",ellipse = T, ellipse.level = 0.99)
+plotIndiv(p_rna_raw, ind.names = T, group = myGFCVfactors$batch,comp = c(1,3), legend = T, title= "rna tpm liv by batch",ellipse = T, ellipse.level = 0.99)
+plotIndiv(p_rna_raw, ind.names = T, group = myGFCVfactors$batch,comp = c(2,3), legend = T, title= "rna tpm liv by batch",ellipse = T, ellipse.level = 0.99)
+
+dev.off()
+
+metapei_id <- data.frame(ensembl_gene_id=rownames(myGFCVcounts80))
+
+
+save(metapei_id, file="GFCV_metaepi1_20k_ensembl_gene_id_80filter.Rdata")
+
+#write_xlsx(metapei_id, "GFCV_metaepi1_20k_ensembl_gene_id_80filter.xlsx")
+
+```
+
+###DESeq2 and VST transformation
+```{r}
+myGFCVfactors$sex_m <- factor(myGFCVfactors$sex_m , ordered = F)
+
+myGFCVfactors_gs <- dplyr::select(myGFCVfactors, gfcv, sex_m)
+
+
+
+ddsGFCV80 <- DESeqDataSetFromMatrix(countData = myGFCVcounts80,
+                                      colData = myGFCVfactors_gs,
+                                      design= ~ gfcv + sex_m + gfcv:sex_m)
+
+
+# ddsGFCV80 <- DESeq(ddsGFCV80, test = "Wald")
+vsdGFCV80 <- vst(ddsGFCV80, blind = FALSE)
+
+#plotPCA with vst() transformed data
+
+pdf("GFCV_liv_PCAdeseq2_vst_jun2022.pdf")
+plotPCA(vsdGFCV80, intgroup=c("gfcv", "sex_m"))
+dev.off()
+
+
+# Extract transformed matrix
+
+vsdGFCV80_mat <- assay(vsdGFCV80)
+
+dim(vsdGFCV80_mat)
+
+class(vsdGFCV80_mat)
+
+vsdGFCV80_df <- as.data.frame(vsdGFCV80_mat)
+
+# filter vst transformed data var=0
+dim(vsdGFCV80_mat)
+gene_vst_var <- data.frame(gene_var=apply(vsdGFCV80_mat, 1, var))
+dim(gene_vst_var)
+gene_var_vst_id <- dplyr::filter(gene_vst_var,gene_var>0)
+dim(gene_var_vst_id)
+
+df <- bind_rows(
+  as_tibble(assay(vsdGFCV80)[, 1:2]) %>% mutate(transformation = "vst"))
+  
+colnames(df)[1:2] <- c("x", "y")  
+
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed(xlim = c(0,25), ylim =  c(0,25))
+dim(df)
+
+```
+
+### ComBat batch correction
+There is a mild batch effect that we already saw in other omics and we opted to correct this batch effect with the same algorithm (ComBat)
+```{r}
+# Combat on 80% and 0.1 filtered data
+dim(myGFCVcounts80)
+class(myGFCVcounts80)
+
+myGFCVcounts80_m <- as.matrix(myGFCVcounts80)
+
+
+myGFCVcounts80_CB <-  ComBat(myGFCVcounts80_m, myGFCVfactors$batch)
+
+
+sum(table(myGFCVcounts80_CB[myGFCVcounts80_CB<0]))
+
+
+myGFCVcounts80_CB[myGFCVcounts80_CB<0] <- 0
+
+
+sum(table(myGFCVcounts80_CB[myGFCVcounts80_CB<0]))
+
+
+myGFCVcounts80_CB <- as.data.frame(round(myGFCVcounts80_CB, digits = 0))
+
+
+dim(myGFCVcounts80_CB)
+
+pdf("GFCV_liv_boxplot_80&01_raw&vst_jun2022.pdf")
+boxplot(log10(myGFCVcounts80_CB), las=2, main= "80 and 01 raw combat corrected")
+boxplot(log10(myGFCVcounts80), las=2, main= "80 and 01 raw not combat corrected")
+
+
+boxplot(vsdGFCV80_mat, las=2, main= "80 and 01 vst not combat corrected")
+dev.off()
+
+myGFCVcounts80_CB <- as.data.frame(t(myGFCVcounts80_CB))
+
+
+dim(myGFCVcounts80_CB)
+dim(myGFCVcounts80_t)
+
+
+p_rnaCB <-mixOmics::pca(myGFCVcounts80_CB, ncomp = 6, center = T, scale = T,
+         max.iter = 500, tol = 1e-09, logratio = 'none',   ilr.offset = 0.001,
+         V = NULL, multilevel = NULL)
+
+p_rna <-mixOmics::pca(myGFCVcounts80_t, ncomp = 6, center = T, scale = T,
+         max.iter = 500, tol = 1e-09, logratio = 'none',   ilr.offset = 0.001,
+         V = NULL, multilevel = NULL)
+
+
+pdf("GFCV_liv_PCAmixom_rna_CB&noCB_feb2022_jun2022.pdf")
+
+plotIndiv(p_rnaCB, ind.names = T, group = myGFCVfactors$gfcv, legend = T, title= "rna liv CB by gfcv")
+
+plotIndiv(p_rna, ind.names = T, group = myGFCVfactors$gfcv, legend = T, title= "rna liv not CB by gfcv")
+
+
+plotIndiv(p_rnaCB, ind.names = T, group = myGFCVfactors$groups_m, legend = T, title= "rna liv CB by group")
+
+plotIndiv(p_rna, ind.names = T, group = myGFCVfactors$groups_m, legend = T, title= "rna liv not CB by group")
+
+
+plotIndiv(p_rnaCB, ind.names = T, group = myGFCVfactors$sex, legend = T, title= "rna liv CB by sex",ellipse = T, ellipse.level = 0.99)
+
+plotIndiv(p_rna, ind.names = T, group = myGFCVfactors$sex, legend = T, title= "rna liv not CB by sex",ellipse = T, ellipse.level = 0.99)
+
+
+plotIndiv(p_rnaCB, ind.names = T, group = myGFCVfactors$batch, legend = T,comp = c(1,2), title= "rna liv CB by batch",ellipse = T, ellipse.level = 0.99)
+
+plotIndiv(p_rna, ind.names = T, group = myGFCVfactors$batch, legend = T,comp = c(1,2), title= "rna liv not CB by batch",ellipse = T, ellipse.level = 0.99)
+
+
+plotIndiv(p_rnaCB, ind.names = T, group = myGFCVfactors$batch, legend = T,comp = c(1,3), title= "rna liv CB by batch",ellipse = T, ellipse.level = 0.99)
+
+plotIndiv(p_rna, ind.names = T, group = myGFCVfactors$batch, legend = T,comp = c(1,3), title= "rna liv not CB by batch",ellipse = T, ellipse.level = 0.99)
+
+
+dev.off()
+
+#Eliminate genes with variance 0
+myGFCVcounts80_CB <- as.data.frame(t(myGFCVcounts80_CB))
+
+gene_var <- data.frame(gene_var=apply(myGFCVcounts80_CB, 1, var))
+dim(gene_var)
+gene_var_id <- dplyr::filter(gene_var,gene_var>0) # Michael Love against eliminating low variance genes for DESeq2
+dim(gene_var_id)
+
+
+```
+
+### TMM & VST normalization
+Using myGFCVcounts80_CB (no TPM filtering) corrected data
+```{r}
+# TMM transformation
+
+#myGFCVcounts80_CB
+
+dim(myGFCVcounts80)
+dim(myGFCVfactors)
+
+myGFCVfactors_tmm <- data.frame(sample=rownames(myGFCVfactors),
+                                group=stri_sub(rownames(myGFCVfactors),1,2),
+                                gfcv=stri_sub(rownames(myGFCVfactors),1,1),
+                                sex=stri_sub(rownames(myGFCVfactors),2,2),
+                                batch=stri_sub(rownames(myGFCVfactors),4,4),
+                                lib.size=colSums(myGFCVcounts80_CB))
+
+dim(myGFCVfactors_tmm)
+
+
+
+#DGEList object 80%filter
+y <- DGEList(counts=myGFCVcounts80,
+             samples = myGFCVfactors_tmm)
+
+y <- calcNormFactors(y,method = "TMM",lib.size=y$samples$lib.size)
+
+
+cpms <- cpm(y, log=FALSE)
+
+logcpms <- cpm(y, log=TRUE)
+
+#MDS plot
+pdf("GFCV_plotMDS_cpms_edgeR_jun2022.pdf")
+plotMDS(cpms, labels=y$samples$sample,main="CPMs")
+
+plotMDS(logcpms, labels=y$samples$sample,main="logCPMs")
+dev.off()
+
+
+
+#Eliminate genes with variance 0
+gene_var <- data.frame(gene_var=apply(cpms, 1, var))
+dim(gene_var)
+gene_var_id <- dplyr::filter(gene_var,gene_var>0) # Michael Love against that for input to DESeq2
+dim(gene_var_id)
+
+
+#PCA tmm counts
+
+dim(cpms)
+cpms_t <- as.data.frame(t(cpms))
+
+
+
+p_cpms <-mixOmics::pca(cpms_t, ncomp = 6, center = TRUE, scale = TRUE,
+         max.iter = 500, tol = 1e-09, logratio = 'none',   ilr.offset = 0.001,
+         V = NULL, multilevel = NULL)
+
+
+pdf("GFCV_liv_PCAmixom_rna_tmm_80_jun2022.pdf")
+plotIndiv(p_cpms, ind.names = T, group = myGFCVfactors$gfcv, legend = T, title= "rna tmm liv by gfcv, size norm")
+
+
+plotIndiv(p_cpms, ind.names = T, group = myGFCVfactors$groups_m, legend = T, title= "rna tmm liv by group, size norm")
+
+plotIndiv(p_cpms, ind.names = T, group = myGFCVfactors$sex, legend = T, title= "rna tmm liv by sex, size norm",ellipse = T, ellipse.level = 0.99)
+
+
+plotIndiv(p_cpms, ind.names = T, group = myGFCVfactors$batch, legend = T, title= "rna tmm liv by batch, size norm",ellipse = T, ellipse.level = 0.99)
+
+
+dev.off()
+
+dim(cpms_t)
+dim(cpms)
+
+
+cpms_for_hist_t <- as.data.frame(cpms_t)
+
+cpms_for_hist <- as.data.frame(cpms)
+
+
+hist(log10(cpms_for_hist$CF21), breaks = 50)
+
+cpms_for_hist_sc <- as.data.frame(t(base::scale(t(cpms_for_hist))))
+
+cpms_for_hist_sc <- as.data.frame(cpms_for_hist_sc)
+
+hist(cpms_for_hist_sc$CF22, breaks = 50, xlim = c(-2,2))
+
+
+hist(log10(cpms_for_hist_t$ENSMUSG00000004043), breaks = 5)
+
+cpms_for_hist_sc_t <- as.data.frame(t(base::scale(t(cpms_for_hist_t))))
+
+cpms_for_hist_sc_t <- as.data.frame(cpms_for_hist_sc_t)
+
+hist(cpms_for_hist_sc_t$ENSMUSG00000004043, breaks = 5)
+
+
+pdf("RNAseq_histo_tmm_80_jun2022.pdf")
+hist(cpms_for_hist_sc$CF21, breaks = 50)
+hist(cpms_for_hist_sc_t$ENSMUSG00000004043, breaks = 5)
+dev.off()
+
+
+# VST transformation for MOFA (leght size + vst)
+dim(myGFCVcounts80)
+dim(myGFCVfactors)
+
+ddsGFCV80 <- DESeqDataSetFromMatrix(countData = myGFCVcounts80,
+                                       colData = myGFCVfactors,
+                                       design= ~ gfcv + sex_m +
+                                         gfcv:sex_m)
+
+
+ddsGFCV80 <- DESeq(ddsGFCV80, test = "LRT", reduced = ~1)
+
+
+
+ddsGFCV80_vst <- vst(ddsGFCV80,blind = FALSE)
+
+myGFCVcounts80_vst <- as.data.frame(assay(ddsGFCV80_vst))
+
+hist(as.numeric(c(myGFCVcounts80_vst[1,])))
+hist(myGFCVcounts80_vst$CF11)
+
+dim(myGFCVcounts80_vst)
+
+myGFCVcounts80_vst_t <- as.data.frame(t(myGFCVcounts80_vst))
+dim(myGFCVcounts80_vst_t)
+
+
+p_vst <-mixOmics::pca(myGFCVcounts80_vst_t, ncomp = 6, center = TRUE, scale = F,
+         max.iter = 500, tol = 1e-09, logratio = 'none',   ilr.offset = 0.001,
+         V = NULL, multilevel = NULL)
+
+
+pdf("GFCV_liv_PCAmixom_rna_80_vst_jun2022.pdf")
+plotIndiv(p_vst, ind.names = T, group = myGFCVfactors$gfcv, legend = T, title= "rna vst liv by gfcv, size norm")
+
+
+plotIndiv(p_vst, ind.names = T, group = myGFCVfactors$groups_m, legend = T, title= "rna vst liv by group, size norm")
+
+plotIndiv(p_vst, ind.names = T, group = myGFCVfactors$sex, legend = T, title= "rna vst liv by sex, size norm",ellipse = T, ellipse.level = 0.99)
+
+
+plotIndiv(p_vst, ind.names = T, group = myGFCVfactors$batch, legend = T, title= "rna vst liv by batch, size norm",ellipse = T, ellipse.level = 0.99)
+
+
+dev.off()
+
+```
+
+
+## GFCV DESeq2
+Run DESeq with LRT
+
+### DESeq
+
+#### Simplified model parametrization
+
+```{r}
+gfcv_80_dt <- read.csv("./GFCV_transcriptomics_filtered.csv", row.names = 1)
+myFactors <- read.csv("MERGED_gfcv&LIMA_metadata.csv",
+                         stringsAsFactors = T,
+                         colClasses = "factor" ,
+                         row.names = 1)
+
+myGFCVfactors <- dplyr::slice(myFactors,37:74)
+
+write.csv(myGFCVfactors, file = "RNASeq_gfcv_metadata.csv")
+
+gfcv_DESeq <- DESeqDataSetFromMatrix(countData = gfcv_80_dt,
+                                      colData = myGFCVfactors,
+                                      design= ~ batch + gfcv + sex_m + gfcv:sex_m)
+gfcv_DESeq$gfcv <- relevel(gfcv_DESeq$gfcv, ref = "C")
+gfcv_DESeq$sex_m <- relevel(gfcv_DESeq$sex_m, ref = "M")
+
+gfcv_DESeq <- DESeq(gfcv_DESeq, test = "Wald")
+
+ctrs_vec <- resultsNames(gfcv_DESeq)
+ctrs_vec
+gfcv_DESeq_results <- lapply(ctrs_vec[5], function(ctrs){results(gfcv_DESeq, name = ctrs, filterFun = ihw)})
+sapply(gfcv_DESeq_results, summary)
+names(gfcv_DESeq_results) <- ctrs_vec[5]
+
+saveRDS(gfcv_DESeq_results, "RNASeq_gfcv_siplified_model_results_list.rds")
+```
+
+#### Complete model parametrization
+
+```{r}
+gfcv_80_dt <- read.csv("./GFCV_transcriptomics_filtered.csv", row.names = 1)
+myGFCVfactors <- read.csv("./RNASeq_gfcv_metadata.csv")
+gfcv_DESeq <- DESeqDataSetFromMatrix(countData = gfcv_80_dt,
+                                      colData = myGFCVfactors,
+                                      design= ~ 0 + groups_m + batch)
+
+gfcv_DESeq <- DESeq(gfcv_DESeq, test = "Wald")
+
+ctrs_vec <- resultsNames(gfcv_DESeq)
+ctrs_vec_list <- list(c("groups_m", "GFM", "CVM"),c("groups_m", "GFF", "CVF"), 
+                      c("groups_m", "CVF", "CVM"), c("groups_m", "GFF", "GFM"),
+                      c("groups_m", "GFM", "CVF"), c("groups_m", "GFF", "CVM"))
+
+gfcv_DESeq_results_complete <- lapply(ctrs_vec_list, function(ctrs){
+    results(gfcv_DESeq, contrast = ctrs, filterFun = ihw)
+})
+lapply(gfcv_DESeq_results_complete, summary)
+
+names(gfcv_DESeq_results_complete) <- c("GFM_CVM", "GFF_CVF", "CVF_CVM", 
+                                        "GFF_GFM", "GFM_CVF", "GFF_CVM")
+
+saveRDS(gfcv_DESeq_results_complete, "RNASeq_gfcv_complete_model_ihw_results_list.rds")
+```
+
+#### Simplified model parametrization without interecept
+
+```{r}
+gfcv_80_dt <- read.csv("./GFCV_transcriptomics_filtered.csv", row.names = 1)
+myGFCVfactors <- read.csv("./RNASeq_gfcv_metadata.csv")
+
+gfcv_DESeq <- DESeqDataSetFromMatrix(countData = gfcv_80_dt,
+                                      colData = myGFCVfactors,
+                                      design= ~ batch + gfcv + sex_m)
+gfcv_DESeq$gfcv <- relevel(gfcv_DESeq$gfcv, ref = "C")
+gfcv_DESeq$sex_m <- relevel(gfcv_DESeq$sex_m, ref = "M")
+
+gfcv_DESeq <- DESeq(gfcv_DESeq, test = "Wald")
+
+ctrs_vec <- resultsNames(gfcv_DESeq)
+ctrs_vec
+gfcv_DESeq_results <- lapply(ctrs_vec[3], function(ctrs){results(gfcv_DESeq, name = ctrs, filterFun = ihw)})
+sapply(gfcv_DESeq_results, summary)
+names(gfcv_DESeq_results) <- ctrs_vec[3]
+
+saveRDS(gfcv_DESeq_results, "RNASeq_gfcv_no_interaction_model_results_list.rds")
+```
