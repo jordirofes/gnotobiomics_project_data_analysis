@@ -1,0 +1,548 @@
+---
+title: "DMR Analysis"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+date: "2023-10-17"
+params:
+  methrix_path: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/merged_methrix.rds"
+  chromosome_filter: !r NULL
+  outlier_samples: !r  c("X670E", "X594C")
+  
+  
+  granges_path: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/dmrseq.group.non_smoothed_global/dmrseq_results_non_smoothed_global.group.rds"
+  
+  output_dir: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/"
+  threads: 1
+  
+  random_seed: 1234
+  group_var: "group"
+  
+  adj.p.value_thr: 0.1
+  merge_granges: FALSE
+  filter_significant_before_merging: TRUE
+
+  merge_method: "disjoint"
+  
+  unique_gene_region_annotation_filter: FALSE 
+  results_name: "non_smoothed_global"
+  
+  genome_id: "mm39"
+  annotation_genome: "TxDb.Mmusculus.UCSC.mm39.knownGene"
+  organism_db: "org.Mm.eg.db"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, 
+                      message = FALSE, echo = FALSE)
+options(knitr.duplicate.label = "allow")
+```
+
+```{r}
+library(methrix)
+library(annotatr)
+library(AnnotationHub)
+library(ChIPseeker)
+library(plotly)
+library(ggplot2)
+library(bsseq)
+library(dplyr)
+library(matrixStats)
+library(params$annotation_genome, character.only = TRUE)
+library(params$organism_db, character.only = TRUE)
+source("../scripts/plot_functions.R")
+```
+
+```{r}
+merged_methrix <- readRDS(params$methrix_path)
+results_name <- paste0(params$results_name, ".",  params$group_var)
+
+if(!is.null(params$outlier_samples)){
+  merged_methrix <- merged_methrix[,!colnames(merged_methrix) %in% params$outlier_samples]
+}
+
+if(!is.null(params$chromosome_filter)){
+  all_chrom <- metadata(merged_methrix)$ref_CpG$chr
+  merged_methrix <- subset_methrix(m = merged_methrix, 
+                                  contigs = all_chrom[!(all_chrom %in% params$chromosome_filter)], 
+                                  overlap_type = "any")
+}
+```
+
+### Merge Results {.tabset}
+
+```{r}
+granges_results <- readRDS(params$granges_path)
+
+
+if(params$merge_granges){
+  unmerged_granges <- granges_results
+  
+  if(params$filter_significant_before_merging){
+    granges_results <- lapply(granges_results, function(ctrs_res){
+      p_val_cols <- mcols(ctrs_res)[grepl("\\.adj\\.p\\.value|qval", 
+                                    colnames(mcols(ctrs_res)))]
+      ctrs_res[rowSums(as.matrix(p_val_cols) <= params$adj.p.value_thr, na.rm = TRUE) >= 1]
+    })
+  }
+  
+  merge_method <- match.arg(params$merge_method, 
+                            c("disjoint", "reduced", "union")) # Reduced and union give the exact same results
+  granges_results <- switch(merge_method, "disjoint" = {
+    ## Merge Option A - disjoint regions
+    # Most Accuracy but includes duplicated and might cut DMR related to the same gene
+    local_res_disjoin <- disjoin(Reduce(c, granges_results))
+    
+    for(ctrs_ranges_name in names(granges_results)){
+      ctrs_ranges <- granges_results[[ctrs_ranges_name]]
+      
+      colnames(mcols(ctrs_ranges)) <- paste(ctrs_ranges_name, 
+                                            colnames(mcols(ctrs_ranges)), 
+                                            sep = ".") 
+      
+      found_overlaps <- findOverlaps(query = ctrs_ranges, local_res_disjoin)
+  
+      for(col_name in colnames(mcols(ctrs_ranges))){
+        if(grepl("index", col_name)){next}
+        mcols(local_res_disjoin)[[col_name]] <- NA  
+        mcols(local_res_disjoin)[found_overlaps@to, col_name] <- mcols(ctrs_ranges)[found_overlaps@from, col_name]
+      }
+      mcols(local_res_disjoin)[[paste(ctrs_ranges_name, "id", sep = ".")]] <- NA
+      mcols(local_res_disjoin)[found_overlaps@to, 
+                              paste(ctrs_ranges_name, 
+                                    "id", sep = ".")] <- found_overlaps@from
+    }
+    local_res_disjoin
+  }, "reduced" = {
+    # Merge Option B - reduce
+    local_res_reduced <- reduce(Reduce(c, granges_results))
+    
+    for(ctrs_ranges_name in names(granges_results)){
+      ctrs_ranges <- granges_results[[ctrs_ranges_name]]
+    
+      colnames(mcols(ctrs_ranges)) <- paste(ctrs_ranges_name,
+                                            colnames(mcols(ctrs_ranges)), 
+                                            sep = ".")
+    
+      found_overlaps <- findOverlaps(query = ctrs_ranges, local_res_reduced)
+    
+      for(col_name in colnames(mcols(ctrs_ranges))){
+        if(grepl("index", col_name)){next}
+        mcols(local_res_reduced)[col_name] <- NA
+        # If multiple regions match to the same one, then the last one is kept. We might want to change this to keep the most significant from both or to try and combine the pvalues?
+        mcols(local_res_reduced)[found_overlaps@to,col_name] <- mcols(ctrs_ranges)[found_overlaps@from, col_name]
+      }
+    }
+    local_res_reduced
+  }, "union" = {
+    local_res_union <- Reduce(GenomicRanges::union, granges_results)
+    for(ctrs_ranges_name in names(granges_results)){
+      ctrs_ranges <- granges_results[[ctrs_ranges_name]]
+    
+      colnames(mcols(ctrs_ranges)) <- paste(ctrs_ranges_name,
+                                            colnames(mcols(ctrs_ranges)), 
+                                            sep = ".")
+    
+      found_overlaps <- findOverlaps(query = ctrs_ranges, local_res_union)
+    
+      for(col_name in colnames(mcols(ctrs_ranges))){
+        if(grepl("index", col_name)){next}
+        mcols(local_res_union)[col_name] <- NA
+        mcols(local_res_union)[found_overlaps@to, col_name] <- mcols(ctrs_ranges)[found_overlaps@from, col_name]
+      }
+    }
+    local_res_union
+  })
+  results_list <- c(list("All_DMRs" = granges_results), unmerged_granges)
+  
+  merge_method <- paste0( ".", merge_method)
+  
+  # peakAnnoList <- c(peakAnnoList, "Merged" = rowRanges(dna_met_exp))
+  # lapply(unmerged_granges, function(ctrs_dt){
+  #   length(unique(findOverlaps(ctrs_dt, granges_results)@from))/length(ctrs_dt)
+  # })
+
+} else{
+  merge_method <- ""
+  if(is(granges_results, "list")){
+    granges_results <- granges_results[[1]]  
+  }
+  results_list <- c(list("All_DMRs" = granges_results))
+}
+```
+
+
+```{r}
+# test_granges <- lapply(granges_results, function(x){x[seqnames(x) == "chr2"]})
+# test_granges_disjoin <- disjoin(Reduce(c, test_granges))
+# 
+# range_view <- GRanges(seqnames = "chr2", ranges = IRanges(start = min(start(test_granges_disjoin)),
+#         end = max(end(test_granges_disjoin))))
+# 
+# trackViewer::plotGRanges(test_granges$`HFD-CNT`, test_granges_disjoin,
+#                          range = range_view)
+# trackViewer::plotGRanges(test_granges$`HFD-CNT`, test_granges_disjoin,
+#                          range = test_granges$`INT-HFD`[246])
+# 
+# 
+# test_granges$`INT-HFD`[246]
+# 
+# test_found <- lapply(test_granges, function(ctrs){
+#   ctrs[findOverlaps(ctrs, test_granges$`INT-HFD`[246])@from]
+# })
+# 
+# # This one works
+# test_methrix <- subset_methrix(merged_methrix, regions = test_granges$`INT-HFD`[246])
+# test <- get_region_summary(merged_methrix, regions = test_granges$`INT-HFD`[246], overlap_type = "within")
+# 
+# # This is diferent
+# test2 <- get_region_summary(merged_methrix, regions = test_granges$`INT-HFD`[246], overlap_type = "any")
+# test_methrix2 <- subset_methrix(merged_methrix, regions = test_granges$`INT-HFD`[246], overlap_type = "any")
+# 
+# # This works
+# test_methrix_d <- subset_methrix(merged_methrix, regions = test_granges_disjoin[23229], overlap_type = "any")
+# test_d <- get_region_summary(merged_methrix, regions = test_granges_disjoin[23229], overlap_type = "any")
+# 
+# test_methrix@elementMetadata
+# 
+# overlapped_regions <- test_granges_disjoin[findOverlaps(test_granges$`INT-HFD`[246], test_granges_disjoin)@to]
+```
+
+```{r}
+## Mean methylation quantification
+merged_reduced_res <- methrix::get_region_summary(m = merged_methrix, 
+                                                  regions = granges_results, 
+                                                  overlap_type = "any")
+```
+
+```{r}
+## Annotation
+txdb <- base::get(params$annotation_genome)
+
+peakAnnoList <- lapply(results_list, annotatePeak, TxDb=txdb, 
+                        tssRegion=c(-3000, 3000), verbose=FALSE)
+
+# pdf("Any_Sig_Disjoint_All_Sig_ctrs_annotation_.pdf")
+# ChIPseeker::plotAnnoBar(peakAnnoList)
+# dev.off()
+peakAnnoList <- lapply(peakAnnoList, as.GRanges)
+
+annotated_dt <- peakAnnoList$All_DMRs
+
+colnames(mcols(annotated_dt)) <- gsub("pval", "p.value", 
+                                      colnames(mcols(annotated_dt)))
+colnames(mcols(annotated_dt)) <- gsub("qval", "adj.p.value", 
+                                      colnames(mcols(annotated_dt)))
+
+loaded_org_db <- base::get(params$organism_db)
+
+mcols(annotated_dt)$geneSymbol <- mapIds(x = loaded_org_db, 
+                                        keys = mcols(annotated_dt)$geneId, 
+                                        column = "SYMBOL", 
+                                        keytype = "ENTREZID")
+mcols(annotated_dt)$geneName <- mapIds(x = loaded_org_db, 
+                                        keys = mcols(annotated_dt)$geneId, 
+                                        column = "GENENAME", 
+                                        keytype = "ENTREZID")
+mcols(annotated_dt)$n_overlap_CpGs <- merged_reduced_res$n_overlap_CpGs
+
+dna_met_exp <- SummarizedExperiment(
+  assays = as.data.frame(merged_reduced_res)[,colnames(merged_reduced_res) %in% colnames(merged_methrix)],
+  rowRanges = annotated_dt,
+  colData = colData(merged_methrix))
+
+rownames(dna_met_exp) <- paste0("DMR", rownames(dna_met_exp))
+
+p_vals_cols <- grep("adj\\.p\\.value", colnames(rowData(dna_met_exp)), value = TRUE)
+
+for(id in p_vals_cols){
+  rowData(dna_met_exp)[[id]][is.na(rowData(dna_met_exp)[[id]])] <- 1
+}
+```
+
+```{r, eval=params$unique_gene_region_annotation_filter}
+exp_row_data <- rowData(dna_met_exp)
+
+annotation_regions <- paste0(exp_row_data[["annotation"]], exp_row_data[["geneId"]])
+
+unique_annotations <- unique(annotation_regions)
+id_columns <- grepl("\\.id$", colnames(rowData(dna_met_exp)))
+
+p_val_dt <- as.matrix(rowData(dna_met_exp)[,grepl("\\.adj\\.p\\.value$", colnames(rowData(dna_met_exp)))])
+p_val_dt <- p_val_dt <= params$adj.p.value_thr
+
+exp_row_data <- as.matrix(exp_row_data[,id_columns])
+exp_row_data_test <- data.frame("no_na_counts" = ncol(exp_row_data) - rowCounts(exp_row_data, value = NA),
+                                "num_sig" = rowSums(p_val_dt, na.rm = TRUE),
+                                "dmr_width" = width(rowRanges(dna_met_exp)),
+                                "annotation" = annotation_regions)
+
+rownames(exp_row_data_test) <- rownames(exp_row_data)
+
+exp_row_data_test <- exp_row_data_test[order(exp_row_data_test$num_sig, 
+                                             exp_row_data_test$no_na_counts, 
+                                             exp_row_data_test$dmr_width,
+                                             decreasing = TRUE),]
+
+keep_dmrs <- tapply(X = exp_row_data_test, 
+                    INDEX = exp_row_data_test$annotation, 
+                    FUN = function(x){
+  rownames(x)[1]
+})
+
+dna_met_exp <- dna_met_exp[keep_dmrs,]
+
+peakAnnoList <- c(peakAnnoList, "Merged and Filtered" = rowRanges(dna_met_exp))
+```
+
+```{r}
+# saveRDS(dna_met_exp, paste0(params$output_dir, "dna_met_exp_",
+#                               results_name, merge_method, ".rds"))
+
+dna_met_exp <- dna_met_exp[rowSums(as.matrix(rowData(dna_met_exp)[,p_vals_cols]) <= params$adj.p.value_thr, 
+                                   na.rm = TRUE) >= 1,]
+
+saveRDS(dna_met_exp, paste0(params$output_dir, "dna_met_exp_", 
+                              results_name, merge_method, ".rds"))
+```
+
+```{r}
+methrix_sub <- subset_methrix(merged_methrix, 
+                              regions = rowRanges(dna_met_exp), 
+                              overlap_type = "any")
+
+set.seed(params$random_seed)
+random_cpgs <- sample(seq_len(nrow(methrix_sub)), 
+                      size = min(5000, nrow(methrix_sub)))
+
+plot_dt <- assay(methrix_sub[random_cpgs,])
+plot_dt <- impute::impute.knn(data = plot_dt)$data
+```
+
+### Results Analysis {.tabset}
+
+#### Number of contrasts in which a DMR is significant table
+
+```{r}
+num_significant <- rowSums(as.matrix(rowData(dna_met_exp)[,p_vals_cols]) <= params$adj.p.value_thr, 
+                                   na.rm = TRUE)
+table(num_significant)
+```
+
+
+#### Region annotations non significant
+
+```{r}
+dmr_annotation_plot(omic_dt = peakAnnoList)
+```
+
+#### Region annotations significant
+
+```{r}
+results_list_sig <- lapply(peakAnnoList, function(x){
+  p_val_cols <- as.matrix(mcols(x)[,grepl("adj\\.p\\.value|qval", 
+                                          colnames(mcols(x))), drop = FALSE])
+  p_val_cols[is.na(p_val_cols)] <- 1
+  x[rowSums(p_val_cols <= params$adj.p.value_thr, na.rm = TRUE) >= 1]
+})
+dmr_annotation_plot(omic_dt = results_list_sig)
+```
+
+#### PCA any significant CpGs
+
+```{r}
+set.seed(params$random_seed)
+top_cpgs_pca <- methrix::methrix_pca(m = methrix_sub, top_var = 5000, var = "rand")
+
+
+pc_plot <- methrix::plot_pca(top_cpgs_pca, m = methrix_sub, col_anno = params$group_var, 
+                  show_labels = TRUE, pc_x = "PC1", pc_y = "PC2") + ggtitle("Random 5000 CpGs")
+pc_plot <- pc_plot + stat_ellipse(type = "t")
+
+print(pc_plot)
+
+# png(paste0(params$output_dir, "top_5000_filtered_cpgs_beta_values_pca", results_name, ".png"))
+# print(pc_plot)
+# dev.off()
+```
+
+#### Heatmaps any significant {.tabset}
+
+##### Beta values
+
+```{r}
+set.seed(params$random_seed)
+
+quantile_breaks <- quantile(plot_dt, seq(0, 1, length.out = 101), na.rm = TRUE)
+quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+heatmap_dt <- pheatmap::pheatmap(mat = t(plot_dt), main = "Random 5000 CpGs",
+                  annotation_row = as.data.frame(colData(methrix_sub)[,params$group_var, drop = FALSE]),  
+                  clustering_method = "average",
+                  color = color_values, clustering_distance_rows = dist(scale(t(assay(methrix_sub)))),
+                  breaks = quantile_breaks, show_colnames = FALSE)
+
+# png(paste0(params$output_dir, "random_5000_filtered_cpgs_beta_values_heatmap", results_name, ".png"))
+# print(plot(heatmap_dt$gtable))
+# dev.off()
+```
+
+##### Scaled Beta values
+
+```{r}
+quantile_breaks <- quantile(scale(t(plot_dt)), seq(0, 1, length.out = 101), na.rm = TRUE)
+quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+
+color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+
+set.seed(params$random_seed)
+heatmap_dt <- pheatmap::pheatmap(mat = scale(t(plot_dt)), 
+                  annotation_row = as.data.frame(colData(methrix_sub)[,params$group_var, drop = FALSE]),
+                  clustering_method = "average", main = "Random 5000 CpGs",
+                  color = color_values, clustering_distance_rows = dist(scale(t(assay(methrix_sub)))), 
+                  breaks = quantile_breaks, show_colnames = FALSE)
+
+# png(paste0(params$output_dir, "random_5000_filtered_cpgs_scaled_values_heatmap", results_name, ".png"))
+# plot(heatmap_dt$gtable)
+# dev.off()
+```
+
+#### Heatmap significant DMRs {.tabset}
+
+##### Beta values
+
+```{r}
+plot_dt <- assay(dna_met_exp)
+plot_dt <- impute::impute.knn(data = as.matrix(plot_dt))$data
+
+quantile_breaks <- quantile(plot_dt, seq(0, 1, length.out = 101), na.rm = TRUE)
+quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+
+color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+
+set.seed(params$random_seed)
+heatmap_dt <- pheatmap::pheatmap(mat = t(plot_dt), 
+                  annotation_row = as.data.frame(colData(dna_met_exp)[,params$group_var, drop = FALSE]),
+                  clustering_method = "average", 
+                  main = paste("DMRs Any Significant (Mean methylation value & adj pvalue <=",
+                              params$adj.p.value_thr),
+                  color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))), 
+                  breaks = quantile_breaks, show_colnames = FALSE)
+```
+
+##### Scaled Beta values
+
+```{r}
+quantile_breaks <- quantile(scale(t(plot_dt)), seq(0, 1, length.out = 101), na.rm = TRUE)
+quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+
+color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+
+set.seed(params$random_seed)
+heatmap_dt <- pheatmap::pheatmap(mat = scale(t(plot_dt)), 
+                  annotation_row = as.data.frame(colData(dna_met_exp)[,params$group_var, drop = FALSE]),
+                  clustering_method = "average", 
+                  main = paste("DMRs Any Significant (Mean methylation value & adj pvalue <=",
+                              params$adj.p.value_thr),
+                  color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))), 
+                  breaks = quantile_breaks, show_colnames = FALSE)
+```
+
+#### CpG distribution any significant {.tabset}
+
+##### Beta values {.tabset}
+
+###### By sample 
+
+```{r}
+plot_list <- group_distribution_plots(methrix_sub, group_var = params$group_var, scale_dt = FALSE)
+plot_list[[1]]
+```
+
+```{r}
+plot_list[[2]]
+```
+
+###### By group
+
+```{r, fig.height=10, fig.width=10}
+sample_distribution_plot(methrix_sub, group_var = params$group_var, scale_dt = FALSE)
+```
+
+##### Scaled Beta values {.tabset}
+
+###### By sample 
+
+```{r}
+plot_list <- group_distribution_plots(methrix_sub, group_var = params$group_var)
+plot_list[[1]]
+```
+
+```{r}
+plot_list[[2]]
+```
+
+###### By group
+
+```{r, fig.height=10, fig.width=10}
+sample_distribution_plot(methrix_sub, group_var = params$group_var)
+```
+
+```{r}
+# ranges_dt <- rowRanges(dna_met_exp)
+# 
+# mcols(ranges_dt) <- mcols(ranges_dt)[,!colnames(mcols(ranges_dt)) %in% c("seqnames", "ranges", "strand", "seqlevels", "seqlengths", "isCircular", "start",
+#     "end", "width", "element")]
+# mcols(ranges_dt)$qval <- 1
+# mcols(ranges_dt)$pval <- 1  
+# mcols(ranges_dt)$stat <- 1
+# dmrseq::plotDMRs(BSseq = bsseq_obj, regions = ranges_dt[1:100], testCovariate = "Condition")
+```
+
+
+
+```{r}
+
+
+################# Comparing merge methodologies
+# trackViewer::plotGRanges(granges_results, granges_results_r, range = GRanges(seqnames = "chr1", 
+#                                             ranges = IRanges(start = 4877830, 
+#                                                              end = 4877913)))
+# 
+# merged_disjoint_res <- methrix::get_region_summary(m = merged_methrix, regions = granges_results)
+# 
+# merged_reduced_res <- methrix::get_region_summary(m = merged_methrix, regions = granges_results_r)
+# 
+# 
+# granges_results
+# granges_results_r
+
+
+# pca_disj <- methrix_pca(m = merged_methrix, ranges = granges_results)
+# plot_pca(pca_disj, m = merged_methrix, col_anno = "Condition")
+# pca_disj_f <- methrix_pca(m = merged_methrix, ranges = granges_results_filt)
+# plot_pca(pca_disj_f, m = merged_methrix, col_anno = "Condition", pc_x = "PC1", pc_y = "PC2")
+# 
+# pca_red <- methrix_pca(m = merged_methrix, ranges = granges_results_r)
+# plot_pca(pca_red, m = merged_methrix, col_anno = "Condition")
+##############
+```
+
+## Appendix
+
+```{r, ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+
+```
+
+<!-- # ```{r} -->
+<!-- # lapply(parwise_results, function(x){ -->
+<!-- #   sig_pw <- x[x$qval <= 0.05] -->
+<!-- #   res_overlaps <- findOverlaps(sig_pw, local_res_ctrs$`Global Test`)@from -->
+<!-- #   c(length(unique(res_overlaps))/length(sig_pw), length(sig_pw)) -->
+<!-- # }) -->
+<!-- #  -->
+<!-- # methrix_subset <- subset_methrix(merged_methrix,  -->
+<!-- #                                 local_res_ctrs$`Global Test`) -->
+<!-- # ``` -->
+

@@ -1,0 +1,316 @@
+---
+title: "Coverage/Bedgraph Processing"
+output: html_document
+date: "2023-12-06"
+params:
+  file_dir: "/home/rstudio/bioinf-d/lima_coverage/"
+  output_dir: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/"
+  threads: 1
+  file_metadata_path: "/home/rstudio/bioinf-d/lima_results_methylseq/lima_metadata.csv" # A csv with the sample names as rownames, a group column and a file path column (absolute path).
+  file_path_var: "file_path"
+  group_var: "group"
+  levels_order: !r c("CNT", "HFD", "INT", "HFE")
+
+  random_seed: 1234
+  genome_id: "mm39"
+
+  genome_cpgs_name: "BSgenome.Mmusculus.UCSC.mm39"
+  pipeline: "Bismark_cov" # A pipeline to be used by read_bedgraph to read the input files, leave NULL if you prefer not using a pipeline and to specify the following parameters (Sidenote: the methyldackel pipeline is not recommended as it rounds methylation values).
+  
+  # Optional parameters if a pipeline is not specified that indicate the indices of the columns where the file information is located 
+  chr_idx: !r NULL
+  start_idx: !r NULL
+  end_idx: !r NULL
+  beta_idx: !r NULL
+  M_idx: !r NULL
+  U_idx: !r NULL
+  # Other relevant parameters required
+  stranded: TRUE
+  zero_based: FALSE
+  collapse_strands: TRUE
+  
+  chromosome_filter: !r NULL
+  outlier_samples: !r  c("X670E", "X594C")
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, 
+                      message = FALSE, echo = FALSE)
+options(knitr.duplicate.label = "allow")
+```
+
+```{r}
+library(methrix)
+library(plotly)
+library(ggplot2)
+library(annotatr)
+library(AnnotationHub)
+library(ChIPseeker)
+library(impute)
+source("./plot_functions.R")
+```
+
+## Loading the bedgraph files & the metadata
+
+```{r}
+bsseq_files <- list.files(params$file_dir, 
+            pattern = '*\\.cov\\.gz$|*\\.bedGraph\\.gz$', full.names = TRUE)
+
+# meta_data <- data.frame("file_path" = bsseq_files)
+# rownames(meta_data) <- sapply(strsplit(basename(bsseq_files), "_"), function(x){x[[1]]})
+# meta_data$group <- factor(substr(x = rownames(meta_data), start = 1, stop = 2), 
+#                           levels = c("CM", "CF", "GM", "GF"), 
+#                           labels = c("CVM", "CVF", "GFM", "GFF"))
+# meta_data$gfcv <- factor(substr(x = rownames(meta_data), start = 1, stop = 1))
+# meta_data$sex <- factor(substr(x = rownames(meta_data), start = 2, stop = 2))
+# meta_data$batch <- factor(substr(x = rownames(meta_data), start = 4, stop = 4))
+# 
+# write.csv(meta_data, "../bioinf-d/gfcv_results_methylseq/gfcv_metadata.csv", row.names = TRUE)
+
+meta_data <- read.csv(params$file_metadata_path, header = TRUE, row.names = 1, stringsAsFactors = TRUE)
+
+if(!is.null(params$levels_order)){
+  meta_data[[params$group_var]] <- factor(meta_data[[params$group_var]], labels = params$levels_order)
+}
+
+meta_data <- meta_data[match(x = bsseq_files, meta_data[[params$file_path_var]]),]
+
+methrix_obj_path <- paste0(params$output_dir, "merged_methrix.rds")
+
+if(!file.exists(methrix_obj_path)){
+  genome_cpgs <- suppressWarnings(methrix::extract_CPGs(params$genome_cpgs_name))
+
+  merged_methrix <- methrix::read_bedgraphs(n_threads = params$threads,
+    files = bsseq_files,
+    ref_cpgs = genome_cpgs, 
+    chr_idx = params$chr_idx,
+    start_idx = params$start_idx,
+    end_idx = params$end_idx,
+    M_idx = params$M_idx,
+    U_idx = params$U_idx,
+    beta_idx = params$beta_idx,
+    pipeline = params$pipeline, 
+    coldata = meta_data , 
+    zero_based = params$zero_based, 
+    stranded = params$stranded, 
+    collapse_strands = params$collapse_strands
+  )
+  methrix_report_dir <- paste0(params$output_dir, "methrix_report/")
+  
+  if(!dir.exists(methrix_report_dir)){dir.create(methrix_report_dir)}
+  
+  methrix_report(meth = merged_methrix, output_dir = methrix_report_dir)
+  
+  merged_methrix <- methrix::mask_methrix(m = merged_methrix, low_count = 5, 
+                                        high_quantile = 0.99, n_cores = 1)
+  merged_methrix <- methrix::remove_uncovered(merged_methrix)
+  colData(merged_methrix)$sample_name <- rownames(colData(merged_methrix))
+
+  saveRDS(merged_methrix, methrix_obj_path)
+          
+} else{
+  merged_methrix <- readRDS(methrix_obj_path)
+}
+```
+
+## Raw CpG Analysis {.tabset}
+
+### PCA Plots {.tabset}
+
+#### All regions 5000 random
+
+```{r}
+top_cpgs_pca <- methrix::methrix_pca(
+  m = merged_methrix, top_var = 5000, var = "rand")
+
+
+pc_plot <- methrix::plot_pca(top_cpgs_pca, m = merged_methrix, col_anno = params$group_var, 
+                  show_labels = TRUE, pc_x = "PC1", pc_y = "PC2")
+pc_plot <- pc_plot + stat_ellipse(type = "t")
+pc_plot
+fig <- plot_ly(x = top_cpgs_pca$PC_matrix[,1], 
+              y = top_cpgs_pca$PC_matrix[,2], 
+              z = top_cpgs_pca$PC_matrix[,3], 
+              color = colData(merged_methrix)[[params$group_var]], )
+fig <- fig %>% add_markers()
+fig <- fig %>% layout(scene = list(xaxis = list(title = paste0('PC1', " (", round(top_cpgs_pca$var_explained[1]*100, 3), "%)")),
+                                  yaxis = list(title = paste0('PC2', " (", round(top_cpgs_pca$var_explained[2]*100, 3), "%)")),
+                                  zaxis = list(title = paste0('PC3', " (", round(top_cpgs_pca$var_explained[3]*100, 3), "%)"))))
+fig
+htmlwidgets::saveWidget(widget = fig, file = paste0(params$output_dir, "tridimensional_pca.html"))
+```
+
+#### All regions 5000 random no outliers/filtered
+
+```{r}
+if(!is.null(params$outlier_samples)){
+  merged_methrix <- merged_methrix[,!colnames(merged_methrix) %in% params$outlier_samples]
+}
+
+if(!is.null(params$chromosome_filter)){
+  
+  all_chrom <- metadata(merged_methrix)$ref_CpG$chr
+  merged_methrix <- subset_methrix(m = merged_methrix, 
+                                  contigs = all_chrom[!(all_chrom %in% params$chromosome_filter)])
+}
+```
+
+
+```{r}
+top_cpgs_pca <- methrix::methrix_pca(
+    m = merged_methrix, top_var = 5000, var = "rand")
+  
+  
+pc_plot <- methrix::plot_pca(top_cpgs_pca, m = merged_methrix, 
+                            col_anno = params$group_var, 
+                            show_labels = TRUE, pc_x = "PC1", pc_y = "PC2")
+pc_plot <- pc_plot + stat_ellipse(type = "t")
+pc_plot
+fig <- plot_ly(x = top_cpgs_pca$PC_matrix[,1], 
+              y = top_cpgs_pca$PC_matrix[,2], 
+              z = top_cpgs_pca$PC_matrix[,3], 
+              color = colData(merged_methrix)[[params$group_var]])
+fig <- fig %>% add_markers()
+fig <- fig %>% layout(scene = list(xaxis = list(title = paste0('PC1', " (", round(top_cpgs_pca$var_explained[1]*100, 3), "%)")),
+                                yaxis = list(title = paste0('PC2', " (", round(top_cpgs_pca$var_explained[2]*100, 3), "%)")),
+                                zaxis = list(title = paste0('PC3', " (", round(top_cpgs_pca$var_explained[3]*100, 3), "%)"))))
+
+fig
+
+htmlwidgets::saveWidget(widget = fig, file = paste0(params$output_dir, "tridimensional_pca_no_outliers.html"))
+```
+
+#### Specific Regions 5000 random {.tabset}
+
+```{r}
+full_regions <- grep(params$genome_id, builtin_annotations(), value = TRUE)
+any_region <- length(full_regions) != 0
+
+full_regions <- grep("5UTRs|introns|3UTRs|shores|enhancers|promoters|exons|intergenic", 
+                     full_regions, value = TRUE)
+```
+
+
+```{r, eval = any_region, results='asis'}
+for(region_id in full_regions){
+  region_annotations <- build_annotations(genome = params$genome_id, 
+                                          annotations = region_id)
+  
+  cat("\n")
+  cat("\n")
+  cat("#####", region_id, "\n")
+  cat("\n")
+  cat("\n")
+  region_cpgs <- methrix::methrix_pca(m = merged_methrix, 
+                                      ranges = region_annotations, 
+                                      top_var = 5000, var = "rand")
+  cat("\n")
+  cat("\n")
+  print(methrix::plot_pca(region_cpgs, m = merged_methrix, 
+                        col_anno = params$group_var, 
+                        show_labels = TRUE, pc_x = "PC1", pc_y = "PC2"))
+  cat("\n")
+  cat("\n")
+}
+```
+
+### CpG Distribution Plots {.tabset}
+
+#### Beta values {.tabset}
+
+##### By group 
+
+```{r}
+set.seed(params$random_seed)
+methrix_sub <- merged_methrix[sample(seq_len(nrow(merged_methrix)), 
+                                      size = 10000),]
+
+plot_list <- group_distribution_plots(methrix_sub, 
+                                      group_var = params$group_var, 
+                                      scale_dt = FALSE, plot_title = "group values distribution (10000 random CpGs)")
+plot_list[[1]]
+```
+
+```{r}
+plot_list[[2]]
+```
+
+##### By sample
+
+```{r, fig.height=10, fig.width=10}
+sample_distribution_plot(methrix_sub, group_var = params$group_var, scale_dt = FALSE, 
+                         plot_title = "sample values distribution (10000 random CpGs)")
+```
+
+#### Scaled Beta values {.tabset}
+
+##### By sample 
+
+```{r}
+plot_list <- group_distribution_plots(methrix_sub, group_var = params$group_var,
+                                      plot_title = "sample values distribution (10000 random CpGs)")
+plot_list[[1]]
+```
+
+```{r}
+plot_list[[2]]
+```
+
+##### By group
+
+```{r, fig.height=10, fig.width=10}
+sample_distribution_plot(methrix_sub, group_var = params$group_var, 
+                         plot_title = "group values distribution (10000 random CpGs)")
+```
+
+### Raw Data CpG Heatmaps {.tabset}
+
+#### Beta values
+
+```{r}
+set.seed(params$random_seed)
+random_cpgs <- sample(seq_len(nrow(merged_methrix)), size = 5000)
+
+plot_dt <- assay(merged_methrix[random_cpgs,])
+plot_dt <- plot_dt[!apply(plot_dt, 1, function(x){all(x == 0)}),]
+plot_dt <- impute::impute.knn(data = plot_dt)$data
+
+quantile_breaks <- quantile(t(plot_dt), seq(0, 1, length.out = 101), na.rm = TRUE)
+quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+
+heatmap_dt <- pheatmap::pheatmap(mat = t(plot_dt), 
+                  main = paste("Random", nrow(plot_dt), "CpGs (not using all CpGs for clustering)"),
+                  annotation_row = as.data.frame(colData(merged_methrix)[,params$group_var, drop = FALSE]),
+                  clustering_distance_rows = dist(scale(t(plot_dt))),
+                  color = color_values,
+                  clustering_method = "average",
+                  breaks = quantile_breaks, show_colnames = FALSE)
+png(paste0(params$output_dir, "random_5000_all_cpgs_beta_values_heatmap.png"))
+print(plot(heatmap_dt$gtable))
+dev.off()
+```
+
+#### Scaled Beta values
+
+```{r}
+quantile_breaks <- quantile(scale(t(plot_dt)), seq(0, 1, length.out = 101), na.rm = TRUE)
+quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+
+
+heatmap_dt <- pheatmap::pheatmap(mat = scale(t(plot_dt)), 
+                  annotation_row = as.data.frame(colData(merged_methrix)[,params$group_var, drop = FALSE]),  
+                  clustering_method = "average", main =  paste("Random", nrow(plot_dt), "CpGs (not using all CpGs for clustering)"),
+                  color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))),
+                  breaks = quantile_breaks, show_colnames = FALSE)
+png(paste0(params$output_dir, "random_5000_all_cpgs_scaled_values_heatmap.png"))
+print(plot(heatmap_dt$gtable))
+dev.off()
+```
+
+## Appendix
+
+```{r, ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+
+```

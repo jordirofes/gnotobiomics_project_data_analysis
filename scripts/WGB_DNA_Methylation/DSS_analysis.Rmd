@@ -1,0 +1,399 @@
+---
+title: "DSS_analysis"
+output: html_document
+date: "2023-12-06"
+params: 
+  methrix_path: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/merged_methrix.rds"
+  output_dir: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/DSS.group.non_smoothed/"
+  
+  dmrseq_results_path: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/dmrseq_results.group.non_smoothed/dmrseq_results_non_smoothed.group.rds"
+  
+  chromosome_filter: !r NULL
+  outlier_samples: !r  c("X670E", "X594C")
+  random_seed: 1234
+  group_var: "group"
+  
+  adj.p.value_thr: 0.05
+  
+  results_name: "non_smoothed"
+
+  smoothing: FALSE
+  dmr_pvalue: 0.001
+  percentage_sig: 0.5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, 
+                      message = FALSE, echo = FALSE)
+options(knitr.duplicate.label = "allow")
+```
+
+```{r}
+library(methrix)
+library(plotly)
+library(ggplot2)
+library(annotatr)
+library(AnnotationHub)
+library(ChIPseeker)
+library(impute)
+library(limma)
+source("./plot_functions.R")
+```
+
+```{r}
+if(is(params$methrix_path, "methrix")){
+  merged_methrix <- params$methrix_path
+} else{
+  merged_methrix <- readRDS(params$methrix_path)
+  
+  if(!is.null(params$outlier_samples)){
+    merged_methrix <- merged_methrix[,!colnames(merged_methrix) %in% params$outlier_samples]
+  }
+  
+  if(!is.null(params$chromosome_filter)){
+    all_chrom <- metadata(merged_methrix)$ref_CpG$chr
+    merged_methrix <- subset_methrix(m = merged_methrix, 
+                                    contigs = all_chrom[!(all_chrom %in% params$chromosome_filter)])
+  }  
+}
+
+```
+
+### DSS analysis {.tabset}
+
+```{r}
+dss_results_path <- paste0(params$output_dir, "dss_results_", params$results_name, ".", params$group_var, ".rds")
+dss_results_list_path <- paste0(params$output_dir, "dss_results_list_", params$results_name, ".", params$group_var, ".rds")
+
+if(!file.exists(dss_results_list_path)){
+  print("Calculating DSS models")
+  dss_formula <- as.formula(paste("~", params$group_var, "+ 0"))
+  
+  dss_results <- DSS::DMLfit.multiFactor(BSobj = methrix2bsseq(merged_methrix), colData(merged_methrix),
+                                         formula = dss_formula, smoothing = params$smoothing)
+
+  ctrs_vec <- combn(levels(merged_methrix[[params$group_var]]), 2, FUN = function(x){paste0(x[2:1], collapse = "-")})
+  mod_mat <- model.matrix(dss_formula, colData(merged_methrix))
+  colnames(mod_mat) <- gsub(params$group_var, "", colnames(mod_mat))
+
+  contrst_mat <- limma::makeContrasts(levels = mod_mat, contrasts = ctrs_vec)
+  dss_results_list <- list()
+
+  for(col_id in seq_len(ncol(contrst_mat))){
+    ctrs_ids <- contrst_mat[,col_id, drop = FALSE]
+    dss_results_list[[colnames(contrst_mat)[col_id]]] <- DSS::DMLtest.multiFactor(DMLfit = dss_results,
+                                                                                Contrast = ctrs_ids)
+
+  }
+  saveRDS(dss_results, dss_results_path)
+  saveRDS(dss_results_list, dss_results_list_path)
+} else{
+  dss_results_list <- readRDS(dss_results_list_path)
+}
+```
+
+#### Histograms {.tabset}
+
+##### pvalues
+
+```{r}
+lapply(dss_results_list, function(x){sum(x[,4] <= params$adj.p.value_thr, na.rm = TRUE)})
+
+hist_list <-lapply(names(dss_results_list), function(ctrs_name){
+  # data.frame("pvalues" = dss_results_list[[ctrs_name]][,4], "Contrast" = ctrs_name)
+  hist(dss_results_list[[ctrs_name]][,4], main = paste(ctrs_name, "pvalues"))
+})
+# plot_dt <- data.table::rbindlist(plot_dt)
+# ggplot(plot_dt) + geom_histogram(aes(x = pvalues, fill = Contrast), position = "identity") + ggtitle("DSS p-values histogram non smoothed")
+```
+
+##### qvalues
+
+```{r}
+lapply(dss_results_list, function(x){sum(x[,5] <= params$adj.p.value_thr, na.rm = TRUE)})
+
+hist_list <- lapply(names(dss_results_list), function(ctrs_name){
+  # data.frame("pvalues" = dss_results_list[[ctrs_name]][,4], "Contrast" = ctrs_name)
+  hist(dss_results_list[[ctrs_name]][,5], main = paste(ctrs_name, "qvalues"))
+})
+```
+
+#### Heatmaps {.tabset}
+
+##### pvalues top 5000 {.tabset}
+
+###### Beta values
+
+```{r}
+heatmal_list <- lapply(names(dss_results_list), function(ctrs_name){
+  max_cpgs <- min(5000, nrow(dss_results_list[[ctrs_name]]))
+  
+  plot_dt <- assay(merged_methrix[order(dss_results_list[[ctrs_name]][,4], 
+                                        decreasing = FALSE)[seq_len(max_cpgs)],])
+  plot_dt <- plot_dt[rowSums(plot_dt, na.rm = TRUE) != 0,]
+  
+  plot_dt <- impute::impute.knn(data = plot_dt)$data
+
+  quantile_breaks <- quantile(plot_dt, seq(0, 1, length.out = 101), na.rm = TRUE)
+  quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+  color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+  
+  pheatmap::pheatmap(mat = t(plot_dt), main = paste("Top", nrow(plot_dt), 
+                                                    "most significant CpGs DSS (pvalue and clustering not all CpG)", ctrs_name),
+                    annotation_row = as.data.frame(colData(merged_methrix)[,params$group_var, drop = FALSE]),  
+                    color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))),
+                    clustering_method = "average",
+                    breaks = quantile_breaks, show_colnames = FALSE)
+
+  # png(paste0(params$output_dir, "Top_5000_most_significant_cpgs_beta_values_heatmap", ctrs_name, ".png"))
+  # plot(heatmap_dt$gtable)
+  # dev.off()
+})
+```
+
+###### Scaled Beta values
+
+```{r}
+heatmap_list <- lapply(names(dss_results_list), function(ctrs_name){
+  max_cpgs <- min(5000, nrow(dss_results_list[[ctrs_name]]))
+
+  plot_dt <- assay(merged_methrix[order(dss_results_list[[ctrs_name]][,4], 
+                                        decreasing = FALSE)[seq_len(max_cpgs)],])
+  plot_dt <- plot_dt[rowSums(plot_dt, na.rm = TRUE) != 0,]
+  
+  plot_dt <- impute::impute.knn(data = plot_dt)$data
+  
+  quantile_breaks <- quantile(scale(t(plot_dt)), seq(0, 1, length.out = 101), na.rm = TRUE)
+  quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+  color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+  
+  pheatmap::pheatmap(mat = scale(t(plot_dt)), 
+                    main = paste("Top", max_cpgs, "most significant CpGs DSS (by pvalue and clustering not all CpG)", ctrs_name),
+                    annotation_row = as.data.frame(colData(merged_methrix)[,params$group_var, drop = FALSE]),  
+                    color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))),
+                    clustering_method = "average",
+                    breaks = quantile_breaks, show_colnames = FALSE)
+
+  # png(paste0(params$output_dir, "Top_5000_most_significant_cpgs_scaled_beta_values_heatmap", ctrs_name, ".png"))
+  # plot(heatmap_dt$gtable)
+  # dev.off()
+})
+```
+
+##### qvalues (all sig contrasts with more than 2 significant CpGs) {.tabset}
+
+###### Beta values
+
+```{r}
+heatmap_list <- lapply(names(dss_results_list), function(ctrs_name){
+  sig_cpgs <- dss_results_list[[ctrs_name]][,5] <= params$adj.p.value_thr
+  
+  if(sum(sig_cpgs, na.rm = TRUE) < 5){return(NULL)}
+  
+  plot_dt <- assay(merged_methrix[which(sig_cpgs),])
+  plot_dt <- plot_dt[rowSums(plot_dt, na.rm = TRUE) != 0,]
+
+  plot_dt <- impute::impute.knn(data = plot_dt)$data
+  
+  quantile_breaks <- quantile(plot_dt, seq(0, 1, length.out = 101), na.rm = TRUE)
+  quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+  color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+  
+  pheatmap::pheatmap(mat = t(plot_dt), main = paste(nrow(plot_dt), "Significant CpGs DSS (by pvalue and clustering not all CpG)", ctrs_name),
+                    annotation_row = as.data.frame(colData(merged_methrix)[,params$group_var, drop = FALSE]),  
+                    color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))),
+                    clustering_method = "average",
+                    breaks = quantile_breaks, show_colnames = FALSE)
+
+  # png(paste0(params$output_dir, "Top_5000_most_significant_cpgs_beta_values_heatmap", ctrs_name, ".png"))
+  # plot(heatmap_dt$gtable)
+  # dev.off()
+})
+```
+
+###### Scaled Beta values
+
+```{r}
+heatmap_list <-lapply(names(dss_results_list), function(ctrs_name){
+  sig_cpgs <- dss_results_list[[ctrs_name]][,5] <= params$adj.p.value_thr
+  
+  if(sum(sig_cpgs, na.rm = TRUE) < 5){return(NULL)}
+  
+  plot_dt <- assay(merged_methrix[which(sig_cpgs),])
+  plot_dt <- plot_dt[rowSums(plot_dt, na.rm = TRUE) != 0,]
+  plot_dt <- impute::impute.knn(data = plot_dt)$data
+
+  quantile_breaks <- quantile(scale(t(plot_dt)), seq(0, 1, length.out = 101), na.rm = TRUE)
+  quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+  color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+  
+  pheatmap::pheatmap(mat = scale(t(plot_dt)), main = paste(nrow(plot_dt), "Significant CpGs DSS (by qvalue and clustering not all CpG)", ctrs_name),
+                    annotation_row = as.data.frame(colData(merged_methrix)[,params$group_var, drop = FALSE]),  
+                    color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))),
+                    clustering_method = "average",
+                    breaks = quantile_breaks, show_colnames = FALSE)
+
+  # png(paste0(params$output_dir, "Top_5000_most_significant_cpgs_scaled_beta_values_heatmap", ctrs_name, ".png"))
+  # plot(heatmap_dt$gtable)
+  # dev.off()
+})
+```
+
+#### DSS DMR Calling {.tabset}
+
+```{r}
+dss_dmr_path <- paste0(params$output_dir, "dss_dmr_results_", params$results_name, ".", params$group_var, ".rds")
+
+if(!file.exists(dss_dmr_path)){
+  called_dmrs <- lapply(names(dss_results_list), function(ctrs_res_name){
+    ctrs_res <- dss_results_list[[ctrs_res_name]]
+    print(ctrs_res_name)
+    colnames(ctrs_res)[3:4] <- c("stat", "pval")
+    ctrs_res$pval[is.na(ctrs_res$pval)] <- 1
+    return(DSS::callDMR(DMLresult = ctrs_res, 
+                        p.threshold = params$dmr_pvalue, 
+                        pct.sig = params$percentage_sig))
+  })
+  names(called_dmrs) <- names(dss_results_list)
+  called_dmrs_granges <- lapply(called_dmrs, function(res){
+    GenomicRanges::makeGRangesFromDataFrame(res, keep.extra.columns = TRUE)
+  })
+  called_dmrs_granges <- lapply(names(called_dmrs_granges), function(res_id){
+    res <- called_dmrs_granges[[res_id]]
+    mcols(res)[[paste0(res_id, ".adj.p.value")]] <- 0.05 
+    res
+  })
+  names(called_dmrs_granges) <- names(called_dmrs)
+  saveRDS(called_dmrs_granges, dss_dmr_path)
+} else{
+  called_dmrs_granges <- readRDS(dss_dmr_path)
+}
+```
+
+```{r}
+lengths(called_dmrs_granges)
+```
+
+```{r}
+if(file.exists(params$dmrseq_results_path)){
+  local_res_ctrs <- readRDS(params$dmrseq_results_path)
+  
+  mapply(function(dmrseq_res, dss_res){
+    overlapping_found <- findOverlaps(dmrseq_res[dmrseq_res$qval <= 0.05], dss_res)
+    
+    length(unique(overlapping_found@to))/length(dss_res)
+    
+    
+  }, dmrseq_res = local_res_ctrs, dss_res = called_dmrs_granges)
+  
+  mapply(function(dmrseq_res, dss_res){
+    overlapping_found <- findOverlaps(dmrseq_res[dmrseq_res$qval <= 0.05], dss_res)
+    length(unique(overlapping_found@from))/length(dmrseq_res[dmrseq_res$qval <= params$adj.p.value_thr])
+    
+    
+  }, dmrseq_res = local_res_ctrs, dss_res = called_dmrs_granges)
+}
+
+```
+
+Significant DMRs found with DSS (more than `params$percentage_sig` with pvalue higher than `params$dmr_pvalue`) that were also found by DMRseq (qval <= 0.05)
+
+##### Heatmaps full
+
+```{r results_heatmaps_full}
+heat_map_list <- lapply(names(called_dmrs_granges), function(ctrs_name){
+  ctrs <- called_dmrs_granges[[ctrs_name]]
+  sig_dmrs <- ctrs[mcols(ctrs)[,grepl("adj.p.value", colnames(mcols(ctrs)))] <= params$adj.p.value_thr]
+  if(length(sig_dmrs) <= 2){return(NA)}
+  ctrs_ids <- strsplit(ctrs_name, split = "-")[[1]]
+
+  plot_dt <- methrix::get_region_summary(m = merged_methrix, regions = sig_dmrs, 
+                                          overlap_type = "any")
+  plot_dt <- plot_dt[,6:ncol(plot_dt)]
+  plot_dt <- impute::impute.knn(data = as.matrix(plot_dt))$data
+
+  quantile_breaks <- quantile(scale(t(plot_dt)), seq(0, 1, length.out = 101), na.rm = TRUE)
+  quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+  color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+  
+  set.seed(params$random_seed)
+  # selected_random_dmrs <- sample(seq_len(nrow(plot_dt)), size = ceiling(nrow(plot_dt)*0.05))
+  # browser()
+  pheatmap::pheatmap(mat = scale(t(plot_dt)), 
+                    main = paste("Heatmap All Significant DMRs (Scaled mean methylation)", ctrs_name),
+                    annotation_row = as.data.frame(colData(merged_methrix)[,params$group_var,
+                                                                           drop = FALSE]),  
+                    color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))), 
+                    breaks = quantile_breaks, show_colnames = FALSE, clustering_method = "average")
+})
+# lapply(heat_map_list, function(x){
+#   if(length(x) == 1){return(NULL)}
+#   plot(x$gtable)
+# })
+
+# pdf(paste0(params$output_dir, "ctrs_heatmap_full", params$group_var, "_", params$results_name,".pdf"))
+# lapply(heat_map_list, function(x){
+#   if(length(x) == 1){return(NULL)}
+#   plot(x$gtable)
+# })
+# dev.off()
+```
+
+##### Heatmap full CpGs
+
+```{r results_heatmaps_full_cpgs}
+heat_map_list <- lapply(names(called_dmrs_granges), function(ctrs_name){
+  ctrs <- called_dmrs_granges[[ctrs_name]]
+  sig_dmrs <- ctrs[mcols(ctrs)[,grepl("adj.p.value", colnames(mcols(ctrs)))] <= params$adj.p.value_thr]
+  if(length(sig_dmrs) <= 2){return(NA)}
+  ctrs_ids <- strsplit(ctrs_name, split = "-")[[1]]
+  
+  methrix_subset <- subset_methrix(merged_methrix, 
+                                   regions = sig_dmrs, 
+                                   overlap_type = "any")
+  
+  set.seed(params$random_seed)
+  subset_cpgs <- sample(seq_len(nrow(methrix_subset)), 
+                        size = min(5000, nrow(methrix_subset)))
+  
+  plot_dt <- assay(methrix_subset)[subset_cpgs,]
+  plot_dt <- impute::impute.knn(data = as.matrix(plot_dt))$data
+
+  quantile_breaks <- quantile(scale(t(plot_dt)), 
+                              seq(0, 1, length.out = 101), na.rm = TRUE)
+  quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+  color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+  
+  set.seed(params$random_seed)
+  # selected_random_dmrs <- sample(seq_len(nrow(plot_dt)), size = ceiling(nrow(plot_dt)*0.05))
+  # browser()
+  pheatmap::pheatmap(mat = scale(t(plot_dt)), 
+                    main = paste("Heatmap", nrow(plot_dt), 
+                                "random CpGs significant DMRs (Scaled Beta)", ctrs_name),
+                    annotation_row = as.data.frame(colData(merged_methrix)[,params$group_var, drop = FALSE]),  
+                    color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))), 
+                    breaks = quantile_breaks, show_colnames = FALSE, clustering_method = "average")
+})
+# lapply(heat_map_list, function(x){
+#   if(length(x) == 1){return(NULL)}
+#   plot(x$gtable)
+# })
+
+# pdf(paste0(params$output_dir, "ctrs_heatmap_full_cpgs", params$group_var, "_", params$results_name,".pdf"))
+# lapply(heat_map_list, function(x){
+#   if(length(x) == 1){return(NULL)}
+#   plot(x$gtable)
+# })
+# dev.off()
+```
+
+```{r}
+rm(merged_methrix)
+```
+
+
+## Appendix
+
+```{r, ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+
+```
