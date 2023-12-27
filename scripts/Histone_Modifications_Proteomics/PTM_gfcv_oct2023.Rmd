@@ -3,6 +3,9 @@ title: "PTM GFCV"
 author: "Jordi Rofes Herrera"
 date: "2023-10-17"
 output: html_document
+params: 
+    input_dir: "../../inputs/Histone_Modifications_Proteomics/"
+    output_dir: "../../outputs/Histone_Modifications_Proteomics/"
 ---
 
 ```{r setup, include=FALSE}
@@ -14,11 +17,12 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(car)
 library(DescTools)
+library(SummarizedExperiment)
 ```
 
 
 ```{r}
-ptm_data <- read.csv("./GFCV_liv_PTMs_4_stats.csv", row.names = 1)
+ptm_data <- read.csv(paste0(params$input_dir, "GFCV_liv_PTMs_4_stats.csv"), row.names = 1)
 
 ptm_metadata <- ptm_data[,1:4]
 ptm_data <- ptm_data[,5:ncol(ptm_data)]
@@ -28,8 +32,8 @@ ptm_metadata$group <- factor(paste0(ptm_metadata$gfcv,
                             ifelse(ptm_metadata$gfcv == "C", "V", "F"), 
                             ptm_metadata$sex), levels = c("CVM", "CVF", "GFM", "GFF"))
 ptm_metadata$batch <- factor(ptm_metadata$batch)
-saveRDS(list("PTM_Data" = ptm_data, 
-                          "PTM_Metadata" = ptm_metadata),"./ptm_gfcv_data_list.rds")
+# saveRDS(list("PTM_Data" = ptm_data, 
+#                           "PTM_Metadata" = ptm_metadata),"./ptm_gfcv_data_list.rds")
 ```
 
 ```{r}
@@ -86,7 +90,14 @@ contrasts_results <- lapply(contrasts_results, function(ctrs){
     ctrs$adj.p.value <- p.adjust(ctrs[,"p.value"], method = "fdr")
     ctrs
 })
-
-
-saveRDS(contrasts_results, "./ptm_gfcv_results.rds")
 ```
+
+```{r}
+ptm_results <- do.call(cbind, contrasts_results)
+
+ptm_exp <- SummarizedExperiment(assays = as.data.frame(t(ptm_data)), 
+                                rowData = ptm_results, 
+                                colData = ptm_metadata)
+saveRDS(ptm_exp, paste0(params$output_dir, "Histone_Modifications_Proteomics_exp_gfcv.rds"))
+```
+

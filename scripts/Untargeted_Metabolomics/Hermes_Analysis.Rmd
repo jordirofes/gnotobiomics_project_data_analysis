@@ -4,7 +4,7 @@ author: "Jordi Rofes Herrera"
 date: "27/1/2022"
 output: html_document
 params:
-    ms1_dir: "D:/Untargeted_LIMMA_GF/TEST/Hermes_Files/"
+    ms1_dir: "../../inputs/Untargeted_Metabolomics/"
     qc_names: "HP_QC"
     blank_names: "Blank"
     met_db: "./HMDB_full_db.csv"

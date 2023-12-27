@@ -189,7 +189,8 @@ assay(targeted_metabo_data$liver_scfa) <- assay(targeted_metabo_data$liver_scfa)
 ```
 
 ```{r}
-targeted_metabo_res <- readRDS("../epi_metabolomics/targeted_metabolomics_results.rds")
+targeted_metabo_res <- readRDS(paste0(params$output_dir,
+                                      "Targeted_Metabolomics_exp_gfcv.rds"))
 
 # targeted_metabo_res <- lapply(seq_along(targeted_metabo_res[[1]]), function(ctrs_id){
 #     ctrs_results <- lapply(names(targeted_metabo_res), function(metabo_exp_id){
@@ -201,13 +202,7 @@ targeted_metabo_res <- readRDS("../epi_metabolomics/targeted_metabolomics_result
 # })
 # names(targeted_metabo_res) <- names(metabo_results[[1]][[1]])
 
-targeted_metabo_res <- lapply(targeted_metabo_res, function(organ_dt){
-    do.call(cbind, organ_dt)
-})
 
-for(organ_name in names(targeted_metabo_data)){
-    rowData(targeted_metabo_data[[organ_name]]) <- targeted_metabo_res[[organ_name]]
-}
 ```
 
 ### 16Smeta
@@ -315,28 +310,15 @@ names(x16S_exp) <- names(x16S_data_list)
 ### Metallomics data
 
 ```{r}
-metallomics_dt <- readRDS("../Metallomics/gfcv_metallomics_list.rds")
-metallomics_results <- readRDS("../Metallomics/gfcv_metallomics_results_list.rds")
-
-metallomics_exp <- lapply(names(metallomics_dt), function(organ_name){
-    organ_dt <- as.data.frame(t(metallomics_dt[[organ_name]][["Metallomics_Data"]]))
-    organ_meta <- metallomics_dt[[organ_name]][["Metallomics_Metadata"]]
-    organ_results <- metallomics_results[[organ_name]]
-    SummarizedExperiment(organ_dt, rowData = organ_results, colData = organ_meta)
-})
-names(metallomics_exp) <- names(metallomics_dt)
+metallomics_exp <- readRDS(paste0(params$output_dir, "Metallomics_exp_gfcv.rds"))
 ```
 
 ## PTM
 
 ```{r}
-ptm_data <- readRDS("../PTM/ptm_gfcv_data_list.rds")
-ptm_results <- readRDS("../PTM/ptm_gfcv_results.rds")
-ptm_results <- do.call(cbind, ptm_results)
+ptm_exp <- readRDS(paste0(params$output_dir,
+                          "Histone_Modifications_Proteomics_exp_gfcv.rds"))
 
-ptm_exp <- SummarizedExperiment(assays = as.data.frame(t(ptm_data$PTM_Data)), 
-                                rowData = ptm_results, 
-                                colData = ptm_data$PTM_Metadata)
 ```
 
 ## Combining all datasets in a multi-assay experiment

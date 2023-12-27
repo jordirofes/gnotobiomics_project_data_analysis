@@ -2,6 +2,9 @@
 title: "Metallomics Analysis"
 output: html_document
 date: "2023-04-18"
+params:
+    input_dir: "../../inputs/Metallomics/"
+    output_dir: "../../outputs/Metallomics/"
 ---
 
 ```{r setup, include=FALSE}
@@ -12,10 +15,12 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(openxlsx)
-sheet_names <- openxlsx::getSheetNames("./metallomics_raw.xlsx")[1:2]
+input_path <- paste0(params$input_dir, "metallomics_raw.xlsx")
+
+sheet_names <- openxlsx::getSheetNames(input_path)[1:2]
 
 metallomics_dt <- lapply(sheet_names, function(sheet_name){
-    read.xlsx(xlsxFile = "./metallomics_raw.xlsx", sheet = sheet_name)
+    read.xlsx(xlsxFile = input_path, sheet = sheet_name)
 })
 names(metallomics_dt) <- sheet_names
 
@@ -29,7 +34,8 @@ gfcv_data_list <- lapply(metallomics_dt, function(organ){
     rownames(gfcv_dt) <- gfcv_dt$samplename
     metallomics_metadata <- gfcv_dt[,1:5]
     metallomics_metadata$sex <- factor(metallomics_metadata$gender, levels = c("M", "F"))
-    metallomics_metadata$gfcv <- factor(substr(gfcv_data_list[["liver"]][["Metallomics_Metadata"]]$group, 1,1), levels = c("C", "G"))
+    metallomics_metadata$gfcv <- factor(substr(metallomics_metadata$group,
+                                               1,1), levels = c("C", "G"))
     metallomics_metadata$batch <- factor(metallomics_metadata$batch)
     
     metallomics_metadata$group <- factor(paste0(metallomics_metadata$group, 
@@ -40,7 +46,7 @@ gfcv_data_list <- lapply(metallomics_dt, function(organ){
         "Metallomics_Metadata" = metallomics_metadata)
 })
 
-saveRDS(gfcv_data_list, file = "./gfcv_metallomics_list.rds")
+# saveRDS(gfcv_data_list, file = "./gfcv_metallomics_list.rds")
 ```
 
 
@@ -85,9 +91,22 @@ organ_results <- lapply(gfcv_data_list, function(organ_dt){
     })
     contrasts_results
 })
-saveRDS(organ_results, file = "./gfcv_metallomics_results_list.rds")
+# saveRDS(organ_results, file = "./gfcv_metallomics_results_list.rds")
 
 ```
+
+```{r}
+metallomics_exp <- lapply(names(gfcv_data_list), function(organ_name){
+    organ_dt <- as.data.frame(t(gfcv_data_list[[organ_name]][["Metallomics_Data"]]))
+    organ_meta <- gfcv_data_list[[organ_name]][["Metallomics_Metadata"]]
+    organ_results <- do.call(cbind, organ_results[[organ_name]])
+    SummarizedExperiment(organ_dt, rowData = organ_results, colData = organ_meta)
+})
+names(metallomics_exp) <- names(gfcv_data_list)
+
+saveRDS(metallomics_exp, paste0(params$output_dir, "Metallomics_exp_gfcv.rds"))
+```
+
 
 ## LIMA 
 
@@ -101,7 +120,7 @@ lima_data_list <- lapply(metallomics_dt, function(organ){
     
     list("Metallomics_Data" = lima_dt[,6:ncol(lima_dt)], "Metallomics_Metadata" = metallomics_metadata)
 })
-saveRDS(lima_data_list, file = "./lima_metallomics_list.rds")
+# saveRDS(lima_data_list, file = "./lima_metallomics_list.rds")
 ```
 
 ```{r}
@@ -151,6 +170,33 @@ organ_results <- lapply(organ_results, function(contrasts_results){
     })
 })
 
-saveRDS(organ_results, file = "./lima_metallomics_results_list.rds")
+# saveRDS(organ_results, file = "./lima_metallomics_results_list.rds")
+```
+
+```{r}
+metal_exp_list <- lapply(names(lima_data_list), function(organ_name){
+    organ_list <- lima_data_list[[organ_name]]
+    organ_data <- organ_list[["Metallomics_Data"]]
+    organ_data <- t(organ_data)
+    organ_res <- organ_results[[organ_name]]
+    # rownames(organ_data) <- paste0(organ_name, ".", rownames(organ_data))
+    colnames(organ_data) <- make.names(colnames(organ_data))
+    organ_metadata <- organ_list[["Metallomics_Metadata"]]
+    organ_metadata$group <- factor(organ_metadata$group, 
+                                   levels = c("CTN", "HFD", "INT", "HFE"), 
+                                   labels = c("CNT", "HFD", "INT", "HFE"))
+    organ_metadata$samplename <- make.names(organ_metadata$samplename)
+    rownames(organ_metadata) <- organ_metadata$samplename
+    merged_rowdata <- do.call(cbind, organ_res)
+    # rownames(merged_rowdata) <- paste0(organ_name, ".", rownames(merged_rowdata))
+    # 
+    SummarizedExperiment(assays = as.data.frame(organ_data), 
+                         colData = organ_metadata[c("samplename", "group")],
+                         rowData = merged_rowdata)
+    
+})
+names(metal_exp_list) <- names(lima_data_list)
+
+saveRDS(metal_exp_list, paste0(params$output_dir, "Metallomics_exp_lima.rds"))
 ```
 

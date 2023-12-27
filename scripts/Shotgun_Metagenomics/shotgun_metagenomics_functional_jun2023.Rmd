@@ -3,6 +3,9 @@ title: "shotgun_metagenomics_functional_jun2023"
 author: "Jordi Rofes Herrera"
 date: "2023-06-10"
 output: html_document
+params:
+    input_dir: "../../inputs/Shotgun_Metagenomics/"
+    output_dir: "../../outputs/Shotgun_Metagenomics/"
 ---
 
 ```{r setup, include=FALSE}
@@ -19,7 +22,8 @@ library(DESeq2)
 ## Loading the data
 
 ```{r}
-functional_paths <- list.files("./CNT_HFD_HFE_INT/P200045_NEW/report_functional/", recursive = TRUE, pattern = "counts_all", full.names = TRUE)
+functional_paths <- list.files(paste0(params$input_dir, "CNT_HFD_HFE_INT/P200045_NEW/report_functional/"), 
+                               recursive = TRUE, pattern = "counts_all", full.names = TRUE)
 
 functional_counts <- lapply(functional_paths, function(func_tool_path){
     read.table(func_tool_path, sep = "\t", header = TRUE, row.names = 1)
@@ -86,7 +90,7 @@ organ_dt_list_proc <- lapply(names(organ_dt), function(organ_name){
 })
 names(organ_dt_list_proc) <- names(organ_dt)
 
-saveRDS(object = list("shotgun_data" = organ_dt_list_proc, "shotgun_metadata" = metadata_list), "./shotgun_functional_data_list.rds")
+# saveRDS(object = list("shotgun_data" = organ_dt_list_proc, "shotgun_metadata" = metadata_list), "./shotgun_functional_data_list.rds")
 ```
 
 ## Statistical Analysis
@@ -120,12 +124,17 @@ stat_res <- lapply(names(organ_dt_list_proc), function(organ_name){
         # ancom_res <- ancombc2(data = hierarchy_ancombc2, fix_formula = "~ group + 0", p_adj_method = "fdr", group = "group")
         # 
         names(results_list) <- names_comp
-        results_list
+        results_list <- do.call(cbind, results_list)
+        colnames(results_list) <- gsub("log2FoldChange", "log2FC", colnames(results_list))
+        colnames(results_list) <- gsub("pvalue", "p.value", colnames(results_list))
+        colnames(results_list) <- gsub("padj", "adj.p.value", colnames(results_list))
+        
+        SummarizedExperiment(assays = hierarchy, rowData = results_list, colData = hierarchy_meta)
     })
     names(organ_results) <- names(organ_data)
     organ_results
 })
 names(stat_res) <- names(organ_dt_list_proc)
 
-saveRDS(stat_res, "./shotgun_functional_results_list.rds")
+saveRDS(stat_res, paste0(params$output_dir, "Shotgun_Metagenomics_Functional_exp_lima.rds"))
 ```

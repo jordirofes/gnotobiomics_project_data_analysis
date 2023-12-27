@@ -3,6 +3,9 @@ title: "Master Script"
 author: "Jordi Rofes Herrera"
 date: "28/1/2022"
 output: html_document
+params: 
+    input_dir: "../../inputs/Untargeted_Metabolomics/"
+    output_dir: "../../outputs/Untargeted_Metabolomics/"
 ---
 
 ```{r setup, include=FALSE}
@@ -12,58 +15,72 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Experiment Processing
 
 ```{r}
+db_path <- paste0(params$input_dir, "FullHMDB_Chebi_Tripeptides_db.csv")
 
-rmarkdown::render(input = "D:/Untargeted_LIMMA_GF/Hermes_Analysis.Rmd",
-                  output_file = "./Hilic_Positive/Hermes_Report.html", 
+hermes_results_path <- paste0(params$output_dir, "Hermes_Results/")
+if(!dir.exists(hermes_results_path)){dir.create(hermes_results_path)}
+
+hp_output_path <- paste0(hermes_results_path, "Hilic_Positive/")
+if(!dir.exists(hp_output_path)){dir.create(hp_output_path)}
+
+rmarkdown::render(input = "./Hermes_Analysis.Rmd",
+                  output_file = paste0(hp_output_path, "Hermes_Report.html"), 
                   clean = TRUE, params = list(
-    ms1_dir = "D:/Untargeted_LIMMA_GF/Hilic_Positive/Hermes_Files/", 
+    ms1_dir = paste0(params$input_dir, "Hilic_Positive/Hermes_Files/"), 
     qc_names =  "QC", blank_names = "Blank",
-    met_db = "D:/Untargeted_LIMMA_GF/FullHMDB_Chebi_Tripeptides_db.csv", met_db_sep = ",",
+    met_db = db_path, met_db_sep = ",",
     ppm_error = 10, instrument = "QTOF", resolution = 30000, 
     noise_int = 1000, ionization = "+", labelled = FALSE,
     ad_list = c("M+H", "M+NH4", "M+Na", "M+K", "M+"), 
     min_max_mz = c(50, 1500), 
     add_charge = 1, add_mult = 1,
     soi_detection_type = "double",
-    output_dir = "D:/Untargeted_LIMMA_GF/Hermes_Results/Hilic_Positive/",
+    output_dir = hp_output_path,
     consensus = TRUE, soi_consensus = 1:3))
 
-rmarkdown::render(input = "D:/Untargeted_LIMMA_GF/Hermes_Analysis.Rmd",
-                  output_file = "./Hilic_Negative/Hermes_Report.html", 
+
+hn_output_path <- paste0(hermes_results_path, "Hilic_Negative/")
+if(!dir.exists(hn_output_path)){dir.create(hn_output_path)}
+
+rmarkdown::render(input = "./Hermes_Analysis.Rmd",
+                  output_file = paste0(hn_output_path, "Hermes_Report.html"), 
                   clean = TRUE, params = list(
-    ms1_dir = "D:/Untargeted_LIMMA_GF/Hilic_Negative/Hermes_Files/", 
+    ms1_dir = paste0(params$input_dir, "Hilic_Negative/Hermes_Files/"), 
     qc_names =  "QC", blank_names = "Blank", 
-    met_db = "D:/Untargeted_LIMMA_GF/FullHMDB_Chebi_Tripeptides_db.csv", met_db_sep = ",",
+    met_db = db_path, met_db_sep = ",",
     ppm_error = 10, instrument = "QTOF", resolution = 30000, 
     noise_int = 1000, ionization = "-", labelled = FALSE,
     ad_list = c("M-H", "M+Cl"), 
     min_max_mz = c(50, 1500), 
     add_charge = 1, add_mult = 1,
     soi_detection_type = "double", soi_filter_ids = 1:3,
-    output_dir = "D:/Untargeted_LIMMA_GF/Hermes_Results/Hilic_Negative/",
+    output_dir = hn_output_path,
     consensus = TRUE, soi_consensus = 1:3))
 
+rp_output_path <- paste0(hermes_results_path, "RP_Positive/")
+if(!dir.exists(rp_output_path)){dir.create(rp_output_path)}
 
-rmarkdown::render(input = "D:/Untargeted_LIMMA_GF/Hermes_Analysis.Rmd",
-                  output_file = "./RP_Positive/Hermes_Report.html", 
+rmarkdown::render(input = "./Hermes_Analysis.Rmd",
+                  output_file = paste0(rp_output_path, "Hermes_Report.html"), 
                   clean = TRUE, params = list(
-    ms1_dir = "D:/Untargeted_LIMMA_GF/RP_Positive/Hermes_Files/", 
+    ms1_dir = paste0(params$input_dir, "RP_Positive/Hermes_Files/"), 
     qc_names =  "QC", blank_names = "Blank",
-    met_db = "D:/Untargeted_LIMMA_GF/FullHMDB_Chebi_Tripeptides_db.csv", met_db_sep = ",",
+    met_db = db_path, met_db_sep = ",",
     ppm_error = 10, instrument = "QTOF", resolution = 30000, 
     noise_int = 1000, ionization = "+", labelled = FALSE,
     ad_list = c("M+H", "M+NH4", "M+Na", "M+K", "M+"), 
     min_max_mz = c(50, 1500), 
     add_charge = 1, add_mult = 1,
     soi_detection_type = "double", soi_filter_ids = 1:3,
-    output_dir = "D:/Untargeted_LIMMA_GF/Hermes_Results/RP_Positive/",
+    output_dir = rp_output_path,
     consensus = TRUE, soi_consensus = 1:3))
 
 ```
 
 ```{r}
-rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", output_file = "./Hermes_Results/Hilic_Positive/xcms_hermes_results.html", clean = TRUE, 
-                  params = list(metadata_file = "./Hilic_Positive/LC_MS_metadata.csv",
+rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", 
+                  output_file = "./Hermes_Results/Hilic_Positive/xcms_hermes_results.html", clean = TRUE, 
+                  params = list(metadata_file = "./Hilic_Positive/LC_M S_metadata.csv",
     xcms_hermes_file = "./Hermes_Results/Hilic_Positive/summarized_hermes_xcms.rds",
     hermes_file = "./Hermes_Results/Hilic_Positive/filteredSoiLists.rds",
     qc_name = "HP_QC",
@@ -71,7 +88,8 @@ rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", output_file = "./
     output_results = "./Hermes_Results/Hilic_Positive/",
     data_type = "Hilic Positive"))
 
-rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", output_file = "./Hermes_Results/Hilic_Negative/xcms_hermes_results.html", clean = TRUE, 
+rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", 
+                  output_file = "./Hermes_Results/Hilic_Negative/xcms_hermes_results.html", clean = TRUE, 
                   params = list(metadata_file = "./Hilic_Negative/LC_MS_metadata.csv",
     xcms_hermes_file = "./Hermes_Results/Hilic_Negative/summarized_hermes_xcms.rds",
     hermes_file = "./Hermes_Results/Hilic_Negative/filteredSoiLists.rds", 

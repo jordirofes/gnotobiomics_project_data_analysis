@@ -2,6 +2,9 @@
 title: "PTM Data Analysis"
 output: html_document
 date: "2023-04-18"
+params: 
+    input_dir: "../../inputs/Histone_Modifications_Proteomics/"
+    output_dir: "../../outputs/Histone_Modifications_Proteomics/"
 ---
 
 ```{r setup, include=FALSE}
@@ -13,11 +16,12 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(car)
 library(DescTools)
+library(SummarizedExperiment)
 ```
 
 
 ```{r}
-ptm_data <- read.csv("./mydataLIMAptm_relabu.csv", row.names = 1)
+ptm_data <- read.csv(paste0(params$input_dir, "mydataLIMAptm_relabu.csv"), row.names = 1)
 rownames(ptm_data) <- ptm_data$Replicate_Name
 
 ptm_metadata <- ptm_data[,1:2]
@@ -26,7 +30,7 @@ ptm_metadata$group <- factor(ptm_metadata$group, levels = c("C", "H", "I", "E"),
                               labels = c("CNT", "HFD", "INT", "HFE"))
 
 
-saveRDS(list("LIMA"= list("PTM_Data" = ptm_data, "PTM_Metadata" = ptm_metadata)),"./ptm_data_list.rds")
+# saveRDS(list("LIMA"= list("PTM_Data" = ptm_data, "PTM_Metadata" = ptm_metadata)),"./ptm_data_list.rds")
 ```
 
 ```{r}
@@ -73,6 +77,19 @@ comp_results_list <- lapply(names_comp, function(name_comp){
 })
 names(comp_results_list) <- names_comp
 
-saveRDS(comp_results_list, "./ptm_results.rds")
+# saveRDS(comp_results_list, "./ptm_results.rds")
+```
+
+```{r}
+rownames(ptm_data) <- make.names(rownames(ptm_data))
+
+ptm_metadata <- data.frame("samplename" = make.names(ptm_metadata$Replicate_Name),
+                           "group" = ptm_metadata$group)
+ptm_results <- do.call(cbind, comp_results_list)
+
+ptm_exp <- SummarizedExperiment(assays = as.data.frame(t(ptm_data)), 
+                                 colData = ptm_metadata,
+                                 rowData = ptm_results)
+saveRDS(ptm_exp, paste0(params$output_dir, "Histone_Modifications_Proteomics_exp_lima.rds"))
 ```
 

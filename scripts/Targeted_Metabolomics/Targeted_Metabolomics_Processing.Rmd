@@ -2,6 +2,9 @@
 title: "Targeted Metabolomics Processing"
 output: html_document
 date: "2023-02-13"
+params: 
+    input_dir: "../../inputs/Targeted_Metabolomics/"
+    output_dir: "../../outputs/Targeted_Metabolomics/"
 ---
 
 ```{r setup, include=FALSE}
@@ -19,17 +22,18 @@ library(ggplot2)
 library(plotly)
 library(dplyr)
 library(sva)
-source("../../Utility Functions/utilities.R")
+source("../Utility_Functions/utilities.R")
 ```
 
 ## Loading the data
 
 ```{r}
-dir_list <- list.dirs(recursive = FALSE)
+dir_list <- list.files(params$input_dir, recursive = FALSE, full.names = TRUE)
 
 raw_file_list <- lapply(dir_list, function(dir_path){
-    file_vec <- list.files(dir_path, pattern = "oct2021.xlsx", recursive = TRUE, full.names = TRUE)
-    file_vec[!grepl(file_vec, pattern = "~\\$")]
+    file_vec <- list.files(dir_path, full.names = TRUE)
+    # file_vec[!grepl(file_vec, pattern = "~\\$")]
+    file_vec
 })
 keep_dir <- !sapply(raw_file_list, length) == 0
 raw_file_list <- raw_file_list[keep_dir]
@@ -225,7 +229,8 @@ pca_dt_list <- lapply(noqc_file_list, function(organ_data){
     met_data <- organ_data$Metabolite_Data
     met_data <- impute::impute.knn(t(met_data))$data
     
-    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = organ_data$Metabolite_Metadata, design = ~ group)
+    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = organ_data$Metabolite_Metadata, 
+                                     design = ~ group)
     
     dt_pca <- estimateSizeFactors(dt_pca)
     dt_pca <- estimateDispersions(dt_pca)
@@ -436,8 +441,15 @@ names(merged_results) <- names(interaction_results)
 #### Saving results
 
 ```{r}
-saveRDS(merged_results, "./targeted_metabolomics_results.rds")
-saveRDS(gf_cv_data_list, "./targeted_metabolomics_data.rds")
+merged_results <- lapply(merged_results, function(organ_dt){
+    do.call(cbind, organ_dt)
+})
+
+for(organ_name in names(gf_cv_data_list)){
+    rowData(gf_cv_data_list[[organ_name]]) <- merged_results[[organ_name]]
+}
+
+saveRDS(gf_cv_data_list, paste0(params$output_dir, "Targeted_Metabolomics_exp_gfcv.rds"))
 ```
 
 ### LIMA subset
@@ -530,6 +542,33 @@ names(merged_results) <- names(contrasts_results$cecum)
 #### Saving Results
 
 ```{r}
-saveRDS(lima_data_list, "./targeted_metabolomics_lima_data.rds")
-saveRDS(contrasts_results, "./targeted_metabolomics_lima_results.rds")
+
+lima_data_list <- lapply(lima_data_list, function(organ){
+    colnames(organ) <- make.names(colnames(organ))
+    organ$samplename <- make.names(organ$samplename)
+    organ
+})
+lima_data_list[sapply(lima_data_list, function(x){
+    ncol(x) == 0
+})] <- NULL
+lima_data_list$liver <- combineRows(lima_data_list$liver, 
+                                         lima_data_list$liver_scfa, 
+                                         delayed = FALSE)
+lima_data_list$liver_scfa <- NULL
+
+contrasts_results$liver <- mapply(function(liver_res, liver_scfa_res){
+    rbind(liver_res, liver_scfa_res)
+}, contrasts_results$liver, contrasts_results$liver_scfa, SIMPLIFY = FALSE)
+
+contrasts_results[c("colon", "liver_scfa")] <- NULL
+
+targ_meta_data <- lapply(names(lima_data_list), function(organ_name){
+    organ <- lima_data_list[[organ_name]]
+    organ_results <- contrasts_results[[organ_name]]
+    rowData(organ) <- do.call(cbind, organ_results)
+    organ
+})
+names(targ_meta_data) <- names(lima_data_list)
+
+saveRDS(targ_meta_data, paste0(params$output_dir, "Targeted_Metabolomics_exp_lima.rds"))
 ```

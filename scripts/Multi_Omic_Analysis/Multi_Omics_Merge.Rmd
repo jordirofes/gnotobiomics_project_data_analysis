@@ -112,32 +112,6 @@ assay(unt_meta_data) <- as.data.frame(assay(unt_meta_data))
 targ_meta_results <- readRDS("../epi_metabolomics/targeted_metabolomics_lima_results.rds")
 targ_meta_data_list <- readRDS("../epi_metabolomics/targeted_metabolomics_lima_data.rds")
 
-targ_meta_data_list <- lapply(targ_meta_data_list, function(organ){
-    colnames(organ) <- make.names(colnames(organ))
-    organ$samplename <- make.names(organ$samplename)
-    organ
-})
-targ_meta_data_list[sapply(targ_meta_data_list, function(x){
-    ncol(x) == 0
-})] <- NULL
-targ_meta_data_list$liver <- combineRows(targ_meta_data_list$liver, 
-                                         targ_meta_data_list$liver_scfa, 
-                                         delayed = FALSE)
-targ_meta_data_list$liver_scfa <- NULL
-
-targ_meta_results$liver <- mapply(function(liver_res, liver_scfa_res){
-    rbind(liver_res, liver_scfa_res)
-}, targ_meta_results$liver, targ_meta_results$liver_scfa, SIMPLIFY = FALSE)
-
-targ_meta_results[c("colon", "liver_scfa")] <- NULL
-
-targ_meta_data <- lapply(names(targ_meta_data_list), function(organ_name){
-    organ <- targ_meta_data_list[[organ_name]]
-    organ_results <- targ_meta_results[[organ_name]]
-    rowData(organ) <- do.call(cbind, organ_results)
-    organ
-})
-names(targ_meta_data) <- names(targ_meta_data_list)
 
 ### Metagenomics 16S
 x16S_results <- readRDS("../16S_meta/16S_results_list.rds")
@@ -233,80 +207,19 @@ names(x16S_data) <- names(x16S_data_list)
 shotgun_data <- readRDS("../Shotgun_Metagenomics/shotgun_results_list.rds")
 
 ### Shotgun Functional 
+shotgun_functional_data <- readRDS("../Shotgun_Metagenomics/shotgun_functional_data_list.rds")
 
-shotgun_functional_results <- readRDS("../Shotgun_Metagenomics/shotgun_functional_results_list.rds")
-shotgun_functional_data_list <- readRDS("../Shotgun_Metagenomics/shotgun_functional_data_list.rds")
-
-shotgun_functional_data <- lapply(names(shotgun_functional_data_list$shotgun_data), function(organ_name){
-    organ_data <- shotgun_functional_data_list$shotgun_data[[organ_name]]
-    organ_metadata <- shotgun_functional_data_list$shotgun_metadata[[organ_name]]
-    organ_results <- shotgun_functional_results[[organ_name]]
-    # names(organ_metadata) <- sapply(strsplit(names(organ_metadata), "_"), function(x){x[3]})
-    # names(organ_data) <- sapply(strsplit(names(organ_data), "_"), function(x){x[3]})
-    # names(organ_results) <- sapply(strsplit(names(organ_results), "_"), function(x){x[3]})
-    
-    organ_summ <- lapply(names(organ_data), function(hierarchy_names){
-        hierarchy_data <- organ_data[[hierarchy_names]]
-        hierarchy_metadata <- organ_metadata[[hierarchy_names]]
-        hierarchy_results <- organ_results[[hierarchy_names]]
-        hierarchy_results <- lapply(hierarchy_results, function(hierarchy_results_ind){
-            colnames(hierarchy_results_ind)[c(2,5:6)] <- c("log2FC","p.value", "adj.p.value")
-            hierarchy_results_ind
-        })
-        merged_rowdata <- do.call(cbind, hierarchy_results)
-        
-        summ_exp <- SummarizedExperiment(assays = list("counts" = as.matrix(hierarchy_data)), 
-                            colData = hierarchy_metadata,
-                            rowData = merged_rowdata)
-        summ_exp
-    })
-    names(organ_summ) <- names(organ_data)
-    organ_summ
-})
-names(shotgun_functional_data) <- names(shotgun_functional_data_list$shotgun_data)
 
 
 ### PTM modifications
-ptm_results <- readRDS("../PTM/ptm_results.rds")
-ptm_data_list <- readRDS("../PTM/ptm_data_list.rds")
+ptm_exp <- readRDS(paste0(params$output_dir,
+                          "Histone_Modifications_Proteomics_exp_lima.rds"))
 
-ptm_data_list$LIMA$PTM_Data <- t(ptm_data_list$LIMA$PTM_Data)
-colnames(ptm_data_list$LIMA$PTM_Data) <- make.names(colnames(ptm_data_list$LIMA$PTM_Data))
 
-ptm_metadata <- data.frame("samplename" = make.names(ptm_data_list$LIMA$PTM_Metadata$Replicate_Name),
-                           "group" = ptm_data_list$LIMA$PTM_Metadata$group)
-
-ptm_data <- SummarizedExperiment(assays = as.data.frame(ptm_data_list$LIMA$PTM_Data), 
-                                 colData = ptm_metadata,
-                                 rowData = do.call(cbind, ptm_results))
     
 ### Metallomics
-metal_results <- readRDS("../Metallomics/lima_metallomics_results_list.rds")
-metal_data_list <- readRDS("../Metallomics/lima_metallomics_list.rds")
-
-metal_data <- lapply(names(metal_data_list), function(organ_name){
-    organ_list <- metal_data_list[[organ_name]]
-    organ_data <- organ_list[["Metallomics_Data"]]
-    organ_data <- t(organ_data)
-    organ_results <- metal_results[[organ_name]]
-    # rownames(organ_data) <- paste0(organ_name, ".", rownames(organ_data))
-    colnames(organ_data) <- make.names(colnames(organ_data))
-    organ_metadata <- organ_list[["Metallomics_Metadata"]]
-    organ_metadata$group <- factor(organ_metadata$group, 
-                                   levels = c("CTN", "HFD", "INT", "HFE"), 
-                                   labels = c("CNT", "HFD", "INT", "HFE"))
-    organ_metadata$samplename <- make.names(organ_metadata$samplename)
-    rownames(organ_metadata) <- organ_metadata$samplename
-    
-    merged_rowdata <- do.call(cbind, organ_results)
-    # rownames(merged_rowdata) <- paste0(organ_name, ".", rownames(merged_rowdata))
-    # 
-    SummarizedExperiment(assays = as.data.frame(organ_data), 
-                         colData = organ_metadata[c("samplename", "group")],
-                         rowData = merged_rowdata)
-    
-})
-names(metal_data) <- names(metal_data_list)
+metal_exp <- readRDS(paste0(params$output_dir,
+                          "Metallomics_exp_lima"))
 
 ## DNA-Methylation - WGBSeq
 dna_met_data <- readRDS("../DNA_met/LIMA_model/dna_met_exp_non_smoothed.group.rds")
