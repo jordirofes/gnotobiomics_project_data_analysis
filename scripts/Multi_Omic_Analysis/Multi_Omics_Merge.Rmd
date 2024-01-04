@@ -73,40 +73,41 @@ rna_seq_data <- SummarizedExperiment(assays = rna_seq_data,
 
 ### Metabolomics Untargeted
 unt_meta_paths <- list.dirs("../Untargeted_Metabolomics/Hermes_Results", recursive = FALSE)
-unt_meta_results <- lapply(unt_meta_paths, function(data_path){
-    readRDS(paste0(data_path, "/contrasts_results_anova_lima_list.rds"))
-})
-names(unt_meta_results) <- basename(unt_meta_paths)
-
-unt_meta_data <- lapply(names(unt_meta_results), function(unt_results_name){
-    unt_results_list <- unt_meta_results[[unt_results_name]]
-    
-    unt_results <- unt_results_list[["Contrasts_Results"]]
-    unt_results <- do.call(cbind, unt_results)
-    
-    rownames(unt_results) <- paste0(unt_results_name, ".", rownames(unt_results))
-    
-    unt_data <- unt_results_list[["qcrsc_corrected_data"]]
-    assay(unt_data) <- as.data.frame(assay(unt_data))
-    rownames(unt_data) <- paste0(unt_results_name, ".", rownames(unt_data))
-    unt_data$group <- factor(unt_data$groups_m, levels = c("CNT", "HFD", "INT", "HFE"))
-    unt_data$samplename <- make.names(unt_data$samplename)
-    colnames(unt_data) <- unt_data$samplename
-    # unt_data <- unt_data[,match(colnames(unt_meta_results$Hilic_Negative$qcrsc_corrected_data), 
-    #                             colnames(unt_data))]
-    # # Adding contrast data to rowData
-    if(!all(rownames(rowData(unt_data)) == rownames(unt_results))){stop("Rownames do not match")}
-    # rowData(unt_data) <- cbind(rowData(unt_data), unt_results)
-    # 
-    SummarizedExperiment(assays = as.data.frame(assay(unt_data)), 
-                         rowData = cbind(rowData(unt_data), unt_results), 
-                         colData = colData(unt_data), 
-                         metadata = metadata(unt_data))
-})
-names(unt_meta_data) <- names(unt_meta_results)
-unt_meta_data <- Reduce(combineRows, unt_meta_data)
-
-assay(unt_meta_data) <- as.data.frame(assay(unt_meta_data))
+# unt_meta_results <- lapply(unt_meta_paths, function(data_path){
+#     readRDS(paste0(data_path, "/contrasts_results_anova_lima_list.rds"))
+# })
+# names(unt_meta_results) <- basename(unt_meta_paths)
+# 
+# unt_meta_data <- lapply(names(unt_meta_results), function(unt_results_name){
+#     unt_results_list <- unt_meta_results[[unt_results_name]]
+#     
+#     unt_results <- unt_results_list[["Contrasts_Results"]]
+#     unt_results <- do.call(cbind, unt_results)
+#     
+#     rownames(unt_results) <- paste0(unt_results_name, ".", rownames(unt_results))
+#     
+#     unt_data <- unt_results_list[["qcrsc_corrected_data"]]
+#     assay(unt_data) <- as.data.frame(assay(unt_data))
+#     rownames(unt_data) <- paste0(unt_results_name, ".", rownames(unt_data))
+#     unt_data$group <- factor(unt_data$groups_m, levels = c("CNT", "HFD", "INT", "HFE"))
+#     unt_data$samplename <- make.names(unt_data$samplename)
+#     colnames(unt_data) <- unt_data$samplename
+#     # unt_data <- unt_data[,match(colnames(unt_meta_results$Hilic_Negative$qcrsc_corrected_data), 
+#     #                             colnames(unt_data))]
+#     # # Adding contrast data to rowData
+#     if(!all(rownames(rowData(unt_data)) == rownames(unt_results))){
+#         stop("Rownames do not match")}
+#     # rowData(unt_data) <- cbind(rowData(unt_data), unt_results)
+#     # 
+#     SummarizedExperiment(assays = as.data.frame(assay(unt_data)), 
+#                          rowData = cbind(rowData(unt_data), unt_results), 
+#                          colData = colData(unt_data), 
+#                          metadata = metadata(unt_data))
+# })
+# names(unt_meta_data) <- names(unt_meta_results)
+# unt_meta_data <- Reduce(combineRows, unt_meta_data)
+# 
+# assay(unt_meta_data) <- as.data.frame(assay(unt_meta_data))
 
 ### Metabolomics Targeted
 targ_meta_results <- readRDS("../epi_metabolomics/targeted_metabolomics_lima_results.rds")
@@ -118,90 +119,90 @@ x16S_results <- readRDS("../16S_meta/16S_results_list.rds")
 x16S_data_list <- readRDS("../16S_meta/16S_lima_data_list.rds")
 x16S_metadata <- readRDS("../16S_meta/16S_lima_metadata_list.rds")
 
-x16S_data <- lapply(names(x16S_data_list), function(organ_id){
-    organ <- x16S_data_list[[organ_id]]
-    organ_metadata <- x16S_metadata[[organ_id]]
-    organ_results <- x16S_results[[organ_id]]
-    names(organ) <- sapply(strsplit(names(organ), "_"), function(x){x[3]})
-    names(organ_results) <- sapply(strsplit(names(organ_results), "_"), function(x){x[3]})    
-    hierarchy_dt <- lapply(names(organ), function(hierarchy_name){
-        hierarchy <- organ[[hierarchy_name]]
-        hierarchy_results <- organ_results[[hierarchy_name]]
-        colnames(hierarchy) <- make.names(colnames(hierarchy))
-    
-        merged_rowdata <- do.call(cbind, hierarchy_results)
-        hierarchy_ids <- c("D_0", "D_1", "D_2", "D_3", "D_4", "D_5", "D_6")
-        hierarchy_ranks <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
-        
-        max_rank <- grep(stringr::str_to_title(hierarchy_name), hierarchy_ranks)
-        
-        hierarchy_ids <- hierarchy_ids[seq_len(max_rank)]
-        hierarchy_ranks <- hierarchy_ranks[seq_len(max_rank)]
-        
-        hierarchycal_tree <- lapply(rownames(hierarchy), function(sp_name){
-            hierarchy_found <- c()
-            
-            for(h_id_num in seq_along(hierarchy_ids)){
-                h_id <- hierarchy_ids[h_id_num]
-                
-                found_id <- grep(paste0("^", h_id, "__"), 
-                                strsplit(sp_name, ";")[[1]], value = TRUE)
-                
-                if(length(found_id)){
-                    found_dt <- gsub(paste0(h_id, "__"), "", found_id)
-                    found_dt <- gsub("\\[|\\]", "", found_dt)
-
-                    if(found_dt == "" || grepl("uncultured|unknown|unidentified|metagenome", found_dt, ignore.case = TRUE)){
-                        hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
-                                                            hierarchy_found[h_id_num - 1], 
-                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
-                    } else{
-                        hierarchy_found[h_id_num] <- found_dt
-                    }
-                } else{
-                    hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
-                                                            hierarchy_found[h_id_num - 1], 
-                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
-                }    
-            }
-            return(hierarchy_found)
-        })
-        
-        hierarchycal_tree <- do.call(rbind, hierarchycal_tree)
-        colnames(hierarchycal_tree) <- hierarchy_ranks
-        
-        summ_exp <- TreeSummarizedExperiment(assays = list("relabundance" = hierarchy), 
-                             colData = organ_metadata[c("samplename",
-                                                        "group")], 
-                             rowData = cbind(merged_rowdata, hierarchycal_tree))
-        rowData(summ_exp)$old_names <- rownames(summ_exp)
-        
-        summ_exp <- mia::agglomerateByRank(x = summ_exp, rank = hierarchy_ranks[max_rank])
-        summ_exp <- mia::addTaxonomyTree(summ_exp)
-        
-        rowData(summ_exp)$specie_names <- rownames(summ_exp)
-        
-        # sp_names <- lapply(seq_along(rownames(summ_exp)), function(i){
-        #     x <- rownames(summ_exp)[i]
-        #     while(grepl(";__$", x)){
-        #         x <- gsub(";__$", "", x)[[1]]
-        #     }
-        #     x <- strsplit(x, ";")[[1]]
-        #     if(length(x) > 1){
-        #         x <- paste(x[c(length(x)-1, length(x))], collapse = ";")
-        #     }
-        #     x <- paste0(x, i, sep = "_")
-        #     x
-        # })
-        # rowData(summ_exp)$specie_name_short <- sp_names
-        # 
-        # rownames(summ_exp) <- sapply(sp_names, function(x){make.names(stringr::str_trunc(x, 15, "left"))})
-        summ_exp
-    })
-    names(hierarchy_dt) <- names(organ)
-    hierarchy_dt
-})
-names(x16S_data) <- names(x16S_data_list)
+# x16S_data <- lapply(names(x16S_data_list), function(organ_id){
+#     organ <- x16S_data_list[[organ_id]]
+#     organ_metadata <- x16S_metadata[[organ_id]]
+#     organ_results <- x16S_results[[organ_id]]
+#     names(organ) <- sapply(strsplit(names(organ), "_"), function(x){x[3]})
+#     names(organ_results) <- sapply(strsplit(names(organ_results), "_"), function(x){x[3]})
+#     hierarchy_dt <- lapply(names(organ), function(hierarchy_name){
+#         hierarchy <- organ[[hierarchy_name]]
+#         hierarchy_results <- organ_results[[hierarchy_name]]
+#         colnames(hierarchy) <- make.names(colnames(hierarchy))
+# 
+#         merged_rowdata <- do.call(cbind, hierarchy_results)
+#         hierarchy_ids <- c("D_0", "D_1", "D_2", "D_3", "D_4", "D_5", "D_6")
+#         hierarchy_ranks <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+# 
+#         max_rank <- grep(stringr::str_to_title(hierarchy_name), hierarchy_ranks)
+# 
+#         hierarchy_ids <- hierarchy_ids[seq_len(max_rank)]
+#         hierarchy_ranks <- hierarchy_ranks[seq_len(max_rank)]
+# 
+#         hierarchycal_tree <- lapply(rownames(hierarchy), function(sp_name){
+#             hierarchy_found <- c()
+# 
+#             for(h_id_num in seq_along(hierarchy_ids)){
+#                 h_id <- hierarchy_ids[h_id_num]
+# 
+#                 found_id <- grep(paste0("^", h_id, "__"),
+#                                 strsplit(sp_name, ";")[[1]], value = TRUE)
+# 
+#                 if(length(found_id)){
+#                     found_dt <- gsub(paste0(h_id, "__"), "", found_id)
+#                     found_dt <- gsub("\\[|\\]", "", found_dt)
+# 
+#                     if(found_dt == "" || grepl("uncultured|unknown|unidentified|metagenome", found_dt, ignore.case = TRUE)){
+#                         hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]),
+#                                                             hierarchy_found[h_id_num - 1],
+#                                                             paste("Unknown", hierarchy_found[h_id_num - 1]))
+#                     } else{
+#                         hierarchy_found[h_id_num] <- found_dt
+#                     }
+#                 } else{
+#                     hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]),
+#                                                             hierarchy_found[h_id_num - 1],
+#                                                             paste("Unknown", hierarchy_found[h_id_num - 1]))
+#                 }
+#             }
+#             return(hierarchy_found)
+#         })
+# 
+#         hierarchycal_tree <- do.call(rbind, hierarchycal_tree)
+#         colnames(hierarchycal_tree) <- hierarchy_ranks
+# 
+#         summ_exp <- TreeSummarizedExperiment(assays = list("relabundance" = hierarchy),
+#                              colData = organ_metadata[c("samplename",
+#                                                         "group")],
+#                              rowData = cbind(merged_rowdata, hierarchycal_tree))
+#         rowData(summ_exp)$old_names <- rownames(summ_exp)
+# 
+#         summ_exp <- mia::agglomerateByRank(x = summ_exp, rank = hierarchy_ranks[max_rank])
+#         summ_exp <- mia::addTaxonomyTree(summ_exp)
+# 
+#         rowData(summ_exp)$specie_names <- rownames(summ_exp)
+# 
+#         # sp_names <- lapply(seq_along(rownames(summ_exp)), function(i){
+#         #     x <- rownames(summ_exp)[i]
+#         #     while(grepl(";__$", x)){
+#         #         x <- gsub(";__$", "", x)[[1]]
+#         #     }
+#         #     x <- strsplit(x, ";")[[1]]
+#         #     if(length(x) > 1){
+#         #         x <- paste(x[c(length(x)-1, length(x))], collapse = ";")
+#         #     }
+#         #     x <- paste0(x, i, sep = "_")
+#         #     x
+#         # })
+#         # rowData(summ_exp)$specie_name_short <- sp_names
+#         #
+#         # rownames(summ_exp) <- sapply(sp_names, function(x){make.names(stringr::str_trunc(x, 15, "left"))})
+#         summ_exp
+#     })
+#     names(hierarchy_dt) <- names(organ)
+#     hierarchy_dt
+# })
+# names(x16S_data) <- names(x16S_data_list)
 
 ### Metagenomics Shotgun
 shotgun_data <- readRDS("../Shotgun_Metagenomics/shotgun_results_list.rds")

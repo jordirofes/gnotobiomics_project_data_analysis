@@ -2,6 +2,9 @@
 title: "16S LIMA Processing"
 output: html_document
 date: "2023-04-17"
+params:
+    input_dir: "../../inputs/16S_Metagenomics/"
+    output_dir: "../../outputs/16S_Metagenomics/"
 ---
 
 ```{r setup, include=FALSE}
@@ -16,15 +19,17 @@ library(stringi)
 library(PCAtools)
 library(mixOmics)
 library(compositions)
+library(TreeSummarizedExperiment)
+library(SummarizedExperiment)
+library(mia)
 ```
-
 
 ## Initial processing
 
 ### LIMA
 
 ```{r}
-organ_dir <- list.dirs(".", full.names = TRUE, recursive = FALSE)
+organ_dir <- list.dirs(params$input_dir, full.names = TRUE, recursive = FALSE)
 organ_dir
 
 organ_dt_list <- lapply(organ_dir, function(organ_dt){
@@ -52,13 +57,14 @@ organ_dt_list <- lapply(organ_dt_list, function(organ_dt){
 })
 organ_dt_list <- organ_dt_list[!sapply(organ_dt_list, is.null)]
 
-saveRDS(organ_dt_list, "16S_lima_data_list.rds")
+# saveRDS(organ_dt_list, "16S_lima_data_list.rds")
 ```
 
 ```{r}
 metadata_list <- data.frame("samplename" = colnames(organ_dt_list$cecum$feature_table_class))
 metadata_list$group <- substr(x = metadata_list$samplename, start = 4, stop = 4)
-metadata_list$group <- factor(metadata_list$group, levels = c("C", "H", "I", "E"), 
+metadata_list$group <- factor(metadata_list$group, 
+                              levels = c("C", "H", "I", "E"), 
                               labels = c("CNT", "HFD", "INT", "HFE"))
 
 metadata_list$sample_id <- substr(x = metadata_list$samplename, start = 1, stop = 3)
@@ -66,7 +72,7 @@ metadata_list
 
 metadata_list <- list(cecum = metadata_list)
 
-saveRDS(metadata_list, "16S_lima_metadata_list.rds")
+# saveRDS(metadata_list, "16S_lima_metadata_list.rds")
 ```
 
 ```{r}
@@ -89,8 +95,7 @@ organ_dt_list_proc <- lapply(names(organ_dt_list), function(organ_name){
         
 names(organ_dt_list_proc) <- names(organ_dt_list)
 
-saveRDS(organ_dt_list_proc, "16S_lima_data_list.rds")
-
+# saveRDS(organ_dt_list_proc, "16S_lima_data_list.rds")
 ```
 
 
@@ -127,7 +132,6 @@ lapply(seq_along(pca_res), function(organ_id){
 
 
 ```{r}
-
 bx_dt <- lapply(seq_along(organ_dt_list_proc), function(organ_id){
     organ <- organ_dt_list_proc[[organ_id]]
     organ_meta <- metadata_list[[organ_id]]
@@ -143,7 +147,7 @@ bx_dt <- lapply(seq_along(organ_dt_list_proc), function(organ_id){
 ```
 
 ```{r}
-stat_res <- lapply(seq_along(organ_dt_list_proc), function(organ_id){
+x16S_exp <- lapply(seq_along(organ_dt_list_proc), function(organ_id){
     organ <- organ_dt_list_proc[[organ_id]]
     organ_meta <- metadata_list[[organ_id]]
     
@@ -178,11 +182,98 @@ stat_res <- lapply(seq_along(organ_dt_list_proc), function(organ_id){
             results_list
         })
         names(comp_list) <- names_comp
-        comp_list
+        TreeSummarizedExperiment(assay = list("relabundance" = as.data.frame(t(hierarchy))), 
+                                colData = organ_meta, 
+                                rowData = do.call(cbind, comp_list))
     })
 })
-names(stat_res) <- names(organ_dt_list_proc)
+names(x16S_exp) <- names(organ_dt_list_proc)
 
-saveRDS(stat_res, "./16S_results_list.rds")
+# saveRDS(stat_res, "./16S_results_list.rds")
+```
+
+```{r}
+x16S_data <- lapply(names(x16S_exp), function(organ_id){
+    organ <- x16S_exp[[organ_id]]
+    
+    names(organ) <- sapply(strsplit(names(organ), "_"), function(x){x[3]})
+
+    hierarchy_dt <- lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        colnames(hierarchy) <- make.names(colnames(hierarchy))
+    
+        hierarchy_ids <- c("D_0", "D_1", "D_2", "D_3", "D_4", "D_5", "D_6")
+        hierarchy_ranks <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+        
+        max_rank <- grep(stringr::str_to_title(hierarchy_name), hierarchy_ranks)
+        
+        hierarchy_ids <- hierarchy_ids[seq_len(max_rank)]
+        hierarchy_ranks <- hierarchy_ranks[seq_len(max_rank)]
+        
+        hierarchycal_tree <- lapply(rownames(hierarchy), function(sp_name){
+            hierarchy_found <- c()
+            
+            for(h_id_num in seq_along(hierarchy_ids)){
+                h_id <- hierarchy_ids[h_id_num]
+                
+                found_id <- grep(paste0("^", h_id, "__"), 
+                                strsplit(sp_name, ";")[[1]], value = TRUE)
+                
+                if(length(found_id)){
+                    found_dt <- gsub(paste0(h_id, "__"), "", found_id)
+                    found_dt <- gsub("\\[|\\]", "", found_dt)
+
+                    if(found_dt == "" || grepl("uncultured|unknown|unidentified|metagenome", found_dt, ignore.case = TRUE)){
+                        hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
+                                                            hierarchy_found[h_id_num - 1], 
+                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
+                    } else{
+                        hierarchy_found[h_id_num] <- found_dt
+                    }
+                } else{
+                    hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
+                                                            hierarchy_found[h_id_num - 1], 
+                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
+                }    
+            }
+            return(hierarchy_found)
+        })
+        
+        hierarchycal_tree <- do.call(rbind, hierarchycal_tree)
+        
+        colnames(hierarchycal_tree) <- hierarchy_ranks
+        
+        rowData(hierarchy) <- cbind(hierarchycal_tree, rowData(hierarchy))
+        rowData(hierarchy)$old_names <- rownames(hierarchy)
+        
+        hierarchy <- mia::agglomerateByRank(x = hierarchy, 
+                                            rank = hierarchy_ranks[max_rank])
+        hierarchy <- mia::addTaxonomyTree(hierarchy)
+        
+        rowData(hierarchy)$specie_names <- rownames(hierarchy)
+        
+        # sp_names <- lapply(seq_along(rownames(summ_exp)), function(i){
+        #     x <- rownames(summ_exp)[i]
+        #     while(grepl(";__$", x)){
+        #         x <- gsub(";__$", "", x)[[1]]
+        #     }
+        #     x <- strsplit(x, ";")[[1]]
+        #     if(length(x) > 1){
+        #         x <- paste(x[c(length(x)-1, length(x))], collapse = ";")
+        #     }
+        #     x <- paste0(x, i, sep = "_")
+        #     x
+        # })
+        # rowData(summ_exp)$specie_name_short <- sp_names
+        # 
+        # rownames(summ_exp) <- sapply(sp_names, function(x){make.names(stringr::str_trunc(x, 15, "left"))})
+        hierarchy
+    })
+    names(hierarchy_dt) <- names(organ)
+    hierarchy_dt
+})
+names(x16S_data) <- names(x16S_exp)
+
+saveRDS(x16S_data, paste0(params$output_dir, "16S_Metagenomics_exp_lima.rds"))
 ```
 

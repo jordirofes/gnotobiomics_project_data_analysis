@@ -1,0 +1,207 @@
+---
+title: "Master Script"
+author: "Jordi Rofes Herrera"
+date: "28/1/2022"
+output: html_document
+params: 
+    input_dir: "../../inputs/Untargeted_Metabolomics/"
+    output_dir: "../../outputs/Untargeted_Metabolomics/"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Experiment Processing
+
+```{r}
+db_path <- paste0(params$input_dir, "FullHMDB_Chebi_Tripeptides_db.csv")
+
+hermes_results_path <- paste0(params$output_dir, "Hermes_Results/")
+if(!dir.exists(hermes_results_path)){dir.create(hermes_results_path)}
+
+column_ids <- c("Hilic_Positive", "Hilic_Negative", "RP_Positive")
+positive_adducts <- c("M+H", "M+NH4", "M+Na", "M+K", "M+")
+negative_adducts <- c("M-H", "M+Cl")
+
+gfcv_exp <- list()
+lima_exp <- list()
+
+for(id in column_ids){
+    output_path <- paste0(hermes_results_path, id, "/")    
+    if(!dir.exists(output_path)){dir.create(output_path)}
+    
+    file_dir <- paste0(params$input_dir, id, "/Hermes_Files/")
+    
+    hermes_output_path <- paste0(output_path, "filteredSoiLists.rds") 
+    ## HERMES Analysis
+    if(!file.exists(hermes_output_path)){
+        param_list <- list(ms1_dir = file_dir, 
+                            qc_names =  "QC", blank_names = "Blank",
+                            met_db = db_path, met_db_sep = ",",
+                            ppm_error = 10, instrument = "QTOF", resolution = 30000, 
+                            noise_int = 1000, labelled = FALSE,
+                            min_max_mz = c(50, 1500), 
+                            add_charge = 1, add_mult = 1,
+                            soi_detection_type = "double",
+                            output_dir = output_path,
+                            consensus = TRUE, 
+                            soi_consensus = 1:3)
+        param_list$ionization <- ifelse(grepl("Positive", x = id, 
+                                                ignore.case = TRUE), 
+                                        "+", "-")
+        param_list$ad_list <- ifelse(grepl("Positive", x = id, 
+                                                ignore.case = TRUE), 
+                                        positive_adducts, negative_adducts)
+        rmarkdown::render(input = "./Hermes_Analysis.Rmd",
+                      output_file = paste0(output_path, "Hermes_Report.html"), 
+                      clean = TRUE, params = param_list)
+    }
+    
+    ## XCMS Analysis
+    metadata_path <- paste0(file_dir, "LC_MS_metadata.csv")
+    
+    xcms_hermes_output_path <- paste0(output_path, "summarized_hermes_xcms.rds")
+    
+    if(!file.exists(xcms_hermes_output_path)){
+        param_list <- list(
+            file_dir = file_dir,
+            metadata_file = metadata_path,
+            output_dir = output_path
+        )
+            
+        rmarkdown::render(input = "./XCMS_Analysis.Rmd",
+                  output_file = paste0(output_path, "XCMS_Analysis.html"), 
+                  clean = TRUE, params = param_list)    
+    }
+    
+    ## XMCS-HERMES Analysis
+    untargeted_lima_output <- paste0(output_path, "xcms_hermes_exp_lima.rds")
+    untargeted_gfcv_output <- paste0(output_path, "xcms_hermes_exp_gfcv.rds")
+    
+    if(!file.exists(untargeted_gfcv_output)){
+        param_list <- list(
+            metadata_file = metadata_path,
+            xcms_hermes_file = xcms_hermes_output_path,
+            hermes_file = hermes_output_path,
+            output_results = output_path
+        )
+        switch(id, "Hilic_Positive" = {
+            param_list$qc_name <- "HP_QC"
+            param_list$blank_name  <- "HP_Blank"
+            param_list$data_type <- "Hilic_Positive"
+        }, "Hilic_Negative" = {
+            param_list$qc_name <- "HN_QC"
+            param_list$blank_name <- "HN_Blank"
+            param_list$data_type <- "Hilic_Negative"
+        }, "RP_Positive" = {
+            param_list$qc_name <- "RP"
+            param_list$blank_name <- "RP_Blank"
+            param_list$data_type <- "RP_Positive"
+        })
+        
+        rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", 
+                      output_file = paste0(output_path, "xcms_hermes_results.html"), 
+                      clean = TRUE, params = param_list)
+    }
+
+    gfcv_exp[[id]] <- readRDS(untargeted_gfcv_output)
+    lima_exp[[id]] <- readRDS(untargeted_lima_output)
+}
+####
+gfcv_exp <- Reduce(combineRows, gfcv_exp)
+assay(gfcv_exp) <- as.data.frame(assay(gfcv_exp))
+
+saveRDS(gfcv_exp, paste0(params$output_dir, "Untargeted_Metabolomics_exp_gfcv.rds"))
+####
+lima_exp <- Reduce(combineRows, lima_exp)
+assay(lima_exp) <- as.data.frame(assay(lima_exp))
+
+saveRDS(lima_exp, paste0(params$output_dir, "Untargeted_Metabolomics_exp_lima.rds"))
+# rmarkdown::render(input = "./Hermes_Analysis.Rmd",
+#                   output_file = paste0(hp_output_path, "Hermes_Report.html"), 
+#                   clean = TRUE, params = list(
+#     ms1_dir = paste0(params$input_dir, "Hilic_Positive/Hermes_Files/"), 
+#     qc_names =  "QC", blank_names = "Blank",
+#     met_db = db_path, met_db_sep = ",",
+#     ppm_error = 10, instrument = "QTOF", resolution = 30000, 
+#     noise_int = 1000, ionization = "+", labelled = FALSE,
+#     ad_list = c("M+H", "M+NH4", "M+Na", "M+K", "M+"), 
+#     min_max_mz = c(50, 1500), 
+#     add_charge = 1, add_mult = 1,
+#     soi_detection_type = "double",
+#     output_dir = hp_output_path,
+#     consensus = TRUE, soi_consensus = 1:3))
+# 
+# 
+# hn_output_path <- paste0(hermes_results_path, "Hilic_Negative/")
+# if(!dir.exists(hn_output_path)){dir.create(hn_output_path)}
+# 
+# rmarkdown::render(input = "./Hermes_Analysis.Rmd",
+#                   output_file = paste0(hn_output_path, "Hermes_Report.html"), 
+#                   clean = TRUE, params = list(
+#     ms1_dir = paste0(params$input_dir, "Hilic_Negative/Hermes_Files/"), 
+#     qc_names =  "QC", blank_names = "Blank", 
+#     met_db = db_path, met_db_sep = ",",
+#     ppm_error = 10, instrument = "QTOF", resolution = 30000, 
+#     noise_int = 1000, ionization = "-", labelled = FALSE,
+#     ad_list = c("M-H", "M+Cl"), 
+#     min_max_mz = c(50, 1500), 
+#     add_charge = 1, add_mult = 1,
+#     soi_detection_type = "double", soi_filter_ids = 1:3,
+#     output_dir = hn_output_path,
+#     consensus = TRUE, soi_consensus = 1:3))
+# 
+# rp_output_path <- paste0(hermes_results_path, "RP_Positive/")
+# if(!dir.exists(rp_output_path)){dir.create(rp_output_path)}
+# 
+# rmarkdown::render(input = "./Hermes_Analysis.Rmd",
+#                   output_file = paste0(rp_output_path, "Hermes_Report.html"), 
+#                   clean = TRUE, params = list(
+#     ms1_dir = paste0(params$input_dir, "RP_Positive/Hermes_Files/"), 
+#     qc_names =  "QC", blank_names = "Blank",
+#     met_db = db_path, met_db_sep = ",",
+#     ppm_error = 10, instrument = "QTOF", resolution = 30000, 
+#     noise_int = 1000, ionization = "+", labelled = FALSE,
+#     ad_list = c("M+H", "M+NH4", "M+Na", "M+K", "M+"), 
+#     min_max_mz = c(50, 1500), 
+#     add_charge = 1, add_mult = 1,
+#     soi_detection_type = "double", soi_filter_ids = 1:3,
+#     output_dir = rp_output_path,
+#     consensus = TRUE, soi_consensus = 1:3))
+
+```
+
+```{r}
+# rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", 
+#                   output_file = "./Hermes_Results/Hilic_Positive/xcms_hermes_results.html", clean = TRUE, 
+#                   params = list(metadata_file = "./Hilic_Positive/LC_M S_metadata.csv",
+#     xcms_hermes_file = "./Hermes_Results/Hilic_Positive/summarized_hermes_xcms.rds",
+#     hermes_file = "./Hermes_Results/Hilic_Positive/filteredSoiLists.rds",
+#     qc_name = "HP_QC",
+#     blank_name = "HP_Blank",
+#     output_results = "./Hermes_Results/Hilic_Positive/",
+#     data_type = "Hilic Positive"))
+# 
+# rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", 
+#                   output_file = "./Hermes_Results/Hilic_Negative/xcms_hermes_results.html", clean = TRUE, 
+#                   params = list(metadata_file = "./Hilic_Negative/LC_MS_metadata.csv",
+#     xcms_hermes_file = "./Hermes_Results/Hilic_Negative/summarized_hermes_xcms.rds",
+#     hermes_file = "./Hermes_Results/Hilic_Negative/filteredSoiLists.rds", 
+#     qc_name = "HN_QC",
+#     blank_name = "HN_Blank",
+#     output_results = "./Hermes_Results/Hilic_Negative/",
+#     data_type = "Hilic Negative"))
+# 
+# rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", 
+#                   output_file = "./Hermes_Results/RP_Positive/xcms_hermes_results.html", 
+#                   clean = TRUE, 
+#                   params = list(metadata_file = "./RP_Positive/LC_MS_metadata.csv",
+#     hermes_file = "./Hermes_Results/RP_Positive/filteredSoiLists.rds",
+#     xcms_hermes_file = "./Hermes_Results/RP_Positive/summarized_hermes_xcms.rds",
+#     qc_name = "RP_QC",
+#     blank_name = "RP_Blank",
+#     output_results = "./Hermes_Results/RP_Positive/",
+#     data_type = "RP Positive"))
+```
+

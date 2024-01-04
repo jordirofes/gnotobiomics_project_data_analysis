@@ -241,20 +241,38 @@ feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
     return(paste(found_mets, collapse = "#"))
 }, USE.NAMES = FALSE)
 
-feature_data$soi <- sapply(feature_data$soi, function(x){paste(x, collapse = ",")})
-feature_data$formula <- sapply(feature_data$formula, function(x){paste(x, collapse = "/")})
+feature_data$soi <- sapply(feature_data$soi, function(x){
+    paste(x, collapse = ",")})
+feature_data$formula <- sapply(feature_data$formula, function(x){
+    paste(x, collapse = "/")})
 
 contrasts_results <-  c(list("GFCV_sex_Interaction" = interaction_results, 
                             "GF_CV" = gf_cv_results), contrasts_results)
 
 data_table <- lapply(contrasts_results, function(ctrs){
     cbind(feature_data[, c("mzmed","rtmed", "PutativeMetabolites")], 
-                    feature_data[,c("formula","soi")], "p.value" = ctrs$pvalue,"adj.p.value" = ctrs$adj.p.value)
+                    feature_data[,c("formula","soi")], 
+          "p.value" = ctrs$pvalue, 
+          "adj.p.value" = ctrs$adj.p.value)
 })
 
-saveRDS(list("Contrasts_Results" = data_table, 
-            "qcrsc_corrected_data" = xcms_p_dc_filt),
-        paste0(params$output_results, "contrasts_results_anova_list.rds"))
+
+rownames(xcms_p_dc_filt) <- paste0(params$data_type, ".", 
+                                   rownames(xcms_p_dc_filt))
+
+assay(xcms_p_dc_filt) <- as.data.frame(assay(xcms_p_dc_filt))
+
+xcms_p_dc_filt$samplename <- make.names(xcms_p_dc_filt$samplename)
+colnames(xcms_p_dc_filt) <- xcms_p_dc_filt$samplename
+
+rownames(data_table) <- paste0(params$data_type, ".", 
+                                rownames(data_table))
+
+rowData(xcms_p_dc_filt) <- cbind(rowData(xcms_p_dc_filt), 
+                                do.call(cbind, data_table))
+
+saveRDS(xcms_p_dc_filt,
+        paste0(params$output_results, "xcms_hermes_exp_gfcv.rds"))
 ```
 
 ### LIMA model analysis
@@ -266,7 +284,8 @@ pca_gr_dt <- gf_lima_meta[(gf_lima_meta$groups_m != params$blank_name) & (gf_lim
 
 meanSdPlot(x = assay(xcms_p_dc_filt), ranks = FALSE)
 dt_pca <- assay(pmp::mv_imputation(xcms_p_dc_filt, method = "knn", k = 10))
-dt_pca <- DESeq2::DESeqDataSetFromMatrix(round(dt_pca), colData = pca_gr_dt, design = ~ groups_m)
+dt_pca <- DESeq2::DESeqDataSetFromMatrix(round(dt_pca), colData = pca_gr_dt, 
+                                        design = ~ groups_m)
 
 dt_pca <- estimateSizeFactors(dt_pca)
 dt_pca <- estimateDispersions(dt_pca)
@@ -276,7 +295,8 @@ dt_pca <- varianceStabilizingTransformation(dt_pca, blind=FALSE)
 meanSdPlot(x = assay(dt_pca), ranks = FALSE)
 
 pca_dt <- prcomp(t(assay(dt_pca)), center = TRUE, scale. = TRUE)
-pca_plot(pca_dt, 1, 2, group_var = as.factor(pca_gr_dt$groups_m), level = 0.95, allElipse = FALSE)
+pca_plot(pca_dt, 1, 2, group_var = as.factor(pca_gr_dt$groups_m), 
+        level = 0.95, allElipse = FALSE)
 ```
 
 #### Anova analisis
@@ -285,10 +305,12 @@ pca_plot(pca_dt, 1, 2, group_var = as.factor(pca_gr_dt$groups_m), level = 0.95, 
 library(limma)
 lima_metadata <- gf_lima_meta_nb[!gf_lima_meta_nb$gfcv %in% c("G","C") & (gf_lima_meta_nb$groups_m != params$qc_name),]
 
-lima_metadata$group <- factor(lima_metadata$groups_m, levels = c("CNT", "HFD", "INT", "HFE"))
+lima_metadata$group <- factor(lima_metadata$groups_m, 
+                            levels = c("CNT", "HFD", "INT", "HFE"))
 lima_metadata
 
-comp_names <- apply(t(combn(levels(lima_metadata$group), m = 2))[,2:1], 1, paste, collapse = "-")
+comp_names <- apply(t(combn(levels(lima_metadata$group), m = 2))[,2:1], 1, 
+                    paste, collapse = "-")
 comp_matrix <- matrix(NA, nrow = length(comp_names), ncol = 4)
 rownames(comp_matrix) <- comp_names
 
@@ -338,10 +360,26 @@ feature_data$formula <- sapply(feature_data$formula, function(x){paste(x, collap
 
 data_table <- lapply(contrasts_results, function(ctrs){
     cbind(feature_data[, c("mzmed","rtmed", "PutativeMetabolites")], 
-                    feature_data[,c("formula","soi")], "p.value" = ctrs$pvalue,"adj.p.value" = ctrs$adj.p.value)
+                    feature_data[,c("formula","soi")], 
+        "p.value" = ctrs$pvalue, 
+        "adj.p.value" = ctrs$adj.p.value)
 })
 
-saveRDS(list("Contrasts_Results" = data_table, 
-            "qcrsc_corrected_data" = xcms_p_dc_filt),
-        paste0(params$output_results, "contrasts_results_anova_lima_list.rds"))
+assay(xcms_p_dc_filt) <- as.data.frame(assay(xcms_p_dc_filt))
+
+rownames(xcms_p_dc_filt) <- paste0(params$data_type, ".", rownames(xcms_p_dc_filt))
+xcms_p_dc_filt$group <- factor(xcms_p_dc_filt$groups_m, 
+                               levels = c("CNT", "HFD", "INT", "HFE"))
+xcms_p_dc_filt$samplename <- make.names(xcms_p_dc_filt$samplename)
+colnames(xcms_p_dc_filt) <- xcms_p_dc_filt$samplename
+
+rownames(data_table) <- paste0(params$data_type, ".", 
+                                rownames(data_table))
+
+rowData(xcms_p_dc_filt) <- cbind(rowData(xcms_p_dc_filt), 
+                                do.call(cbind, data_table))
+
+saveRDS(xcms_p_dc_filt,
+        paste0(params$output_results, "xcms_hermes_exp_lima.rds"))
 ```
+    

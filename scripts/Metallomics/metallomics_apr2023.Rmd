@@ -157,7 +157,8 @@ organ_results <- lapply(tukey_results, function(contrasts_results){
         })
         do.call(rbind, ctrs_result_list)
     })
-    names(contrasts_results) <- c("HFD-CNT", "INT-CNT", "HFE-CNT", "INT-HFD", "HFE-HFD", "HFE-INT")
+    names(contrasts_results) <- c("HFD-CNT", "INT-CNT", "HFE-CNT", 
+                                "INT-HFD", "HFE-HFD", "HFE-INT")
     contrasts_results
 })
 

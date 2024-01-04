@@ -212,6 +212,7 @@ annotate_data <- function(deseqRes, annotationPackage){
     annotated_data_frame <- cbind(deseqRes, entrez_ids, symbols, gene_name)
     return(annotated_data_frame)
 }
+
 enrich_filter <- function(dt_list){
     filtered_data <- lapply(dt_list, function(x){
         x$entrez_ids[!is.na(x$entrez_ids)]
