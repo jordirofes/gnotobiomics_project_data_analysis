@@ -24,6 +24,9 @@ library(sva)
 library(edgeR)
 library(IHW)
 library(biomaRt)
+library(plotly)
+library(ggplot2)
+
 source("../Utility_Functions/utilities.R")
 ```
 
@@ -475,17 +478,17 @@ gfcv_DESeq_results_complete <- lapply(gfcv_DESeq_results_complete, function(ctrs
 rowData(gfcv_80_exp) <- cbind(do.call(cbind, gfcv_DESeq_results), 
                               do.call(cbind, gfcv_DESeq_results_complete))
 
-gfcv_80_exp$gene_name <- mapIds(org.Mm.eg.db, keys = rownames(gfcv_80_exp), 
+rowData(gfcv_80_exp)$gene_name <- mapIds(org.Mm.eg.db, keys = rownames(gfcv_80_exp), 
                                     column = c("GENENAME"), 
                          keytype = "ENSEMBL", multiVals = "first")
-gfcv_80_exp$entrezID <- mapIds(org.Mm.eg.db, keys = rownames(gfcv_80_exp), 
+rowData(gfcv_80_exp)$entrezID <- mapIds(org.Mm.eg.db, keys = rownames(gfcv_80_exp), 
                                     column = c("ENTREZID"), 
                          keytype = "ENSEMBL", multiVals = "first")
-gfcv_80_exp$symbol <- mapIds(org.Mm.eg.db, keys = rownames(gfcv_80_exp), 
+rowData(gfcv_80_exp)$symbol <- mapIds(org.Mm.eg.db, keys = rownames(gfcv_80_exp), 
                                     column = c("SYMBOL"), 
                          keytype = "ENSEMBL", multiVals = "first")
-gfcv_80_exp$gene_lab <- ifelse(!is.na(gfcv_80_exp$gene_name),
-                                   gfcv_80_exp$gene_name, 
+rowData(gfcv_80_exp)$gene_lab <- ifelse(!is.na(rowData(gfcv_80_exp)$gene_name),
+                                   rowData(gfcv_80_exp)$gene_name, 
                                    rownames(gfcv_80_exp))
 
 saveRDS(gfcv_80_exp, paste0(params$output_dir, "RNA_Sequencing_exp_gfcv.rds"))

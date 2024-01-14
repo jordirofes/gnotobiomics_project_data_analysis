@@ -1,0 +1,312 @@
+---
+title: "Omic Results Processing"
+author: "Jordi Rofes Herrera"
+date: "2023-12-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Required packages
+
+```{r}
+library(MultiAssayExperiment)
+library(xcms)
+library(DESeq2)
+library(SummarizedExperiment)
+library(dplyr)
+library(vsn)
+library(compositions)
+library(ggplot2)
+library(plotly)
+library(impute)
+library(ggpubr)
+library(RColorBrewer)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(TreeSummarizedExperiment)
+library(mia)
+library(ape)
+library(sva)
+source("../Utility_Functions/utilities.R")
+```
+
+
+## Omics pre-processing
+
+```{r}
+output_dir <- "../../outputs/"
+
+if(!dir.exists(output_dir)){dir.create(output_dir)}
+
+omic_list <- list("16S_Metagenomics", "Histone_Modifications_Proteomics", 
+                  "Metallomics", "RNA_Sequencing", "Shotgun_Metagenomics", 
+                  "Targeted_Metabolomics", "Untargeted_Metabolomics", 
+                  "WGB_DNA_Methylation")
+script_list <- list.files("../", recursive = TRUE, full.names = TRUE)
+
+script_list <- lapply(omic_list, function(omic_name){
+    grep(omic_name, script_list, value = TRUE)
+})
+
+names(script_list) <- omic_list
+
+for(omic_name in names(script_list)){
+    if(!dir.exists(paste0(output_dir, "omic_name/"))){dir.create(paste0(output_dir, "omic_name/"))}
+
+    
+    script_paths <- script_list[[omic_name]]
+    
+    found_master <- grepl("master", x = script_paths, ignore.case = TRUE)
+    if(any(found_master)){
+        script_paths <- script_paths[grep("master", x = script_paths, ignore.case = TRUE)]
+    } else{
+        script_paths <- script_paths[grep("processing", x = script_paths, ignore.case = TRUE)]
+    }
+    param_list <- list(input_dir = paste0("../../inputs/", omic_name, "/"),
+                           output_dir = paste0("../../outputs/", omic_name, "/"))
+    
+    if(!file.exists(paste0(param_list$output_dir, omic_name, "_exp_gfcv.rds")) & 
+        !file.exists(paste0(param_list$output_dir, omic_name, "_exp_lima.rds"))){
+        for(script_i in script_paths){
+                xfun::Rscript_call(rmarkdown::render, 
+                    args = list(input = script_i, 
+                                output_file = paste0(param_list$output_dir,
+                                                     basename(script_i), ".html"), 
+                                params = param_list
+                            )
+                )    
+        }
+    }
+}
+```
+
+## Omic Merge
+
+```{r}
+multi_omic_dir <- paste0(output_dir, "Multi_Omics_Analysis/")
+
+if(dir.exists(multi_omic_dir)){dir.create(multi_omic_dir)}
+#### GFCV merge
+search_pattern <- "_exp_gfcv.rds"
+gfcv_exp_list <- lapply(omic_list, function(omic_id){
+    omic_output_dir <- paste0(output_dir, omic_id, "/")
+    
+    files_found <- list.files(path = omic_output_dir, pattern = search_pattern, full.names = TRUE)
+    files_name <- basename(gsub(search_pattern, "", files_found))
+    
+    files_load <- lapply(files_found, function(x){
+        readRDS(x)    
+    })
+    names(files_load) <- files_name
+    files_load
+})
+gfcv_exp_list <- unlist(unlist(unlist(gfcv_exp_list, recursive = FALSE), recursive = FALSE), recursive = FALSE)
+
+omics_metadata <- data.frame("samplename" = unique(unlist(lapply(gfcv_exp_list, colnames))))
+rownames(omics_metadata) <- omics_metadata$samplename
+
+omics_metadata$gfcv <- factor(substr(omics_metadata$samplename, 1, 1), levels = c("C", "G"))
+omics_metadata$sex <- factor(substr(omics_metadata$samplename, 2, 2), levels = c("M", "F"))
+omics_metadata$batch <- factor(substr(omics_metadata$samplename, 4, 4), levels = c("1", "2"))
+omics_metadata$group <- factor(paste0(omics_metadata$gfcv, ifelse(omics_metadata$gfcv == "C", "V", "F"), 
+                                      omics_metadata$sex), levels = c("CVM", "CVF", "GFM", "GFF"))
+
+ctrs_list <- apply(combn(levels(omics_metadata$group), 2), 2, function(x){
+    paste(x[2:1], collapse = "-")
+})
+ctrs_list
+
+gfcv_exp_list_proc <- lapply(names(gfcv_exp_list), function(mae_exp_name){
+    mae_exp <- gfcv_exp_list[[mae_exp_name]]
+    p_val_cols <- grep("adj.p.value", colnames(rowData(mae_exp)))
+    for(p_val_col in p_val_cols){
+        rowData(mae_exp)[[p_val_col]][is.na(rowData(mae_exp)[[p_val_col]])] <- 1   
+    }
+    
+    if(!grepl("RNA|Shotgun|16S", mae_exp_name)){
+        mod_mat <- model.matrix(~ group + 0, colData(mae_exp))
+        colnames(mod_mat) <- gsub("group", "", colnames(mod_mat))
+        
+        assay_dt <- assay(mae_exp)
+        assay_dt <- assay_dt + min(assay_dt[assay_dt != 0], na.rm = TRUE)/10
+        
+        fold_change_dt <- ProteoNet:::fold_change_calc(data = assay_dt, 
+                                     model_matrix = mod_mat, 
+                                     contrs = ctrs_list, log2_dt = FALSE, 
+                                     geometric_mean = TRUE)
+        colnames(fold_change_dt) <- paste0(colnames(fold_change_dt), ".log2FC")
+        colnames(fold_change_dt) <- gsub("-", "_", colnames(fold_change_dt))
+        rowData(mae_exp) <- cbind(rowData(mae_exp), fold_change_dt)
+    }
+    mae_exp
+})
+names(gfcv_exp_list_proc) <- names(gfcv_exp_list)
+
+gfcv_multi_exp <- MultiAssayExperiment(experiments = gfcv_exp_list_proc, 
+                                    colData = omics_metadata)
+
+saveRDS(gfcv_multi_exp, paste0(output_dir, "Multi_Omics_Analysis_exp_gfcv.rds"))
+
+#### LIMA merge
+search_pattern <- "_exp_lima.rds"
+lima_exp_list <- lapply(omic_list, function(omic_id){
+    
+    omic_output_dir <- paste0(output_dir, omic_id, "/")
+    
+    files_found <- list.files(path = omic_output_dir, pattern = search_pattern, 
+                                full.names = TRUE)
+    files_name <- basename(gsub(search_pattern, "", files_found))
+    
+    files_load <- lapply(files_found, function(x){
+        readRDS(x)    
+    })
+    names(files_load) <- files_name
+    files_load
+})
+
+lima_exp_list <- unlist(unlist(unlist(lima_exp_list, recursive = FALSE), 
+                                recursive = FALSE), recursive = FALSE)
+
+lima_exp_list <- lapply(lima_exp_list, function(omic_se){
+    if(any(colnames(omic_se) == "X686I")){
+        colnames(omic_se)[colnames(omic_se) == "X686I"] <- "X687I"
+    }
+    omic_se
+})
+
+omics_metadata <- data.frame("samplename" = unique(unlist(lapply(lima_exp_list, 
+                                                                    colnames))))
+rownames(omics_metadata) <- omics_metadata$samplename
+omics_metadata$group <- factor(substr(omics_metadata$samplename, 5, 5), 
+                               levels = c("C", "H", "I", "E"), 
+                               labels = c("CNT", "HFD", "INT", "HFE"))
+
+
+ctrs_list <- apply(combn(levels(omics_metadata$group), 2), 2, function(x){
+    paste(x[2:1], collapse = "-")
+})
+ctrs_list
+
+lima_exp_list_proc <- lapply(names(lima_exp_list), function(mae_exp_name){
+    mae_exp <- lima_exp_list[[mae_exp_name]]
+    p_val_cols <- grep("adj.p.value", colnames(rowData(mae_exp)))
+    for(p_val_col in p_val_cols){
+        rowData(mae_exp)[[p_val_col]][is.na(rowData(mae_exp)[[p_val_col]])] <- 1   
+    }
+    
+    if(!grepl("RNA|Shotgun|16S", mae_exp_name)){
+        mod_mat <- model.matrix(~ group + 0, colData(mae_exp))
+        colnames(mod_mat) <- gsub("group", "", colnames(mod_mat))
+        
+        assay_dt <- assay(mae_exp)
+        assay_dt <- assay_dt + min(assay_dt[assay_dt != 0], na.rm = TRUE)/10
+        
+        fold_change_dt <- ProteoNet:::fold_change_calc(data = assay_dt, 
+                                     model_matrix = mod_mat, 
+                                     contrs = ctrs_list, log2_dt = FALSE, 
+                                     geometric_mean = TRUE)
+        colnames(fold_change_dt) <- paste0(colnames(fold_change_dt), ".log2FC")
+        rowData(mae_exp) <- cbind(rowData(mae_exp), fold_change_dt)
+    }
+    mae_exp
+})
+names(lima_exp_list_proc) <- names(lima_exp_list)
+
+lima_multi_exp <- MultiAssayExperiment(experiments = lima_exp_list_proc, 
+                                    colData = omics_metadata)
+saveRDS(lima_multi_exp, paste0(output_dir, "Multi_Omics_Analysis_exp_lima.rds"))
+```
+
+
+### LIMA
+
+```{r}
+lapply(assays(lima_multi_exp), function(omic_dt){any(is.na(omic_dt))})
+
+proc_omics <- lapply(names(experiments(lima_multi_exp)), function(omic_name){
+    param_list <- list()
+    function_list <- list()
+    omic_proc <- experiments(lima_multi_exp)[[omic_name]]
+    if(grepl("DNA_Methylation", omic_name)){
+        function_list <- list(impute_knn_assay, scale_assay)
+    }
+    if(grepl("RNASeq", omic_name)){
+        function_list <- list(count_vst_deseq2, scale_assay)
+    }
+    if(grepl("Untargeted", omic_name)){
+        function_list <- list(impute_knn_assay, count_vst_deseq2, scale_assay)
+    }
+    if(grepl("Targeted", omic_name)){
+        function_list <- list(impute_knn_assay, scale_assay)
+    }
+    if(grepl("PTM", omic_name)){
+        function_list <- list(transformToMvalues, scale_assay)
+    }
+    if(grepl("16S|Shotgun_Metagenomics", omic_name)){
+        function_list <- list(clr_proc, scale_assay)
+    }
+    if(grepl("Metallomics", omic_name)){
+        function_list <- list(scale_assay)
+    }
+    
+    for(fun in function_list){
+        omic_proc <- do.call(fun, c(list("omic_dt" = omic_proc), 
+                                    param_list))
+    }
+    omic_proc
+})
+names(proc_omics) <- names(assays(lima_multi_exp))
+experiments(lima_multi_exp) <- ExperimentList(proc_omics)
+
+saveRDS(lima_multi_exp, paste0(output_dir, "Multi_Omics_Analysis_MA_exp_lima.rds"))
+```
+
+
+
+### GFCV
+
+```{r}
+## Data for VST
+lapply(assays(gfcv_multi_exp), function(omic_dt){any(is.na(omic_dt))})
+
+proc_omics <- lapply(names(experiments(gfcv_multi_exp)), function(omic_name){
+    param_list <- list()
+    function_list <- list()
+    omic_proc <- experiments(gfcv_multi_exp)[[omic_name]]
+    
+    if(grepl("RNASeq", omic_name)){
+        function_list <- list(count_vst_deseq2, ComBat_norm, scale_assay)
+    }
+    if(grepl("Untargeted", omic_name)){
+        function_list <- list(impute_knn_assay, count_vst_deseq2, 
+                                ComBat_norm, scale_assay)
+    }
+    if(grepl("Targeted", omic_name)){
+        function_list <- list(impute_knn_assay, ComBat_norm, scale_assay)
+    }
+    if(grepl("PTM", omic_name)){
+        function_list <- list(transformToMvalues, ComBat_norm, scale_assay)
+    }
+    if(grepl("16S|Shotgun", omic_name)){
+        function_list <- list(clr_proc, ComBat_norm, scale_assay)
+    }
+    if(grepl("Metallomics", omic_name)){
+        function_list <- list(ComBat_norm, scale_assay)
+    }
+    param_list$covariate <- "batch"
+    
+    for(fun in function_list){
+        omic_proc <- do.call(fun, c(list("omic_dt" = omic_proc), 
+                                    param_list))
+    }
+    omic_proc
+})
+names(proc_omics) <- names(assays(gfcv_multi_exp))
+experiments(gfcv_multi_exp) <- ExperimentList(proc_omics)
+
+saveRDS(gfcv_multi_exp, paste0(output_dir, "Multi_Omics_Analysis_MA_exp_gfcv.rds"))
+```
+

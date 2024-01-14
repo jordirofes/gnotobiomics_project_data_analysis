@@ -51,7 +51,7 @@ library(dplyr)
 library(matrixStats)
 library(params$annotation_genome, character.only = TRUE)
 library(params$organism_db, character.only = TRUE)
-source("../scripts/plot_functions.R")
+source("../WGB_DNA_Methylation/plot_functions.R")
 ```
 
 ```{r}

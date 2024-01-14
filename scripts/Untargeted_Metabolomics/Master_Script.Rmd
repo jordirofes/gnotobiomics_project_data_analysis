@@ -10,6 +10,7 @@ params:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+options(knitr.duplicate.label = "allow")
 ```
 
 ## Experiment Processing
@@ -31,12 +32,13 @@ for(id in column_ids){
     output_path <- paste0(hermes_results_path, id, "/")    
     if(!dir.exists(output_path)){dir.create(output_path)}
     
-    file_dir <- paste0(params$input_dir, id, "/Hermes_Files/")
+    file_dir <- paste0(params$input_dir, id, "/")
+    hermes_files <- paste0(file_dir, "Hermes_Files/")
     
     hermes_output_path <- paste0(output_path, "filteredSoiLists.rds") 
     ## HERMES Analysis
     if(!file.exists(hermes_output_path)){
-        param_list <- list(ms1_dir = file_dir, 
+        param_list <- list(ms1_dir = hermes_files, 
                             qc_names =  "QC", blank_names = "Blank",
                             met_db = db_path, met_db_sep = ",",
                             ppm_error = 10, instrument = "QTOF", resolution = 30000, 
@@ -60,7 +62,6 @@ for(id in column_ids){
     
     ## XCMS Analysis
     metadata_path <- paste0(file_dir, "LC_MS_metadata.csv")
-    
     xcms_hermes_output_path <- paste0(output_path, "summarized_hermes_xcms.rds")
     
     if(!file.exists(xcms_hermes_output_path)){
@@ -95,14 +96,14 @@ for(id in column_ids){
             param_list$blank_name <- "HN_Blank"
             param_list$data_type <- "Hilic_Negative"
         }, "RP_Positive" = {
-            param_list$qc_name <- "RP"
+            param_list$qc_name <- "RP_QC"
             param_list$blank_name <- "RP_Blank"
             param_list$data_type <- "RP_Positive"
         })
         
         rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", 
                       output_file = paste0(output_path, "xcms_hermes_results.html"), 
-                      clean = TRUE, params = param_list)
+                      clean = TRUE, params = param_list, envir = new.env())
     }
 
     gfcv_exp[[id]] <- readRDS(untargeted_gfcv_output)

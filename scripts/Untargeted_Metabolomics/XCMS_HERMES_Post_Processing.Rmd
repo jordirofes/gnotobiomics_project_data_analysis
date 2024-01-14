@@ -4,13 +4,13 @@ author: "Jordi Rofes Herrera"
 date: "27/3/2022"
 output: html_document
 params:
-    metadata_file: "./Hilic_Positive/LC_MS_metadata.csv"
-    xcms_hermes_file: "./Hermes_Results/Hilic_Positive/summarized_hermes_xcms.rds"
-    hermes_file: "./Hermes_Results/Hilic_Positive/filteredSoiLists.rds"
-    qc_name: "HP_QC"
-    blank_name: "HP_Blank"
-    output_results: "./Hermes_Results/Hilic_Positive/"
-    data_type: "HP Positive"
+    metadata_file: "../../inputs/Untargeted_Metabolomics/RP_Positive/LC_MS_metadata.csv"
+    xcms_hermes_file: "../../outputs/Untargeted_Metabolomics/Hermes_Results/RP_Positive/summarized_hermes_xcms.rds"
+    hermes_file: "../../outputs/Untargeted_Metabolomics/Hermes_Results/RP_Positive/filteredSoiLists.rds"
+    qc_name: "RP_QC"
+    blank_name: "RP_Blank"
+    output_results: "../../outputs/Untargeted_Metabolomics/Hermes_Results/RP_Positive/"
+    data_type: "RP_Positive"
 ---
 
 ```{r setup, include=FALSE}
@@ -124,7 +124,7 @@ xcms_p_dc_filt <- xcms_p_dc[,(gf_lima_meta_nb$gfcv != "") & (gf_lima_meta_nb$gro
 pca_gr_dt <- gf_lima_meta[(gf_lima_meta$groups_m != params$blank_name) & (gf_lima_meta$gfcv != "") & 
                                                              (gf_lima_meta$groups_m != params$qc_name),]
 
-write.csv(pca_gr_dt, file = paste0(params$output_results, "filtered_metadata.csv"), row.names = FALSE)
+# write.csv(pca_gr_dt, file = paste0(params$output_results, "filtered_metadata.csv"), row.names = FALSE)
 
 dt_pca <- assay(pmp::mv_imputation(xcms_p_dc_filt, method = "knn", k = 10))
 dt_pca <- DESeq2::DESeqDataSetFromMatrix(round(dt_pca), colData = pca_gr_dt, design = ~ batch + sex_m + gfcv)
@@ -265,8 +265,8 @@ assay(xcms_p_dc_filt) <- as.data.frame(assay(xcms_p_dc_filt))
 xcms_p_dc_filt$samplename <- make.names(xcms_p_dc_filt$samplename)
 colnames(xcms_p_dc_filt) <- xcms_p_dc_filt$samplename
 
-rownames(data_table) <- paste0(params$data_type, ".", 
-                                rownames(data_table))
+# rownames(data_table) <- paste0(params$data_type, ".", 
+#                                 rownames(data_table))
 
 rowData(xcms_p_dc_filt) <- cbind(rowData(xcms_p_dc_filt), 
                                 do.call(cbind, data_table))
@@ -368,13 +368,14 @@ data_table <- lapply(contrasts_results, function(ctrs){
 assay(xcms_p_dc_filt) <- as.data.frame(assay(xcms_p_dc_filt))
 
 rownames(xcms_p_dc_filt) <- paste0(params$data_type, ".", rownames(xcms_p_dc_filt))
+
 xcms_p_dc_filt$group <- factor(xcms_p_dc_filt$groups_m, 
                                levels = c("CNT", "HFD", "INT", "HFE"))
 xcms_p_dc_filt$samplename <- make.names(xcms_p_dc_filt$samplename)
 colnames(xcms_p_dc_filt) <- xcms_p_dc_filt$samplename
 
-rownames(data_table) <- paste0(params$data_type, ".", 
-                                rownames(data_table))
+# rownames(data_table) <- paste0(params$data_type, ".", 
+#                                 rownames(data_table))
 
 rowData(xcms_p_dc_filt) <- cbind(rowData(xcms_p_dc_filt), 
                                 do.call(cbind, data_table))

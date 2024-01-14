@@ -3,16 +3,17 @@ title: "DSS_analysis"
 output: html_document
 date: "2023-12-06"
 params: 
-  methrix_path: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/merged_methrix.rds"
-  output_dir: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/DSS.group.non_smoothed/"
+  methrix_path: "../../outputs/WGB_DNA_Methylation/GFCV/merged_methrix.rds"
+  output_dir: "../../outputs/WGB_DNA_Methylation/GFCV/DSS.group.non_smoothed/"
   
   dmrseq_results_path: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/dmrseq_results.group.non_smoothed/dmrseq_results_non_smoothed.group.rds"
   
-  chromosome_filter: !r NULL
-  outlier_samples: !r  c("X670E", "X594C")
+  chromosome_filter: !r c("chrX", "chrY")
+  outlier_samples: !r  NULL
   random_seed: 1234
   group_var: "group"
-  
+  covariates: !r NA
+      
   adj.p.value_thr: 0.05
   
   results_name: "non_smoothed"
@@ -67,13 +68,21 @@ dss_results_list_path <- paste0(params$output_dir, "dss_results_list_", params$r
 
 if(!file.exists(dss_results_list_path)){
   print("Calculating DSS models")
-  dss_formula <- as.formula(paste("~", params$group_var, "+ 0"))
+  dss_formula <- paste("~ ", params$group_var, "+ 0")
   
-  dss_results <- DSS::DMLfit.multiFactor(BSobj = methrix2bsseq(merged_methrix), colData(merged_methrix),
+  if(!is.na(params$covariates)){
+      dss_formula <- paste(dss_formula, paste("+", params$covariates))
+  }
+  dss_formula <- as.formula(dss_formula)
+  
+  dss_results <- DSS::DMLfit.multiFactor(BSobj = methrix2bsseq(merged_methrix), colData(merged_methrix), 
                                          formula = dss_formula, smoothing = params$smoothing)
 
+  saveRDS(dss_results, dss_results_path)
+  
   ctrs_vec <- combn(levels(merged_methrix[[params$group_var]]), 2, FUN = function(x){paste0(x[2:1], collapse = "-")})
   mod_mat <- model.matrix(dss_formula, colData(merged_methrix))
+  
   colnames(mod_mat) <- gsub(params$group_var, "", colnames(mod_mat))
 
   contrst_mat <- limma::makeContrasts(levels = mod_mat, contrasts = ctrs_vec)
@@ -85,7 +94,7 @@ if(!file.exists(dss_results_list_path)){
                                                                                 Contrast = ctrs_ids)
 
   }
-  saveRDS(dss_results, dss_results_path)
+  
   saveRDS(dss_results_list, dss_results_list_path)
 } else{
   dss_results_list <- readRDS(dss_results_list_path)

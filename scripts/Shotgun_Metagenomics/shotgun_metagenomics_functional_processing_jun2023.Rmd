@@ -16,6 +16,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(DESeq2)
+source("../Utility_Functions/utilities.R")
+library(ggplot2)
+library(plotly)
+library(mia)
 ```
 
 
@@ -111,7 +115,6 @@ stat_res <- lapply(names(organ_dt_list_proc), function(organ_name){
         #hierarchy <- as.data.frame(clr(t(hierarchy)))
         hierarchy <- as.data.frame(hierarchy)
         #pca(mat = hierarchy, metadata = organ_meta, scale = FALSE)
-        
         hierarchy_deseq <- DESeqDataSetFromMatrix(countData = hierarchy,
                                                   colData = hierarchy_meta, design = ~ group + 0)
         hierarchy_deseq <- DESeq(hierarchy_deseq, test = "Wald")
@@ -129,7 +132,8 @@ stat_res <- lapply(names(organ_dt_list_proc), function(organ_name){
         colnames(results_list) <- gsub("pvalue", "p.value", colnames(results_list))
         colnames(results_list) <- gsub("padj", "adj.p.value", colnames(results_list))
         
-        SummarizedExperiment(assays = hierarchy, rowData = results_list, colData = hierarchy_meta)
+        SummarizedExperiment(assays = list("counts" = hierarchy), 
+                             rowData = results_list, colData = hierarchy_meta)
     })
     names(organ_results) <- names(organ_data)
     organ_results
@@ -137,4 +141,85 @@ stat_res <- lapply(names(organ_dt_list_proc), function(organ_name){
 names(stat_res) <- names(organ_dt_list_proc)
 
 saveRDS(stat_res, paste0(params$output_dir, "Shotgun_Metagenomics_Functional_exp_lima.rds"))
+```
+
+
+##### PCA 
+
+```{r, message=FALSE}
+lapply(names(stat_res), function(organ_name){
+    organ <- stat_res[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = assay(hierarchy),
+                                      colData = colData(hierarchy),
+                                      design= ~ 0 + group)
+        vst_dt <- t(assay(varianceStabilizingTransformation(raw_lima_DESeq, blind = FALSE)))
+        vst_pca <- prcomp(vst_dt, scale. = FALSE)
+        
+        p1 <- pca_plot(pca_data = vst_pca, pc_x = 1, pc_y = 2, 
+                group_var = hierarchy$group, 
+                ellipse_var = hierarchy$group, allElipse = TRUE, interactive = FALSE) + 
+            ggtitle(paste(organ_name, hierarchy_name, "PCA"))
+        print(p1)
+        # pcvar <- round(vst_pca$sdev^2/sum(vst_pca$sdev^2)*100, 2)
+        # 
+        # d3plot <- plot_ly(x = vst_pca$x[,1], y = vst_pca$x[,2], z = vst_pca$x[,3], color = myGFCVfactors$group)
+        # d3plot <- d3plot %>% add_markers()
+        # d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
+        #                      yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
+        #                      zaxis = list(title = paste0('PC3', "(", pcvar[3], "%)"))))
+        # d3plot
+        return(NULL)
+    })
+})
+```
+
+### PCA clr
+
+```{r, message=FALSE}
+lapply(names(stat_res), function(organ_name){
+    organ <- stat_res[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        # raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = assay(hierarchy),
+        #                               colData = colData(hierarchy),
+        #                               design= ~ 0 + group)
+        vst_dt <- t(assay(transformAssay(hierarchy, assay.type = "counts", 
+                                         method = "rclr"), "rclr"))
+        vst_pca <- prcomp(vst_dt, scale. = FALSE)
+        
+        p1 <- pca_plot(pca_data = vst_pca, pc_x = 1, pc_y = 2, 
+                group_var = hierarchy$group, 
+                ellipse_var = hierarchy$group, allElipse = TRUE, interactive = FALSE) + 
+            ggtitle(paste(organ_name, hierarchy_name, "PCA"))
+        print(p1)
+        # pcvar <- round(vst_pca$sdev^2/sum(vst_pca$sdev^2)*100, 2)
+        # 
+        # d3plot <- plot_ly(x = vst_pca$x[,1], y = vst_pca$x[,2], z = vst_pca$x[,3], color = myGFCVfactors$group)
+        # d3plot <- d3plot %>% add_markers()
+        # d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
+        #                      yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
+        #                      zaxis = list(title = paste0('PC3', "(", pcvar[3], "%)"))))
+        # d3plot
+        return(NULL)
+    })
+})
+```
+
+##### Alpha diversities (Shannon Index)
+
+```{r}
+lapply(names(stat_res), function(organ_names){
+    organ <- stat_res[[organ_names]]
+    lapply(names(organ), function(hierarchy_names){
+        hierarchy <- organ[[hierarchy_names]]
+        group_var <- hierarchy$group
+    
+        alpha_div <- vegan::diversity(x = assay(hierarchy), index = "shannon", MARGIN = 2)
+        
+        boxplot(alpha_div ~ group_var, main = paste(organ_names, hierarchy_names, sep = "_"), 
+                xlab = "Group", ylab = "Shannon Index")
+    })
+})
 ```
