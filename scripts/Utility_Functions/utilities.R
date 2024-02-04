@@ -117,7 +117,6 @@ heatMapFun <- function(dt_list, metadata, stratificationVar, cdQuantile = 0,
     }
     
     plot_colors <- viridis::viridis(n = length(dt_quantiles) - 1)
-
     cat("\n")
     pheatmap::pheatmap(dt_merged[,sel_vars], color = plot_colors,
                        annotation_row = as.data.frame(group_var), 
@@ -220,16 +219,30 @@ enrich_filter <- function(dt_list){
     return(filtered_data)
 }
 
-multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db", keyType = keyType, 
-                        qvalueCutoff = 0.01, pAdjustMthd = "BH", pvalueCutoff = 0.01, 
-                        simplify_res = FALSE, simplify_cutoff = 0.6,
-                        enrichFun = c("ora", "gsea", "kegg", "wp", "david", "msigdbrORA", "msigdbrGSEA"), 
-                        keggOrg, keggKeyType, davidOrg, wpOrg, msigdbCategory, msigdbSpc, ...){
-   
+multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db", 
+                        keyType = keyType, qvalueCutoff = 0.01, 
+                        pAdjustMthd = "BH", pvalueCutoff = 0.01, 
+                        simplify_res = FALSE, simplify_cutoff = 0.6, 
+                        simplify_col = "p.adjust", simplify_fun = min,
+                        enrichFun = c("ora", "gsea", "kegg", "wp", 
+                                      "david", "msigdbrORA", "gseKegg", 
+                                      "gseWp", "msigdbrGSEA"), 
+                        keggOrg, keggKeyType, davidOrg, wpOrg, 
+                        msigdbCategory, msigdbSpc, ...){
     
     if(!is(enrichFun, "function")){
         enrichFun <- match.arg(enrichFun)
-        
+        enrich_fun <- switch (enrichFun,
+                              "ora" = enrichGO,
+                              "gsea" = gseGO,
+                              "kegg" = enrichKEGG,
+                              "gseKegg" = gseKEGG,
+                              "gseWp" = gseWP,
+                              "wp" = enrichWP,
+                              "david" = enrichDAVID,
+                              "msigdbrORA" = enricher,
+                              "msigdbrGSEA" = GSEA
+        )
         switch(enrichFun, "ora" = {
             param_list <- list(keyType = keyType, OrgDb = OrgDb, 
                                pAdjustMethod = pAdjustMthd, 
@@ -288,6 +301,9 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db", keyTyp
                                     multiVals = "first")
             C3_t2g <- msigdbr(species = msigdbSpc, category = msigdbCategory) %>% 
                             dplyr::select(gs_name, entrez_gene)
+            
+            enrichFun <- paste0(enrichFun, "_", msigdbCategory)
+            
             param_list$TERM2GENE <- C3_t2g
             gene_input_name <- "gene"
             simplify_res <- FALSE
@@ -297,6 +313,8 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db", keyTyp
                                pvalueCutoff = pvalueCutoff)
             C3_t2g <- msigdbr(species = msigdbSpc, category = msigdbCategory) %>% 
                             dplyr::select(gs_name, entrez_gene)
+            
+            enrichFun <- paste0(enrichFun, "_", msigdbCategory)
             
             dt_to_pathway <- lapply(dt_to_pathway, function(x){
                 names(x) <- mapIds(x = OrgDb, keys = names(x),
@@ -311,19 +329,47 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db", keyTyp
             dt_to_pathway <- lapply(dt_to_pathway, sort, decreasing = TRUE)
             simplify_res <- FALSE
 
+        }, 
+        "gseWp" = {
+            param_list <- list(pAdjustMethod = pAdjustMthd, 
+                               pvalueCutoff = pvalueCutoff)
+            wpOrg <- match.arg(wpOrg, get_wp_organisms())
+            param_list$organism <- wpOrg
+            dt_to_pathway <- lapply(dt_to_pathway, function(x){
+                names(x) <- mapIds(x = OrgDb, column = "ENTREZID", 
+                                    keys = names(x), keytype = keyType, 
+                                    multiVals = "first")
+                x
+            })
+            dt_to_pathway <- lapply(dt_to_pathway, sort, decreasing = TRUE)
+            
+            gene_input_name <- "geneList"
+            simplify_res <- FALSE
+            
+        }, 
+        "gseKegg" = {
+            param_list <- list(keyType = keggKeyType,
+                               pAdjustMethod = pAdjustMthd, 
+                               pvalueCutoff = pvalueCutoff)
+            
+            gene_input_name <- "geneList"
+            dt_to_pathway <- lapply(dt_to_pathway, function(x){
+                names(x) <- mapIds(x = OrgDb, column = "ENTREZID", 
+                                    keys = names(x), keytype = keyType, 
+                                    multiVals = "first")
+                x
+            })
+            dt_to_pathway <- lapply(dt_to_pathway, sort, decreasing = TRUE)
+            
+            param_list$organism <- keggOrg
+            
+            param_list$universe <- universe
+            simplify_res <- FALSE
         })
-        enrich_fun <- switch (enrichFun,
-            "ora" = enrichGO,
-            "gsea" = gseGO,
-            "kegg" = enrichKEGG,
-            "wp" = enrichWP,
-            "david" = enrichDAVID,
-            "msigdbrORA" = enricher,
-            "msigdbrGSEA" = GSEA
-        )
+        
     }
     enrich_data <- list()
-    for(i in 1:length(dt_to_pathway)){
+    for(i in seq_along(dt_to_pathway)){
         
         param_list[[gene_input_name]] <- dt_to_pathway[[i]]
         
@@ -341,7 +387,8 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db", keyTyp
             enrich_data[[i]] <- list("BP" = gohyperBP,"CC" = gohyperCC,"MF" = gohyperMF)    
         } else{
             enrichRes <- do.call(enrich_fun, param_list)
-            enrich_data[[i]] <- list(enrichFun = enrichRes)
+            enrich_data[[i]] <- list(enrichRes)
+            names(enrich_data[[i]]) <- enrichFun
         }
         
         names(enrich_data)[i] <- comparison
@@ -351,26 +398,26 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db", keyTyp
         }
     }
     
-    
     return(enrich_data)
 }
 
 
 
-enrich_plots <- function(enrich_data, fold_change_list = NULL, node_label = "category"){
+enrich_plots <- function(enrich_data, fold_change_list = NULL, 
+                         node_label = "category", legend_name = "Fold Change (log2)"){
     enrich_plots_res <- lapply(seq_along(enrich_data), function(path_data_id){
-        
         path_data <- enrich_data[[path_data_id]]
         fold_change_dt <- fold_change_list[[path_data_id]]
-        
         enrich_plot <- lapply(path_data, function(component){
             if(is.null(component)){return(NA)}
             if(nrow(as.data.frame(component)) == 0){return(NA)}
-            dot_plot <- dotplot(component, showCategory = 30, font.size = 8)
-            network_plot <- cnetplot(component, 
+            dot_plot <- enrichplot::dotplot(component, showCategory = 30, 
+                                            font.size = 8)
+            network_plot <- enrichplot::cnetplot(component, 
                 categorySize = "geneNum", foldChange = fold_change_dt, 
                 showCategory = 15, node_label= node_label, 
-                cex.params = list(category_label = 0.4))
+                cex.params = list(category_label = 0.4)) + 
+                guides(colour=guide_colorbar(title = legend_name))
             return(list(dot_plot, network_plot))
         })
         return(enrich_plot)
@@ -387,10 +434,11 @@ enrich_chunks <- function(enrichData_all, enrich_plot_data){
             dt_to_table <- as.data.frame(enrichData_all[[i]][[z]])
             num_vars <- sapply(dt_to_table, is.numeric)
             
-            cat("#####", names(enrichData_all[[i]])[z], "\n")
+            cat("#####", names(enrichData_all[[i]])[z], " {.tabset} \n")
             if(!any(is.na(enrich_plot_data[[i]][[z]]))){
-                knit_print(enrich_plot_data[[i]][[z]][[1]])
-                knit_print(enrich_plot_data[[i]][[z]][[2]])
+                # knit_print(enrich_plot_data[[i]][[z]][[1]])
+                # knit_print(enrich_plot_data[[i]][[z]][[2]])
+                lapply(enrich_plot_data[[i]][[z]], knit_print)
             }
             cat(knit_print( datatable(dt_to_table,
                                       options = list(scrollX = TRUE, pageLength = 5
@@ -400,6 +448,16 @@ enrich_chunks <- function(enrichData_all, enrich_plot_data){
         }
     }
 }
+
+calculate_enrich_fc <- function(enrich_table){
+    g_ratio <- enrich_table@result$GeneRatio
+    b_ratio <- enrich_table@result$BgRatio
+    
+    g_ratio <- sapply(g_ratio, function(x){eval(parse(text = x))})
+    b_ratio <- sapply(b_ratio, function(x){eval(parse(text = x))})
+    return(g_ratio/b_ratio)
+}
+
 
 ### Annotation Plot
 

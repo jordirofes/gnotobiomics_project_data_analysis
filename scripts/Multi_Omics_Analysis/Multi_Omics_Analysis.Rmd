@@ -2,6 +2,9 @@
 title: "Multi_Omics_Analysis"
 output: html_document
 date: "2023-05-13"
+params:
+    input_dir: "../../inputs/"
+    output_dir: "../../outputs/Multi_Omics_Analysis/"
 ---
 
 ```{r setup, include=FALSE}
@@ -22,49 +25,19 @@ library(rGREAT)
 library(msigdbr)
 library(DT)
 library(TxDb.Mmusculus.UCSC.mm39.refGene)
-source("../../Utility Functions/utilities.R")
+source("../Utility_Functions/utilities.R")
 library(TreeSummarizedExperiment)
+library(GGally)
 ```
 
 ## Loaded matrices
 
 ```{r}
-multi_omics_raw <- readRDS("./Merged_Multi_Omics.rds")
-multi_omics <- readRDS("./Multivariate_Merged_Multi_Omics.rds")
+multi_omics_raw <- readRDS(paste0(params$output_dir, "Multi_Omics_Analysis_exp_lima.rds"))
+multi_omics <- readRDS(paste0(params$output_dir, "Multi_Omics_Analysis_MA_exp_lima.rds"))
 names(experiments(multi_omics))
 
 filter_list <- c("16S", "Shotgun.cecum", "Shotgun.colon")
-
-# selected_omics <- lapply(filter_list, function(dt_name){
-#     omic_dt_names <- grep(dt_name, names(experiments(multi_omics)))
-#     omic_exp_list <- experiments(multi_omics[,,omic_dt_names])
-#     
-#     sig_vars_num <- sapply(omic_exp_list, function(omic_exp){
-#         var_dt <- rowData(omic_exp)
-#         p_val_dt <- var_dt[,grep("adj.p.value", colnames(var_dt))]
-#         sig_vars <- apply(p_val_dt, 1, function(p_vals){
-#             any(p_vals <= 0.05, na.rm = TRUE)
-#         })
-#         sum(unlist(sig_vars))
-#     })
-#     sig_vars_num
-# })
-# names(selected_omics) <- filter_list
-# 
-# a <- do.call(cbind, selected_omics)
-
-# selected_omics <- lapply(filter_list, function(dt_name){
-#     omic_dt_names <- grep(dt_name, names(experiments(multi_omics)))
-#     omic_exp_list <- experiments(multi_omics[,,omic_dt_names])
-#     
-#     sig_vars_num <- sapply(omic_exp_list, function(omic_exp){
-#         nrow(omic_exp)
-#     })
-#     sig_vars_num
-# })
-# names(selected_omics) <- filter_list
-# 
-# b <- do.call(cbind, selected_omics)
 ```
 
 ## Preparing the omics matrices 
@@ -73,173 +46,303 @@ filter_list <- c("16S", "Shotgun.cecum", "Shotgun.colon")
 multi_omics_names <- names(experiments(multi_omics))
 
 multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S|unsupervised", multi_omics_names)]
+
+# multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S|unsupervised|Targeted|Metallomics|Histone", multi_omics_names)]
+
 # multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("genus", multi_omics_names)])
-multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("specie", multi_omics_names)])
+multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("Species|metaerg_kegg|cogs", multi_omics_names)])
+# |EC|metaer_kegg|cogs
+multi_omics_selected
+```
+
+
+
+
+```{r}
+# CV filter criteria
+#
+# filtered_exps <- lapply(names(multi_omics), function(multi_omics_names){
+#     multi_omics_exp <- experiments(multi_omics)[[multi_omics_names]]
+# 
+#     if(grepl("RNA_Seq|DNA|Untargeted", multi_omics_names)){
+#         if(grepl("RNA_Seq", multi_omics_names)){
+#             cd_thr <- 0.0
+#         } else if(grepl("unsupervised", multi_omics_names)){
+#             cd_thr <- 0.99
+#         } else if(grepl("DNA", multi_omics_names)){
+#             cd_thr <- 0
+#         } else{
+#             cd_thr <- 0
+#         }
+#         var_cd <- apply(assay(multi_omics_exp), 1, function(var_dt){
+#             sd(var_dt, na.rm = TRUE)/mean(var_dt, na.rm = TRUE)
+#         })
+#         multi_omics_exp <- multi_omics_exp[names(var_cd)[var_cd >= quantile(var_cd, cd_thr)],]
+#     }
+#     multi_omics_exp
+# })
+# names(filtered_exps) <- names(multi_omics)
+# experiments(multi_omics) <- ExperimentList(filtered_exps)
 ```
 
 ```{r}
 filtered_exps <- lapply(names(multi_omics), function(multi_omics_names){
     multi_omics_exp <- experiments(multi_omics)[[multi_omics_names]]
+    p_val_dt <- rowData(multi_omics_exp)[,grepl("adj.p.value", colnames(rowData(multi_omics_exp)))]
 
-    if(grepl("RNASeq|DNA|Untargeted", multi_omics_names)){
-        if(grepl("RNASeq", multi_omics_names)){
-            cd_thr <- 0.85
-        } else if(grepl("unsupervised", multi_omics_names)){
-            cd_thr <- 0.99
-        } else if(grepl("DNA", multi_omics_names)){
-            cd_thr <- 0.5
-        } else{
-            cd_thr <- 0
-        }
-        var_cd <- apply(assay(multi_omics_exp), 1, function(var_dt){
-            sd(var_dt, na.rm = TRUE)/mean(var_dt, na.rm = TRUE)
-        })
-        multi_omics_exp <- multi_omics_exp[names(var_cd)[var_cd >= quantile(var_cd, cd_thr)],]
-    }
+    multi_omics_exp <- multi_omics_exp[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
     multi_omics_exp
 })
 names(filtered_exps) <- names(multi_omics)
 experiments(multi_omics) <- ExperimentList(filtered_exps)
 ```
 
-```{r}
-multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = multi_omics)
-plot_data_overview(multi_omics_mofa)
-```
-
-X642C / X652C
+## Run MOFA2
 
 ```{r}
-multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = multi_omics[,,multi_omics_selected])
-plot_data_overview(multi_omics_mofa)
-```
+num_factors <- 3
 
-## Parameters
+# param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
+#     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
+#     multi_omics_exp = multi_omics[,,multi_omics_selected],
+#     group_var = "group",
+#     num_factors = num_factors,
+#     results_name = "specie_metaerg_pathway_mofa",
+#     color_vec = c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
+# )
+# # c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
+# xfun::Rscript_call(rmarkdown::render,
+#                     args = list(input = "./MOFA_Models.Rmd",
+#                                 output_file = paste0(param_list$output_dir,
+#                                                      param_list$results_name, ".html"),
+#                                 params = param_list
+#                             )
+#                     )
 
-```{r}
-data_opts <- get_default_data_options(multi_omics_mofa)
-head(data_opts)
+# & !multi_omics$samplename %in% c("X643C", "X644C", "X658C")
 
-model_opts <- get_default_model_options(multi_omics_mofa)
-head(model_opts)
-model_opts$num_factors <- 8
-
-train_opts <- get_default_training_options(multi_omics_mofa)
-head(train_opts)
-```
-
-## LIMA model {.tabset}
-
-```{r}
-multi_omics_mofa <- prepare_mofa(
-  object = multi_omics_mofa,
-  data_options = data_opts,
-  model_options = model_opts,
-  training_options = train_opts
+param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
+    output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
+    multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE", multi_omics_selected],
+    group_var = "group",
+    num_factors = num_factors,
+    results_name = "any_sig_005_mofa_int",
+    color_vec = c("CNT"="black", "HFD"="red", "INT"="blue")
 )
+# c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
+xfun::Rscript_call(rmarkdown::render,
+                    args = list(input = "./MOFA_Models.Rmd", 
+                                output_file = paste0(param_list$output_dir,
+                                                     param_list$results_name, ".html"), 
+                                params = param_list
+                            )
+                    )
 
-outfile <- file.path(getwd(),"model.hdf5")
-multi_omics_mofa <- run_mofa(multi_omics_mofa, outfile, use_basilisk = TRUE)
-
+# param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
+#     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
+#     multi_omics_exp = multi_omics[,colData(multi_omics)$group != "INT" & !multi_omics$samplename %in% c("X643C", "X644C", "X658C"),multi_omics_selected],
+#     group_var = "group",
+#     num_factors = num_factors,
+#     results_name = "specie_metaerg_pathway_any_sig_mofa_hfe",
+#     color_vec = c("CNT"="black", "HFD"="red", "HFE"="green")
+# )
+# # c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
+# xfun::Rscript_call(rmarkdown::render,
+#                     args = list(input = "./MOFA_Models.Rmd", 
+#                                 output_file = paste0(param_list$output_dir,
+#                                                      param_list$results_name, ".html"), 
+#                                 params = param_list
+#                             )
+#                     )
 ```
 
-### Downstream Analysis
+
+
 
 ```{r}
-# file_path <- "./model.hdf5"
-# model <- load_model(file_path)
-colData(multi_omics)$sample <- colData(multi_omics)$samplename
+# param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
+#     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
+#     multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE"],
+#     group_var = "group",
+#     num_factors = num_factors,
+#     results_name = "mofa_int",
+#     color_vec = c("CNT"="black", "HFD"="red", "INT"="blue")
+# )
+# # c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
+# xfun::Rscript_call(rmarkdown::render,
+#                     args = list(input = "./MOFA_Models.Rmd", 
+#                                 output_file = paste0(param_list$output_dir,
+#                                                      param_list$results_name, ".html"), 
+#                                 params = param_list
+#                             )
+#                     )
 
-samples_metadata(multi_omics_mofa) <- left_join(samples_metadata(multi_omics_mofa), as.data.frame(colData(multi_omics)), by = "sample")
-
-plot_variance_explained(multi_omics_mofa) + theme(axis.text.x = element_text(angle = 90))
-
-p <- plot_factor(multi_omics_mofa, group_by = "group.y", factors = 1:5, 
-                 color_by = "group.y", 
-                 add_violin = TRUE)
-
-p <- p + 
-  scale_color_manual(values=c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")) +
-  scale_fill_manual(values=c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green"))
-print(p)
-```
-
-```{r, fig.height=12, fig.width=12}
-plot_factors(multi_omics_mofa, 
-  factors = 1:6,
-  color_by = "group.y"
+param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
+    output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
+    multi_omics_exp = multi_omics[,colData(multi_omics)$group != "INT"],
+    group_var = "group",
+    num_factors = num_factors,
+    results_name = "mofa_hfe",
+    color_vec = c("CNT"="black", "HFD"="red", "HFE"="green")
 )
+# c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
+xfun::Rscript_call(rmarkdown::render,
+                    args = list(input = "./MOFA_Models.Rmd", 
+                                output_file = paste0(param_list$output_dir,
+                                                     param_list$results_name, ".html"), 
+                                params = param_list
+                            )
+                    )
 ```
 
+
+
+
 ```{r}
-pca_dt <- MOFA2::get_factors(object = multi_omics_mofa, factors = 1:3)
+mice_dt <- openxlsx::read.xlsx(paste0(params$input_dir, "AnimalData_OscarYanes.xlsx"))
 
-MOFA2::get_variance_explained(object = multi_omics_mofa, factors = 1:3)
+# mice_num <- mice_dt[,c("BW(g)", "WATep(g)", "Liver(g)")]
+mice_num <- mice_dt
+mice_s <- as.data.frame(mice_num)
 
-library(plotly)
+dict_vect <- c("Ctrl" = "CNT", "Ctrl ext" = "CNT", "HFD" = "HFD", "INT2" = "INT", "HFD excl." = "HFE")
+mice_s$group <- factor(dict_vect[mice_dt$Group], levels = c("CNT", "HFD", "INT", "HFE"))
 
-d3plot <- plot_ly(x = pca_dt$group1[,1], y = pca_dt$group1[,2], z = pca_dt$group1[,3], color = multi_omics_mofa@samples_metadata$group.y)
+dict_vect_g <- c("CNT" = "C", "HFD" = "H", "INT" = "I", "HFE" = "E")
+
+mice_s$samplename <- paste0(make.names(mice_dt$ID), dict_vect_g[mice_s$group])
+
+
+mice_s$samplename[!mice_s$samplename %in% multi_omics$samplename]
+multi_omics$samplename[!multi_omics$samplename %in% mice_s$samplename]
+
+mice_s$samplename[mice_s$samplename == "X686I"] <- "X687I"
+
+mice_s <- dplyr::left_join(as.data.frame(colData(multi_omics)), mice_s, by = "samplename")
+mice_s
+```
+
+
+```{r}
+d3plot <- plot_ly(x = mice_s$`BW(g)`, y = mice_s$`WATep(g)`, z = mice_s$`Liver(g)`,
+                    color = as.factor(mice_s$Sacrifice))
 d3plot <- d3plot %>% add_markers()
-# d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
-#                      yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
-#                      zaxis = list(title = paste0('PC4', "(", pcvar[4], "%)"))))
+d3plot <- d3plot %>% layout(scene = list(
+    xaxis = list(title = "BW (g)"),
+    yaxis = list(title = "WATep (g)"),
+    zaxis = list(title = "Liver (g)")))
 d3plot
 ```
 
-
-
 ```{r}
-weight_dt <- get_weights(object = multi_omics_mofa, factors = 2, as.data.frame = TRUE)
+factor_dt <- readRDS(paste0(params$output_dir, "/MOFA_Results/specie_metaerg_pathway_any_sig_mofa_int/factor_data.rds"))
+
+mice_sub <- mice_s[mice_s$group.x != "HFE",]
+
+all(names(factor_dt$group1[,3]) == mice_sub$samplename)
+
+cor(mice_sub$`BW(g)`, factor_dt$group1[,3])
+cor(mice_sub$`WATep(g)`, factor_dt$group1[,3])
+cor(mice_sub$`Liver(g)`, factor_dt$group1[,3])
+
+
+ctr_sub <- mice_sub[mice_sub$group.x == "CNT",]
+ctr_fact <- factor_dt$group1[mice_sub$group.x == "CNT",]
+
+cor(ctr_sub$`BW(g)`, ctr_fact[,3])
+cor(ctr_sub$`WATep(g)`, ctr_fact[,3])
+cor(ctr_sub$`Liver(g)`, ctr_fact[,3])
+
+plot(ctr_sub$`BW(g)`, ctr_fact[,3])
+plot(ctr_sub$`WATep(g)`, ctr_fact[,3])
+plot(ctr_sub$`Liver(g)`, ctr_fact[,3])
+
+
 ```
 
+
+### ORA analysis {.tabset}
+
 ```{r}
-factor_ids <- c(1,2,3,4,5)
-output_dir <- "D:/Jordi/Doctorat/GNOTOBIOMICS/Data_Analysis/Multi_Omics_Analysis/Results/MOFA2_Results/"
-
-var_exp_dt <- MOFA2::get_variance_explained(multi_omics_mofa)[[2]][[1]]/100
-
-keep_var_list <- list()
-
-for(id in factor_ids){
+output_dir <- paste0(params$output_dir, "MOFA_Results/any_sig_005_mofa_int/")
+omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
+rna_seq_rd <- rowData(experiments(omic_dt)$RNA_Sequencing)
     
-    keep_var_list[id] <- list(c())
-    
-    weight_dt <- get_weights(multi_omics_mofa, factors = id)
+rna_seq_list <- lapply(seq_len(num_factors), function(factor_id){
+    list("All_Weights" = rna_seq_rd,
+        "Positive_Weights" = rna_seq_rd[rna_seq_rd[[paste0("Factor_", factor_id, "_weights")]] >= 0,],
+        "Negative_Weights" = rna_seq_rd[rna_seq_rd[[paste0("Factor_", factor_id, "_weights")]] < 0,])
+})
+names(rna_seq_list) <- paste0("Factor_", seq_len(num_factors))
 
-    pdf(paste0(output_dir, "factor_", id, "_top_variable_heatmaps.pdf"))
-    for(view_id in MOFA2::views_names(multi_omics_mofa)){
-        exp_dt <- MOFA2::get_data(multi_omics_mofa, views = view_id)[[1]][[1]]
-        exp_metadata <- MOFA2::samples_metadata(multi_omics_mofa)
-        
-        feature_n_percent <- var_exp_dt[id,view_id]
-        feature_n <- ceiling(max(min(nrow(exp_dt)*feature_n_percent, 2000), 2))
-        factor_weight_dt <- weight_dt[[view_id]]
-        
-        # hist(abs(factor_weight_dt[,1]))
-        # sum(abs(factor_weight_dt[,1]) > 1)
-        # 
-        samples_found <- !matrixStats::colAlls(x = exp_dt, value = NA)
-        rownames(exp_metadata) <- exp_metadata$samplename
-        
-        keep_vars <- rownames(factor_weight_dt)[order(abs(factor_weight_dt[,1]), decreasing = TRUE)][seq_len(feature_n)]
-        
-        keep_var_list[[id]] <- c(keep_var_list[[id]], gsub(paste0("_", view_id), "", keep_vars)) 
-                                 
-        heatMapFun(exp_dt[keep_vars,samples_found], metadata = exp_metadata[samples_found,], stratificationVar = "group.y", 
-                cdQuantile = 0, 
-                plot_name = paste(view_id, "Top", feature_n, "Variables in factor", id, "(By absolute weight)"), 
-                show_colnames = ifelse(length(keep_vars) >= 100, FALSE, TRUE), show_rownames = TRUE,
-                clustering_distance_rows = "euclidean")
-        
-    }
-    dev.off()
+for(rna_seq_name in names(rna_seq_list)){
+    
+    rna_seq_exp <- rna_seq_list[[rna_seq_name]]
+    
+    gsea_cols_list <- lapply(names(rna_seq_exp), function(x){paste0(rna_seq_name, "_weights")})
+    names(gsea_cols_list) <- names(rna_seq_exp)
+    
+    param_list <- list(
+        output_dir = output_dir,
+        exp_list = rna_seq_exp,
+        gsea_cols_list = gsea_cols_list,
+        gsea = TRUE,
+        ora_filter = parse(text = paste0(rna_seq_name, "_weights_sig")),
+        order_column = paste0(rna_seq_name, "_weights"),
+        results_name = rna_seq_name,
+        legend_name = paste0(rna_seq_name, "_weights")
+    )
+    xfun::Rscript_call(rmarkdown::render,
+                        args = list(input = "./RNA_Sequencing_Enrichments.Rmd", 
+                                    output_file = paste0(param_list$output_dir, 
+                                                         "RNA_Sequencing_Enrichment_",
+                                                         rna_seq_name, ".html"), 
+                                    params = param_list
+                                )
+                        )
 }
-
 ```
 
+### rGREAT Enrichment & Region Analysis {.tabset}
+
+```{r}
+dna_met_list <- lapply(seq_len(num_factors), function(factor_id){
+    dna_met_dt <- experiments(omic_dt)$WGB_DNA_Methylation
+    list("All_Weights" = dna_met_dt,
+        "Positive_Weights" = dna_met_dt[rowData(dna_met_dt)[[paste0("Factor_", factor_id, "_weights")]] >= 0,],
+        "Negative_Weights" = dna_met_dt[rowData(dna_met_dt)[[paste0("Factor_", factor_id, "_weights")]] < 0,])
+})
+
+names(dna_met_list) <- paste0("Factor_", seq_len(num_factors))
 
 
-### GREAT Enrichment & Region Analysis {.tabset}
+for(dna_seq_name in names(dna_met_list)){
+    
+    dna_seq_exp <- dna_met_list[[dna_seq_name]]
+    
+    gsea_cols_list <- lapply(names(dna_seq_exp), function(x){paste0(dna_seq_name, "_weights")})
+    names(gsea_cols_list) <- names(dna_seq_exp)
+    
+    param_list <- list(
+        dmr_exp_list = dna_seq_exp,
+        txdb_id = "TxDb.Mmusculus.UCSC.mm39.refGene",
+        msigdbr_specie = "Mus musculus",
+        ora_filter = parse(text = paste0(dna_seq_name, "_weights_sig")),
+        random_seed = 1234,
+        output_dir = output_dir,
+        results_name = dna_seq_name
+    )
+    xfun::Rscript_call(rmarkdown::render,
+                        args = list(input = "../WGB_DNA_Methylation/DMR_enrichment_analysis.Rmd", 
+                                    output_file = paste0(param_list$output_dir, 
+                                                         "WGB_Sequencing_Enrichment_",
+                                                         dna_seq_name, ".html"), 
+                                    params = param_list
+                                )
+                        )
+}
+```
+
 
 ```{r}
 library(msigdbr)

@@ -1,0 +1,387 @@
+---
+title: "DMR Enrichment Analyses"
+output: html_document
+date: "2024-01-16"
+params: 
+    dmr_exp_list: !r dna_met_list[[1]]
+    ora_filter: !r expression(Factor_1_weights_sig)
+
+    txdb_id: "TxDb.Mmusculus.UCSC.mm39.refGene"
+    msigdbr_specie: "Mus musculus"
+    random_seed: 1234
+    output_dir: ""
+    results_name: ""
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(knitr.duplicate.label = "allow")
+
+```
+
+## Required Packages
+
+```{r}
+library(MultiAssayExperiment)
+library(rGREAT)
+library(dplyr)
+library(msigdbr)
+library(knitr)
+library(DT)
+library(GOSemSim)
+library(org.Mm.eg.db)
+library(SummarizedExperiment)
+library(params$txdb_id, character.only = TRUE)
+source("../../scripts/Utility_Functions/utilities.R")
+
+```
+
+## rGreat {.tabset}
+
+```{r}
+enrich_results_list <- list()
+```
+
+```{r}
+# Get filtered granges
+granges_list <- lapply(params$dmr_exp_list , function(ctrs_res){
+    sub_granges <- rowRanges(ctrs_res[eval(params$ora_filter, envir = rowData(ctrs_res)),])
+    if(length(sub_granges) == 0){return(NA)}
+
+    mcols(sub_granges) <- mcols(sub_granges)[!colnames(mcols(sub_granges)) %in% 
+                                               c("seqnames", "ranges", "strand", 
+                                                "seqlevels", "seqlengths",
+                                                "isCircular", "start", "end", 
+                                                "width", "element")]
+    return(sub_granges)
+})
+```
+
+### GO {.tabset}
+
+```{r}
+enrich_results_list$ORA <- list()
+```
+
+#### BP {.tabset}
+
+```{r, cache=TRUE}
+set.seed(params$random_seed)
+great_results <- lapply(granges_list, function(granges_obj){
+    if(length(granges_obj) == 0){return(NA)}
+    
+    return(great(gr = granges_obj, 
+                gene_sets = "GO:BP", 
+                tss_source = params$txdb_id))
+})
+```
+
+```{r}
+bp_data <- godata(OrgDb = org.Mm.eg.db, ont = "BP")
+
+contrs_result_sig_list <- lapply(great_results, function(gr_res){
+    if(!is(gr_res, "GreatObject")){
+        return(data.frame())
+    }
+    enrich_res <- getEnrichmentTable(gr_res)
+    enrich_res <- subset(enrich_res, p_adjust <= 0.05)
+
+    enrich_res <- rename(enrich_res, c("ID" = "id"))
+    enrich_res <- clusterProfiler:::simplify_internal(
+        res = enrich_res, cutoff = 0.7, by = "fold_enrichment", select_fun = max, 
+        ontology = "BP", semData = bp_data)
+    # enrich_res <- test_f(res = enrich_res, cutoff = 0.6, ontology = "BP", by = "p_adjust", semData = bp_data)
+    
+    return(enrich_res)
+})
+contrs_names <- names(contrs_result_sig_list)
+
+enrich_results_list$ORA <- c(enrich_results_list$ORA, contrs_result_sig_list)
+
+template <- c(
+    "##### `r contrs_names[{{i}}]` \n",
+    "```{r, echo = FALSE}\n",
+    "datatable(contrs_result_sig_list[[{{i}}]], options = list(scrollX = TRUE))",
+    "```\n",
+    "\n"
+)
+```
+
+```{r}
+tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
+                                          contrs_names = contrs_names, template = template)
+```
+
+`r knit(text=unlist(tables_chunk))`
+
+#### MF {.tabset}
+
+```{r, cache=TRUE}
+set.seed(params$random_seed)
+great_results <- lapply(granges_list, function(granges_obj){
+    if(length(granges_obj) == 0){return(NA)}
+    
+    return(great(gr = granges_obj, 
+                gene_sets = "GO:MF", 
+                tss_source = params$txdb_id))
+})
+```
+
+```{r}
+mf_data <- godata(OrgDb = org.Mm.eg.db, ont = "MF")
+
+contrs_result_sig_list <- lapply(great_results, function(gr_res){
+    if(!is(gr_res, "GreatObject")){
+        return(data.frame())
+    }
+    enrich_res <- getEnrichmentTable(gr_res)
+    enrich_res <- subset(enrich_res, p_adjust <= 0.05)
+
+    enrich_res <- rename(enrich_res, c("ID" = "id"))
+    enrich_res <- clusterProfiler:::simplify_internal(
+        res = enrich_res, cutoff = 0.7, by = "fold_enrichment", 
+        select_fun = max, ontology = "MF", semData = mf_data)
+    return(enrich_res)
+})
+contrs_names <- names(contrs_result_sig_list)
+
+enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_sig_list)
+```
+
+```{r}
+tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
+                                          contrs_names = contrs_names, template = template)
+```
+
+`r knit(text=unlist(tables_chunk))`
+
+#### CC {.tabset}
+
+```{r, cache=TRUE}
+set.seed(params$random_seed)
+great_results <- lapply(granges_list, function(granges_obj){
+    if(length(granges_obj) == 0){return(NA)}
+    
+    return(great(gr = granges_obj, 
+                gene_sets = "GO:CC", 
+                tss_source = params$txdb_id))
+})
+```
+
+```{r}
+cc_data <- godata(OrgDb = org.Mm.eg.db, ont = "CC")
+
+contrs_result_sig_list <- lapply(great_results, function(gr_res){
+    if(!is(gr_res, "GreatObject")){
+        return(data.frame())
+    }
+    enrich_res <- getEnrichmentTable(gr_res)
+    enrich_res <- subset(enrich_res, p_adjust <= 0.05)
+
+    enrich_res <- rename(enrich_res, c("ID" = "id"))
+    enrich_res <- clusterProfiler:::simplify_internal(
+        res = enrich_res, cutoff = 0.7, by = "fold_enrichment", 
+        select_fun = max, ontology = "CC", semData = cc_data)
+    return(enrich_res)
+})
+contrs_names <- names(contrs_result_sig_list)
+
+enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_sig_list)
+```
+
+```{r}
+tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
+                                          contrs_names = contrs_names, template = template)
+```
+
+`r knit(text=unlist(tables_chunk))`
+
+### KEGG {.tabset}
+
+```{r}
+kegg_pw <- rGREAT::getKEGGPathways("mmu")
+```
+
+```{r, cache=TRUE}
+set.seed(params$random_seed)
+great_results <- lapply(granges_list, function(granges_obj){
+    if(length(granges_obj) == 0){return(NA)}
+    
+    return(great(gr = granges_obj, 
+                gene_sets = kegg_pw, 
+                tss_source = params$txdb_id))
+})
+```
+
+```{r}
+contrs_result_sig_list <- lapply(great_results, function(gr_res){
+    if(!is(gr_res, "GreatObject")){
+        return(data.frame())
+    }
+    enrich_res <- getEnrichmentTable(gr_res)
+    enrich_res <- subset(enrich_res, p_adjust <= 0.05)
+
+    return(enrich_res)
+})
+contrs_names <- names(contrs_result_sig_list)
+
+enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_sig_list)
+
+template <- c(
+    "#### `r contrs_names[{{i}}]` \n",
+    "```{r, echo = FALSE}\n",
+    "datatable(contrs_result_sig_list[[{{i}}]], options = list(scrollX = TRUE))",
+    "```\n",
+    "\n"
+)
+```
+
+```{r}
+tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
+                                          contrs_names = contrs_names, template = template)
+```
+
+`r knit(text=unlist(tables_chunk))`
+
+
+
+### WP {.tabset}
+
+```{r, results='hide'}
+wiki_pw <- GSA::GSA.read.gmt("../../inputs/wikipathways-20240101-gmt-Mus_musculus.gmt")
+wiki_genesets <- wiki_pw$genesets
+names(wiki_genesets) <- wiki_pw$geneset.names
+```
+
+```{r, cache=TRUE}
+set.seed(params$random_seed)
+great_results <- lapply(granges_list, function(granges_obj){
+    if(length(granges_obj) == 0){return(NA)}
+    
+    return(great(gr = granges_obj, 
+                gene_sets = wiki_genesets, 
+                tss_source = params$txdb_id))
+})
+```
+
+```{r}
+contrs_result_sig_list <- lapply(great_results, function(gr_res){
+    if(!is(gr_res, "GreatObject")){
+        return(data.frame())
+    }
+    enrich_res <- getEnrichmentTable(gr_res)
+    enrich_res <- subset(enrich_res, p_adjust <= 0.05)
+    return(enrich_res)
+})
+contrs_names <- names(contrs_result_sig_list)
+
+enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_sig_list)
+
+```
+
+```{r}
+tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
+                                          contrs_names = contrs_names, template = template)
+```
+
+`r knit(text=unlist(tables_chunk))`
+
+### MSIGdbr H {.tabset}
+
+```{r}
+library(msigdbr)
+h_gene_sets <- msigdbr(species = params$msigdbr_specie, 
+                        category = "H")
+
+h_gene_sets <- split(h_gene_sets$entrez_gene, h_gene_sets$gs_name)
+h_gene_sets <- lapply(h_gene_sets, as.character)  # just to make sure gene IDs are all in character.
+```
+
+```{r, cache=TRUE}
+set.seed(params$random_seed)
+great_results <- lapply(granges_list, function(granges_obj){
+    if(length(granges_obj) == 0){return(NA)}
+    
+    return(great(gr = granges_obj, 
+                gene_sets = h_gene_sets, 
+                tss_source = params$txdb_id))
+})
+```
+
+```{r}
+contrs_result_sig_list <- lapply(great_results, function(gr_res){
+    if(!is(gr_res, "GreatObject")){
+        return(data.frame())
+    }
+    enrich_res <- getEnrichmentTable(gr_res)
+    enrich_res <- subset(enrich_res, p_adjust <= 0.05)
+    return(enrich_res)
+})
+
+enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_sig_list)
+
+contrs_names <- names(contrs_result_sig_list)
+```
+
+```{r}
+tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
+                                          contrs_names = contrs_names, template = template)
+```
+
+`r knit(text=unlist(tables_chunk))`
+
+### MSIGdbr C2 {.tabset}
+
+```{r}
+library(msigdbr)
+h_gene_sets <- msigdbr(species = params$msigdbr_specie, 
+                        category = "C2")
+
+h_gene_sets <- split(h_gene_sets$entrez_gene, h_gene_sets$gs_name)
+h_gene_sets <- lapply(h_gene_sets, as.character)  # just to make sure gene IDs are all in character.
+```
+
+```{r, cache=TRUE}
+set.seed(params$random_seed)
+great_results <- lapply(granges_list, function(granges_obj){
+    if(length(granges_obj) == 0){return(NA)}
+    
+    return(great(gr = granges_obj, 
+                gene_sets = h_gene_sets, 
+                tss_source = params$txdb_id))
+})
+```
+
+```{r}
+contrs_result_sig_list <- lapply(great_results, function(gr_res){
+    if(!is(gr_res, "GreatObject")){
+        return(data.frame())
+    }
+    enrich_res <- getEnrichmentTable(gr_res)
+    enrich_res <- subset(enrich_res, p_adjust <= 0.05)
+    return(enrich_res)
+})
+
+enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_sig_list)
+
+contrs_names <- names(contrs_result_sig_list)
+```
+
+```{r}
+tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
+                                          contrs_names = contrs_names, template = template)
+```
+
+`r knit(text=unlist(tables_chunk))`
+
+```{r}
+saveRDS(enrich_results_list,  paste0(params$output_dir, params$results_name, 
+                                    "_dmr_enrich_results.rds"))
+```
+
+
+## Appendix
+
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+
+```

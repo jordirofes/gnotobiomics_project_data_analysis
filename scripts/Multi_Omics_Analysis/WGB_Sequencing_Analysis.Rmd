@@ -1,0 +1,55 @@
+---
+title: "WGB Sequencing Analysis"
+output: html_document
+date: "2024-01-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Required packages
+
+```{r}
+library(methrix)
+library(SummarizedExperiment)
+```
+
+
+## Loading the required objects
+
+```{r}
+gfcv_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/GFCV/merged_methrix.rds")
+lima_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/merged_methrix.rds")
+
+gfcv_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_gfcv.rds")
+lima_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_lima.rds")
+```
+
+```{r}
+gfcv_sig_cpgs <- nrow(subset_methrix(gfcv_methrix, rowRanges(gfcv_dss)))
+gfcv_cpgs <- nrow(gfcv_methrix)
+
+
+lima_sig_cpgs <- nrow(subset_methrix(lima_methrix, rowRanges(lima_dss)))
+lima_cpgs <- nrow(lima_methrix)
+```
+
+Using all CpGs after filtering all the ones not in each experiment (different denominators), there is a `r (gfcv_sig_cpgs/gfcv_cpgs)*100` % of CpGs significantly changed in the GFCV from all analyzed in this experiment and `r (lima_sig_cpgs/lima_cpgs)*100` % in the LIMA model.
+
+```{r}
+gfcv_perc_all_cpgs <- gfcv_sig_cpgs/sum(gfcv_methrix@metadata[["ref_CpG"]][["N"]])*100
+lima_perc_all_cpgs <- lima_sig_cpgs/sum(lima_methrix@metadata[["ref_CpG"]][["N"]])*100
+```
+
+If we use as a denominator all the CpGs in the mouse genome (common denominators) we get a bit different percentages but with the same pattern: GFCV `r gfcv_perc_all_cpgs` % CpGs and LIMA `r lima_perc_all_cpgs` %
+
+```{r}
+overlaps <- findOverlaps(query = rowRanges(gfcv_dss), subject = rowRanges(lima_dss))
+overlap_gfcv <- length(unique(overlaps@from))/nrow(gfcv_dss)*100
+
+overlap_lima <- length(unique(overlaps@to))/nrow(lima_dss)*100
+```
+
+Looking at the overlap between regions a `r overlap_gfcv` % of the GFCV DMRs can be found in the LIMA results (`r length(unique(overlaps@from))`/`r nrow(gfcv_dss)`) and `r overlap_lima` % of the LIMA DMRs can be found in the GFCV results (`r length(unique(overlaps@to))`/`r nrow(lima_dss)`)
+

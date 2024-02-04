@@ -1,0 +1,169 @@
+---
+title: "DMRs Enrichments"
+output: html_document
+date: "2024-01-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Packages
+
+```{r}
+library(SummarizedExperiment)
+library(LOLA)
+library(simpleCache)
+library(methrix)
+library(DelayedMatrixStats)
+library(DSS)
+library(GenomicRanges)
+library(TxDb.Mmusculus.UCSC.mm39.knownGene)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+```
+
+
+```{r}
+gfcv_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/GFCV/merged_methrix.rds")
+lima_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/merged_methrix.rds")
+
+lima_universe <- GenomicRanges::makeGRangesFromDataFrame(df = lima_methrix@elementMetadata)
+?methrix
+```
+
+```{r}
+DSS::
+```
+
+```{r}
+chain_mm39_mm10 <- rtracklayer::import.chain(con = "../../../LOLA_tests/mm39ToMm10.over.chain")
+
+gfcv_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_gfcv.rds")
+lima_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_lima.rds")
+
+
+lima_clu <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed/heatmap_data.rds")
+```
+
+```{r}
+library(cluster)
+library(ggplot2)
+library(ggdendro)
+lima_cut <- cutree(lima_clu$tree_col, k = 4)
+
+plot(lima_clu$tree_row)
+rect.hclust(tree = lima_clu$tree_row, k = 5)
+
+plot(lima_clu$tree_col, labels = FALSE)
+rect.hclust(tree = lima_clu$tree_col, k = 4, cluster = lima_cut)
+
+ggdendrogram(lima_clu$tree_col) + theme(axis.text.x = element_blank()) + xlab("DMRs")
+
+
+plot_dt <- assay(lima_dss)
+
+plot_dt <- impute::impute.knn(data = as.matrix(plot_dt))$data
+
+quantile_breaks <- quantile(scale(t(plot_dt)), seq(0, 1, length.out = 101), na.rm = TRUE)
+quantile_breaks <- quantile_breaks[!duplicated(quantile_breaks)]
+
+color_values <- viridis::viridis(n = length(quantile_breaks) - 1)
+
+set.seed(1234)
+pheatmap::pheatmap(mat = scale(t(plot_dt)), 
+                  annotation_row = as.data.frame(colData(lima_dss)[,"group", drop = FALSE]),
+                  clustering_method = "average", 
+                  main = paste("DMRs Any Significant (Mean methylation value & adj pvalue <=",
+                              0.1),
+                  color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))), 
+                  breaks = quantile_breaks, show_colnames = FALSE, cutree_cols = 4, )
+```
+```{r}
+gfcv_dss_mm10 <- unlist(rtracklayer::liftOver(x = rowRanges(gfcv_dss), chain = chain_mm39_mm10))
+lima_dss_mm10 <- unlist(rtracklayer::liftOver(x = rowRanges(lima_dss), chain = chain_mm39_mm10))
+
+regionDB <- loadRegionDB("../../../LOLA_tests/nm/t1/resources/regions/LOLACore/mm10/")
+```
+
+## rGreat
+
+```{r}
+library(msigdbr)
+h_gene_sets = msigdbr(species = "Mus musculus", category = "H")
+
+h_gene_sets = split(h_gene_sets$entrez_gene, h_gene_sets$gs_name)
+h_gene_sets = lapply(h_gene_sets, as.character)
+```
+
+
+```{r}
+library(TxDb.Mmusculus.UCSC.mm39.refGene)
+txdb <- "TxDb.Mmusculus.UCSC.mm39.refGene"
+dmr_list <- list("Restored DMRs" = lima_dss[names(lima_cut)[lima_cut %in% c(1,2)]],
+                 "Resistant DMRs" = lima_dss[names(lima_cut)[lima_cut %in% c(3,4)]])
+
+set.seed(1234)
+great_results <- lapply(dmr_list, function(ctrs_res){
+    if(nrow(ctrs_res) == 0){return(NA)}
+    sub_granges <- rowRanges(ctrs_res)
+    mcols(sub_granges) <- mcols(sub_granges)[!colnames(mcols(sub_granges)) %in% 
+                                               c("seqnames", "ranges", "strand", 
+                                                "seqlevels", "seqlengths",
+                                                "isCircular", "start", "end", 
+                                                "width", "element")]  
+    return(great(gr = sub_granges, 
+                gene_sets = h_gene_sets, 
+                tss_source = txdb))
+})
+```
+
+```{r}
+contrs_result_sig_list <- lapply(great_results, function(gr_res){
+    if(!is(gr_res, "GreatObject")){
+        return(data.frame())
+    }
+    return(getEnrichmentTable(gr_res))
+})
+contrs_names <- names(contrs_result_sig_list)
+```
+
+## LOLA 
+
+### Comparing the clustered DMRs
+
+```{r}
+# Problem
+lima_cpg_subset <- subset_methrix(lima_methrix, regions = rowRanges(lima_dss[names(lima_cut)[lima_cut %in% c(3,4)]]), overlap_type = "any")
+lima_cpg_subset_gr <- makeGRangesFromDataFrame(df = data.frame("seqnames" = lima_cpg_subset@elementMetadata$chr, 
+                                                               "start" = lima_cpg_subset@elementMetadata$start, 
+                                                               "end" = lima_cpg_subset@elementMetadata$start))
+lima_cpg_subset_mm10 <- unlist(rtracklayer::liftOver(x = lima_cpg_subset_gr, chain = chain_mm39_mm10))
+# Universe
+lima_cpg_gr <- makeGRangesFromDataFrame(df = data.frame("seqnames" = lima_methrix@elementMetadata$chr, 
+                                                               "start" = lima_methrix@elementMetadata$start, 
+                                                               "end" = lima_methrix@elementMetadata$start))
+lima_cpg_mm10 <- unlist(rtracklayer::liftOver(x = lima_cpg_gr, chain = chain_mm39_mm10))
+```
+
+
+```{r}
+lola_test <- runLOLA(userSets = lima_cpg_subset_mm10, 
+                userUniverse = lima_cpg_mm10, 
+                regionDB = regionDB)
+```
+
+```{r}
+# Problem
+lima_cpg_subset <- subset_methrix(lima_methrix, regions = rowRanges(lima_dss[names(lima_cut)[lima_cut %in% c(1,2)]]), overlap_type = "any")
+lima_cpg_subset_gr <- makeGRangesFromDataFrame(df = data.frame("seqnames" = lima_cpg_subset@elementMetadata$chr, 
+                                                               "start" = lima_cpg_subset@elementMetadata$start, 
+                                                               "end" = lima_cpg_subset@elementMetadata$start))
+lima_cpg_subset_mm10 <- unlist(rtracklayer::liftOver(x = lima_cpg_subset_gr, chain = chain_mm39_mm10))
+```
+
+
+```{r}
+lola_test2 <- runLOLA(userSets = lima_cpg_subset_mm10, 
+                userUniverse = lima_cpg_mm10, 
+                regionDB = regionDB)
+```

@@ -97,6 +97,9 @@ names(organ_dt_list_proc) <- names(organ_dt)
 # saveRDS(object = list("shotgun_data" = organ_dt_list_proc, "shotgun_metadata" = metadata_list), "./shotgun_functional_data_list.rds")
 ```
 
+
+
+
 ## Statistical Analysis
 
 ```{r}
@@ -140,9 +143,202 @@ stat_res <- lapply(names(organ_dt_list_proc), function(organ_name){
 })
 names(stat_res) <- names(organ_dt_list_proc)
 
-saveRDS(stat_res, paste0(params$output_dir, "Shotgun_Metagenomics_Functional_exp_lima.rds"))
 ```
 
+##### Annotations
+
+```{r}
+annotation_list <- list.files(params$input_dir, pattern = "\\.txt$", full.names = TRUE)
+annotation_list
+names(annotation_list) <- c("EC", "metaerg_pathway", "cogs")
+
+annotation_dt <- lapply(annotation_list, function(x){
+    read.table(x, header = TRUE, sep = "\t", row.names = NULL)
+})
+#### EC
+ec_dt <- readLines(annotation_list[3])
+ec_dt <- ec_dt[25:length(ec_dt)]
+ec_dt_list <- list()
+
+for(ec_line in ec_dt){
+    found_id <- grep("^ID", x = ec_line, value = TRUE)
+    
+    if(length(found_id)){
+        ec_found <- data.frame("ID" = gsub("ID *", "", found_id))
+    }
+    found_de <- grep("^DE", x = ec_line, value = TRUE)
+    
+    if(length(found_de)){
+        ec_found$Description <- gsub("DE *", "", found_de)
+    }
+    
+    found_next <- grep(pattern = "^//", x = ec_line, value = TRUE)
+    
+    if(length(found_next)){
+        ec_dt_list <- c(ec_dt_list, list(ec_found))
+    }
+}
+ec_dt_list <- do.call(rbind, ec_dt_list)
+######
+cog_dt <- readLines(annotation_list[2])
+cog_dt <- gsub('"', "", cog_dt)
+cog_dt <- strsplit(cog_dt, "\t")
+cog_dt <- do.call(rbind, cog_dt)
+colnames(cog_dt) <- cog_dt[1,]
+cog_dt <- cog_dt[-1,]
+
+cog_dt <- as.data.frame(cog_dt)
+######
+metacyc_dt <- read.table(annotation_list[1], sep = "\t", header = TRUE, row.names = NULL)
+
+metacyc_dt3 <- readLines("../../inputs/Shotgun_Metagenomics/pwy.hierarchy")
+metacyc_dt3 <- strsplit(metacyc_dt3, "\t")
+metacyc_dt3 <- do.call(rbind, metacyc_dt3)
+metacyc_dt3 <- as.data.frame(metacyc_dt3)
+
+# metacyc_dt2 <- readLines("../../inputs/Shotgun_Metagenomics/ec.to.pwy")
+# metacyc_dt2 <- strsplit(metacyc_dt2, "\t")
+# metacyc_dt2 <- do.call(rbind, metacyc_dt2)
+# metacyc_dt2 <- as.data.frame(metacyc_dt2)
+
+#### metaerg_kegg
+metaerg_dt <- readLines("../../inputs/Shotgun_Metagenomics/ecoli/27.5/data/pathways.dat")
+metaerg_dt <- metaerg_dt[28:length(metaerg_dt)]
+metaerg_dt_list <- list()
+
+for(meta_line in metaerg_dt){
+    found_id <- grep("^UNIQUE-ID", x = meta_line, value = TRUE)
+    
+    if(length(found_id)){
+        meta_found <- data.frame("ID" = gsub("UNIQUE-ID - ", "", found_id))
+    }
+    found_de <- grep("^COMMON-NAME", x = meta_line, value = TRUE)
+    
+    if(length(found_de)){
+        meta_found$Description <- gsub("COMMON-NAME - ", "", found_de)
+    }
+    
+    found_next <- grep(pattern = "^//", x = meta_line, value = TRUE)
+    
+    if(length(found_next)){
+        metaerg_dt_list <- c(metaerg_dt_list, list(meta_found))
+    }
+}
+metaerg_dt_list_ecoli <- as.data.frame(do.call(rbind, metaerg_dt_list))
+
+####
+metaerg_dt <- readLines("../../inputs/Shotgun_Metagenomics/aplat/27.5/data/pathways.dat")
+metaerg_dt <- metaerg_dt[21:length(metaerg_dt)]
+metaerg_dt_list <- list()
+
+for(meta_line in metaerg_dt){
+    found_id <- grep("^UNIQUE-ID", x = meta_line, value = TRUE)
+    
+    if(length(found_id)){
+        meta_found <- data.frame("ID" = gsub("UNIQUE-ID - ", "", found_id))
+    }
+    found_de <- grep("^COMMON-NAME", x = meta_line, value = TRUE)
+    
+    if(length(found_de)){
+        meta_found$Description <- gsub("COMMON-NAME - ", "", found_de)
+    }
+    
+    found_next <- grep(pattern = "^//", x = meta_line, value = TRUE)
+    
+    if(length(found_next)){
+        metaerg_dt_list <- c(metaerg_dt_list, list(meta_found))
+    }
+}
+metaerg_dt_list_aplat <- as.data.frame(do.call(rbind, metaerg_dt_list))
+
+
+
+metacyc_sel <- metacyc_dt[,c("Geneid", "MetaCyc_id")]
+colnames(metacyc_sel) <-  c("ID", "Description")
+
+metacyc_2_sel <- metacyc_dt3[,c("V1", "V2")]
+colnames(metacyc_2_sel) <- c("ID", "Description")
+
+annotation_dt <- rbind(metacyc_sel, metacyc_2_sel, metaerg_dt_list_aplat, metaerg_dt_list_ecoli)
+annotation_dt <- distinct(annotation_dt)
+
+# annotation_list <- list("EC" = ec_dt_list, "cogs" = cog_dt, "metaerg_pathway" = annotation_dt)
+```
+
+```{r}
+stat_res <- lapply(stat_res, function(organ){
+    organ_res <- lapply(names(organ), function(dt_name){
+        switch(dt_name, "EC" = {
+            dt <- organ[[dt_name]]
+            ids <- gsub("EC:", "", rownames(dt))
+            rowData(dt)$Old_Name <- rownames(dt)
+            ids_tr <- sapply(ids, function(id){
+                found_id <- which(ec_dt_list$ID == id)[1]
+                found_de <- ec_dt_list$Description[found_id]
+                if(length(found_id) & found_de != "" & !is.na(found_de)){
+                    return(found_de)    
+                } else{
+                    return(id)
+                }
+            })
+            if(all(!duplicated(ids_tr))){
+                rownames(dt) <- ids_tr
+            } 
+            rowData(dt)$Description <- ids_tr
+            
+            return(dt)
+        }, "cogs" = {
+            dt <- organ[[dt_name]]
+            ids <- rownames(dt)
+            rowData(dt)$Old_Name <- rownames(dt)
+            
+            ids_tr <- sapply(ids, function(id){
+                found_id <- which(cog_dt$COG_ID == id)[1]
+                found_de <- cog_dt$COG_Name[found_id]
+                if(length(found_id) & found_de != "" & !is.na(found_de)){
+                    return(found_de)    
+                } else{
+                    return(id)
+                }
+                
+            })
+            if(all(!duplicated(ids_tr))){
+                rownames(dt) <- ids_tr
+            } 
+            rowData(dt)$Description <- ids_tr
+            
+            return(dt)
+        }, "metaerg_pathway" = {
+            dt <- organ[[dt_name]]
+            ids <- rownames(dt)
+            rowData(dt)$Old_Name <- rownames(dt)
+            
+            ids_tr <- sapply(ids, function(id){
+                found_id <- which(annotation_dt$ID == id)[1]
+                found_de <- annotation_dt$Description[found_id]
+                if(length(found_id) & found_de != "" & !is.na(found_de)){
+                    return(found_de)    
+                } else{
+                    return(id)
+                }
+                
+            })
+            if(all(!duplicated(ids_tr))){
+                rownames(dt) <- ids_tr
+            } 
+            rowData(dt)$Description <- ids_tr
+            
+            return(dt)
+        }, "metaerg_kegg" = {
+            return(organ[[dt_name]])
+        })
+    })
+    names(organ_res) <- names(organ)
+    organ_res
+})
+
+saveRDS(stat_res, paste0(params$output_dir, "Shotgun_Metagenomics_Functional_exp_lima.rds"))
+```
 
 ##### PCA 
 

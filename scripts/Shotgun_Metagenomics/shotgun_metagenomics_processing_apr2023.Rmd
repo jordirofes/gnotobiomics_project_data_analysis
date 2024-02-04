@@ -186,7 +186,7 @@ shotgun_data <- lapply(names(shotgun_data_list), function(organ_name){
         # rownames(summ_exp) <- sapply(sp_names, function(x){make.names(stringr::str_trunc(x, 15, "left"))})
         summ_exp
     })
-    names(organ_summ) <- names(organ_data)
+    names(organ_summ) <- stringr::str_to_title(names(organ_data))
     organ_summ
 })
 names(shotgun_data) <- names(shotgun_data_list)
@@ -212,7 +212,7 @@ lapply(names(shotgun_data), function(organ_names){
 ```{r}
 agglomerated_dt <- lapply(names(shotgun_data), function(organ_names){
     
-    hierarchy_sp <- shotgun_data[[organ_names]]$species
+    hierarchy_sp <- shotgun_data[[organ_names]]$Species
     agglomerated_dt <- mia::agglomerateByRank(x = hierarchy_sp, rank = "Phylum")
     alpha_div <- vegan::diversity(x = assay(agglomerated_dt), index = "shannon", MARGIN = 2)
     group_var <- agglomerated_dt$group

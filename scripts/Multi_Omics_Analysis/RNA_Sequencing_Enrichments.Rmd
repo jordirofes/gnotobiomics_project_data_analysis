@@ -1,0 +1,366 @@
+---
+title: "RNA Seq Enrichments"
+output: html_document
+date: "2024-01-28"
+params: 
+    exp_list: !r rna_seq_exp
+    output_dir: !r output_dir
+    ora_filter: !r expression(Factor_1_weights_sig)
+    gsea_cols_list: !r gsea_cols_list
+    gsea: TRUE
+    universe: NULL
+    order_column: "Factor_1_weights"
+    results_name: "Factor_1"
+    legend_name: "Fold Change (log2)"
+    random_seed: 1234
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r}
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(DESeq2)
+library(sva)
+library(mixOmics)
+library(knitr)
+library(DT)
+library(clusterProfiler)
+library(dplyr)
+library(msigdbr)
+library(MultiAssayExperiment)
+source("../../scripts/Utility_Functions/utilities.R")
+```
+
+## Enrichment analysis {.tabset}
+
+```{r}
+enrich_results_list <- list()
+```
+
+
+### Table results {.tabset}
+
+```{r}
+contrs_names <- names(params$exp_list)
+
+contrs_result_sig_list <- lapply(contrs_names, function(ctrs_name){
+    ctrs <- params$exp_list[[ctrs_name]]
+    as.data.frame(ctrs[order(ctrs[[params$order_column]]),])
+})
+names(contrs_result_sig_list) <- contrs_names
+
+tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
+                                          contrs_names = contrs_names, template = c(
+    "#### `r contrs_names[{{i}}]` \n",
+    "```{r, echo = FALSE}\n",
+    "datatable(contrs_result_sig_list[[{{i}}]], options = list(scrollX = TRUE)) %>% formatRound(columns = colnames(contrs_result_sig_list[[{{i}}]])[sapply(contrs_result_sig_list[[{{i}}]], is.numeric)], digits = 3)",
+    "```\n",
+    "\n"
+))
+```
+
+`r knit(text=unlist(tables_chunk))`
+
+```{r}
+sig_genes <- lapply(params$exp_list, function(ctrs){
+    rownames(ctrs[eval(params$ora_filter, envir = ctrs),])
+})
+
+genes_gsea <- lapply(names(params$gsea_cols_list), function(ctrs_name){
+    ctrs <- params$exp_list[[ctrs_name]]
+    fc_list <- ctrs[[params$gsea_cols_list[[ctrs_name]]]]
+    names(fc_list) <- rownames(ctrs)
+    fc_list
+})
+names(genes_gsea) <- names(params$gsea_cols_list)
+```
+
+<!-- ## ORA {.tabset} -->
+
+```{r}
+enrich_results_list$ORA <- list()
+```
+
+
+<!-- ### GO {.tabset} -->
+
+```{r, cache=TRUE}
+set.seed(params$random_seed)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                                OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                                qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                                pvalueCutoff = 0.05, simplify_res = FALSE)
+for(i in seq_along(enrich_results)){
+    for(id in seq_along(enrich_results[[i]])){
+        enrich_results[[i]][[id]]@result$enrichFC <- calculate_enrich_fc(enrich_results[[i]][[id]]) 
+    }
+    enrich_results[[i]] <- lapply(enrich_results[[i]], simplify, cutoff = 0.7, 
+                                  by = "enrichFC", select_fun = max)
+}
+
+enrich_results_list$ORA <- c(enrich_results_list$ORA, enrich_results)
+
+# enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_gsea, 
+#                                  legend_name = params$legend_name)
+```
+
+```{r}
+# go_dt <- godata(org.Mm.eg.db, ont = "BP")
+# 
+# sim_dt <- enrichplot::pairwise_termsim(x = enrich_results$All_Weights$BP, method = "Wang", semData = go_dt)
+# 
+# enrichplot::emapplot(sim_dt, fontsize = 4, co)
+# enrichplot::ssplot(sim_dt)
+# enrichplot::treeplot(sim_dt)
+```
+
+<!-- # ```{r, results='asis', fig.height=10, fig.width=8} -->
+<!-- # enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ### KEGG {.tabset} -->
+
+```{r}
+genes_entrez_ids <- lapply(genes_gsea, function(ctrs){
+    names(ctrs) <- mapIds(x = org.Mm.eg.db, names(ctrs), column = "ENTREZID", keytype = "ENSEMBL")
+    ctrs[names(ctrs)[!is.na(names(ctrs))]]
+})
+
+set.seed(params$random_seed)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                               keggOrg = "mmu", keggKeyType = "kegg",
+                               pvalueCutoff = 0.05, simplify_res = FALSE, 
+                               enrichFun = "kegg")
+
+enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, enrich_results)
+
+# enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids, 
+#                                  legend_name = params$legend_name)
+```
+
+<!-- # ```{r, results='asis', fig.height=10, fig.width=8} -->
+<!-- # enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ### WP {.tabset} -->
+
+```{r}
+set.seed(params$random_seed)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr",  wpOrg = "Mus musculus",
+                               pvalueCutoff = 0.05, simplify_res = FALSE, enrichFun = "wp")
+
+enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, enrich_results)
+
+# enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids, 
+#                                  legend_name = params$legend_name)
+```
+
+<!-- # ```{r, results='asis', fig.height=10, fig.width=8} -->
+<!-- # enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ### MSIGDBR H {.tabset} -->
+
+```{r}
+set.seed(params$random_seed)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr",  
+                               msigdbCategory = "H", msigdbSpc = "Mus musculus",
+                               pvalueCutoff = 0.05, simplify_res = FALSE, 
+                               enrichFun = "msigdbrORA")
+
+enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, enrich_results)
+
+# enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids, 
+#                                  legend_name = params$legend_name)
+```
+
+<!-- # ```{r, results='asis', fig.height=10, fig.width=8} -->
+<!-- # enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ### MSIGDBR C2 {.tabset} -->
+
+```{r}
+set.seed(params$random_seed)
+enrich_results <- multi_enrich(dt_to_pathway = sig_genes, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr",  
+                               msigdbCategory = "C2", msigdbSpc = "Mus musculus",
+                               pvalueCutoff = 0.05, simplify_res = FALSE, 
+                               enrichFun = "msigdbrORA")
+
+enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, enrich_results)
+
+# enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids, 
+#                                  legend_name = params$legend_name)
+```
+
+<!-- # ```{r, results='asis', fig.height=10, fig.width=8} -->
+<!-- # enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data) -->
+<!-- # ``` -->
+
+<!-- ## GSEA {.tabset} -->
+
+```{r}
+enrich_results_list$GSEA <- list()
+```
+
+<!-- ### GO {.tabset} -->
+
+```{r, eval = params$gsea}
+set.seed(params$random_seed)
+enrich_results <- multi_enrich(dt_to_pathway = genes_gsea, universe = NULL, 
+                                OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                                qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                                pvalueCutoff = 0.05, simplify_res = FALSE, 
+                                enrichFun = "gsea")
+
+for(i in seq_along(enrich_results)){
+    for(id in seq_along(enrich_results[[i]])){
+        enrich_results[[i]][[id]]@result$enrichmentScoreAbs <- abs(enrich_results[[i]][[id]]@result$enrichmentScore)
+    }
+    enrich_results[[i]] <- lapply(enrich_results[[i]], simplify, cutoff = 0.7, 
+                                  by = "enrichmentScoreAbs", select_fun = max)
+}
+
+enrich_results_list$GSEA <- c(enrich_results_list$GSEA, enrich_results)
+
+
+# enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_gsea, 
+#                                  legend_name = params$legend_name)
+```
+
+<!-- # ```{r, results='asis', fig.height=10, fig.width=8, eval = params$gsea} -->
+<!-- # enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ### KEGG {.tabset} -->
+
+```{r}
+genes_entrez_ids <- lapply(genes_gsea, function(ctrs){
+    names(ctrs) <- mapIds(x = org.Mm.eg.db, names(ctrs), column = "ENTREZID", keytype = "ENSEMBL")
+    ctrs[names(ctrs)[!is.na(names(ctrs))]]
+})
+
+set.seed(params$random_seed)
+enrich_results <- multi_enrich(dt_to_pathway = genes_gsea, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                               keggOrg = "mmu", keggKeyType = "kegg",
+                               pvalueCutoff = 0.05, simplify_res = FALSE, 
+                               enrichFun = "gseKegg")
+
+enrich_results_list$GSEA <- base::Map(c, enrich_results_list$GSEA, enrich_results)
+
+enrich_results <- lapply(enrich_results, function(ctrs){
+    lapply(ctrs, setReadable, OrgDb = "org.Mm.eg.db", keyType = "ENTREZID")
+})
+
+# enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids, 
+#                                  legend_name = params$legend_name)
+```
+
+<!-- # ```{r, results='asis', fig.height=10, fig.width=8} -->
+<!-- # enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ### WP {.tabset} -->
+
+```{r}
+set.seed(params$random_seed)
+enrich_results <- multi_enrich(dt_to_pathway = genes_gsea, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr",  wpOrg = "Mus musculus",
+                               pvalueCutoff = 0.05, simplify_res = FALSE, enrichFun = "gseWp")
+
+enrich_results_list$GSEA <- base::Map(c, enrich_results_list$GSEA, enrich_results)
+
+enrich_results <- lapply(enrich_results, function(ctrs){
+    lapply(ctrs, setReadable, OrgDb = "org.Mm.eg.db", keyType = "ENTREZID")
+})
+
+# enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids, 
+#                                  legend_name = params$legend_name)
+```
+
+<!-- # ```{r, results='asis', fig.height=10, fig.width=8} -->
+<!-- # enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ### MSIGDBR H {.tabset} -->
+
+```{r, eval = params$gsea}
+set.seed(params$random_seed)
+enrich_results <- multi_enrich(dt_to_pathway = genes_gsea, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                               msigdbCategory = "H", msigdbSpc = "Mus musculus",
+                               pvalueCutoff = 0.05, simplify_res = FALSE, 
+                               enrichFun = "msigdbrGSEA")
+
+enrich_results_list$GSEA <- base::Map(c, enrich_results_list$GSEA, enrich_results)
+
+# enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids, 
+#                                  legend_name = params$legend_name)
+```
+
+<!-- # ```{r, results='asis', fig.height=10, fig.width=8, eval = params$gsea} -->
+<!-- # enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data) -->
+<!-- # ``` -->
+
+<!-- ### MSIGDBR C2 {.tabset} -->
+
+```{r, eval = params$gsea}
+set.seed(params$random_seed)
+enrich_results <- multi_enrich(dt_to_pathway = genes_gsea, universe = NULL, 
+                               OrgDb = org.Mm.eg.db, keyType = "ENSEMBL", 
+                               qvalueCutoff = 0.05, pAdjustMthd = "fdr", 
+                               msigdbCategory = "C2", msigdbSpc = "Mus musculus",
+                               pvalueCutoff = 0.05, simplify_res = FALSE, 
+                               enrichFun = "msigdbrGSEA")
+
+enrich_results_list$GSEA <- base::Map(c, enrich_results_list$GSEA, enrich_results)
+
+
+# enrich_plot_data <- enrich_plots(enrich_results, fold_change_list = genes_entrez_ids, 
+#                                  legend_name = params$legend_name)
+```
+
+<!-- # ```{r, results='asis', fig.height=10, fig.width=8, eval = params$gsea} -->
+<!-- # enrich_chunks(enrichData_all = enrich_results, enrich_plot_data = enrich_plot_data) -->
+<!-- # ``` -->
+
+```{r}
+saveRDS(enrich_results_list, paste0(params$output_dir, params$results_name, "_enrich_results.rds"))
+```
+
+
+```{r, results='asis', fig.height=8, fig.width=8}
+for(enrich_type in names(enrich_results_list)){
+    enrich_type_list <- enrich_results_list[[enrich_type]]
+    cat("### ", enrich_type, "{.tabset} \n")
+    cat("\n")
+    
+    enrich_plot_data <- enrich_plots(enrich_type_list, 
+                                    fold_change_list = Map(c, genes_gsea, genes_entrez_ids), 
+                                    legend_name = params$legend_name)
+    enrich_chunks(enrichData_all = enrich_type_list, 
+                    enrich_plot_data = enrich_plot_data)
+    cat("\n")
+}
+```
+
+## Appendix
+
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+
+```

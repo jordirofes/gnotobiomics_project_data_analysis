@@ -66,7 +66,7 @@ for(omic_name in names(script_list)){
         script_paths <- script_paths[grep("processing", x = script_paths, ignore.case = TRUE)]
     }
     param_list <- list(input_dir = paste0("../../inputs/", omic_name, "/"),
-                           output_dir = paste0("../../outputs/", omic_name, "/"))
+                           output_dir = paste0(output_dir, omic_name, "/"))
     
     if(!file.exists(paste0(param_list$output_dir, omic_name, "_exp_gfcv.rds")) & 
         !file.exists(paste0(param_list$output_dir, omic_name, "_exp_lima.rds"))){
@@ -148,7 +148,7 @@ names(gfcv_exp_list_proc) <- names(gfcv_exp_list)
 gfcv_multi_exp <- MultiAssayExperiment(experiments = gfcv_exp_list_proc, 
                                     colData = omics_metadata)
 
-saveRDS(gfcv_multi_exp, paste0(output_dir, "Multi_Omics_Analysis_exp_gfcv.rds"))
+saveRDS(gfcv_multi_exp, paste0(multi_omic_dir, "Multi_Omics_Analysis_exp_gfcv.rds"))
 
 #### LIMA merge
 search_pattern <- "_exp_lima.rds"
@@ -173,6 +173,10 @@ lima_exp_list <- unlist(unlist(unlist(lima_exp_list, recursive = FALSE),
 lima_exp_list <- lapply(lima_exp_list, function(omic_se){
     if(any(colnames(omic_se) == "X686I")){
         colnames(omic_se)[colnames(omic_se) == "X686I"] <- "X687I"
+    }
+    
+    if(any(colnames(omic_se) == "X652C")){
+        colnames(omic_se)[colnames(omic_se) == "X652C"] <- "X642C"
     }
     omic_se
 })
@@ -217,7 +221,7 @@ names(lima_exp_list_proc) <- names(lima_exp_list)
 
 lima_multi_exp <- MultiAssayExperiment(experiments = lima_exp_list_proc, 
                                     colData = omics_metadata)
-saveRDS(lima_multi_exp, paste0(output_dir, "Multi_Omics_Analysis_exp_lima.rds"))
+saveRDS(lima_multi_exp, paste0(multi_omic_dir, "Multi_Omics_Analysis_exp_lima.rds"))
 ```
 
 
@@ -230,10 +234,10 @@ proc_omics <- lapply(names(experiments(lima_multi_exp)), function(omic_name){
     param_list <- list()
     function_list <- list()
     omic_proc <- experiments(lima_multi_exp)[[omic_name]]
-    if(grepl("DNA_Methylation", omic_name)){
+    if(grepl("WGB_DNA", omic_name)){
         function_list <- list(impute_knn_assay, scale_assay)
     }
-    if(grepl("RNASeq", omic_name)){
+    if(grepl("RNA_Sequencing", omic_name)){
         function_list <- list(count_vst_deseq2, scale_assay)
     }
     if(grepl("Untargeted", omic_name)){
@@ -242,7 +246,7 @@ proc_omics <- lapply(names(experiments(lima_multi_exp)), function(omic_name){
     if(grepl("Targeted", omic_name)){
         function_list <- list(impute_knn_assay, scale_assay)
     }
-    if(grepl("PTM", omic_name)){
+    if(grepl("Histone", omic_name)){
         function_list <- list(transformToMvalues, scale_assay)
     }
     if(grepl("16S|Shotgun_Metagenomics", omic_name)){
@@ -261,7 +265,7 @@ proc_omics <- lapply(names(experiments(lima_multi_exp)), function(omic_name){
 names(proc_omics) <- names(assays(lima_multi_exp))
 experiments(lima_multi_exp) <- ExperimentList(proc_omics)
 
-saveRDS(lima_multi_exp, paste0(output_dir, "Multi_Omics_Analysis_MA_exp_lima.rds"))
+saveRDS(lima_multi_exp, paste0(multi_omic_dir, "Multi_Omics_Analysis_MA_exp_lima.rds"))
 ```
 
 
@@ -277,7 +281,7 @@ proc_omics <- lapply(names(experiments(gfcv_multi_exp)), function(omic_name){
     function_list <- list()
     omic_proc <- experiments(gfcv_multi_exp)[[omic_name]]
     
-    if(grepl("RNASeq", omic_name)){
+    if(grepl("RNA_Seq", omic_name)){
         function_list <- list(count_vst_deseq2, ComBat_norm, scale_assay)
     }
     if(grepl("Untargeted", omic_name)){
@@ -287,7 +291,7 @@ proc_omics <- lapply(names(experiments(gfcv_multi_exp)), function(omic_name){
     if(grepl("Targeted", omic_name)){
         function_list <- list(impute_knn_assay, ComBat_norm, scale_assay)
     }
-    if(grepl("PTM", omic_name)){
+    if(grepl("Histone", omic_name)){
         function_list <- list(transformToMvalues, ComBat_norm, scale_assay)
     }
     if(grepl("16S|Shotgun", omic_name)){
@@ -307,6 +311,6 @@ proc_omics <- lapply(names(experiments(gfcv_multi_exp)), function(omic_name){
 names(proc_omics) <- names(assays(gfcv_multi_exp))
 experiments(gfcv_multi_exp) <- ExperimentList(proc_omics)
 
-saveRDS(gfcv_multi_exp, paste0(output_dir, "Multi_Omics_Analysis_MA_exp_gfcv.rds"))
+saveRDS(gfcv_multi_exp, paste0(multi_omic_dir, "Multi_Omics_Analysis_MA_exp_gfcv.rds"))
 ```
 

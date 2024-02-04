@@ -447,6 +447,8 @@ heatmap_dt <- pheatmap::pheatmap(mat = scale(t(plot_dt)),
                               params$adj.p.value_thr),
                   color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))), 
                   breaks = quantile_breaks, show_colnames = FALSE)
+
+saveRDS(heatmap_dt, paste0(params$output_dir, "heatmap_data.rds"))
 ```
 
 #### CpG distribution any significant {.tabset}

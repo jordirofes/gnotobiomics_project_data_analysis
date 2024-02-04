@@ -1,0 +1,217 @@
+---
+title: "MOFA models"
+output: html_document
+date: "2024-01-18"
+params:
+    input_dir: "../../outputs/Multi_Omics_Analysis/"
+    output_dir: "../../outputs/Multi_Omics_Analysis/MOFA_Results/"
+    multi_omics_exp: !r multi_omics[,colData(multi_omics)$group != "HFE",multi_omics_selected]
+    group_var: "group"
+    num_factors: 3
+    results_name: "test_int"
+    color_vec: !r c("CNT"="black", "HFD"="red", "INT"="blue")
+    random_seed: 1234
+    convergence_mode: "slow"
+    ntries: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+## Required packages
+
+```{r}
+library(grDevices)
+library(ggplot2)
+library(plotly)
+library(MOFA2)
+library(dplyr)
+library(MultiAssayExperiment)
+library(SummarizedExperiment)
+library(TreeSummarizedExperiment)
+source("../Utility_Functions/utilities.R")
+
+output_dir <- paste0(params$output_dir, params$results_name, "/")
+if(!dir.exists(output_dir)){dir.create(output_dir)}
+```
+
+
+```{r}
+multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = params$multi_omics_exp)
+plot_data_overview(multi_omics_mofa)
+```
+
+## Parameters
+
+```{r}
+data_opts <- get_default_data_options(multi_omics_mofa)
+head(data_opts)
+
+model_opts <- get_default_model_options(multi_omics_mofa)
+head(model_opts)
+model_opts$num_factors <- params$num_factors
+
+train_opts <- get_default_training_options(multi_omics_mofa)
+train_opts$convergence_mode <- params$convergence_mode
+head(train_opts)
+```
+
+## LIMA model {.tabset}
+
+
+```{r}
+outfile <- file.path(output_dir,"model.hdf5")
+model_list <- list()
+
+multi_omics_mofa <- prepare_mofa(
+        object = multi_omics_mofa, data_options = data_opts,
+        model_options = model_opts, training_options = train_opts
+)
+
+for(id in seq_len(params$ntries)){
+    multi_omics_mofa@training_options$seed <- params$random_seed + id
+    
+    model_list[[id]] <- run_mofa(multi_omics_mofa, outfile, use_basilisk = TRUE)    
+}
+
+multi_omics_mofa <- select_model(model_list)
+rm(model_list)
+```
+
+### Downstream Analysis
+
+```{r, fig.height=5}
+# file_path <- "./model.hdf5"
+# model <- load_model(file_path)
+mofa_group_var <- colData(params$multi_omics_exp)[[params$group_var]]
+
+# colData(multi_omics)$sample <- colData(multi_omics)$samplename
+
+rownames(samples_metadata(multi_omics_mofa)) <- samples_metadata(multi_omics_mofa)$sample
+
+plot_variance_explained(multi_omics_mofa) + theme(axis.text.x = element_text(size = 8, angle = 90))
+
+p <- plot_factor(multi_omics_mofa, group_by = mofa_group_var, 
+                factors = seq_len(params$num_factors), 
+                color_by = mofa_group_var, add_violin = TRUE)
+
+p <- p + 
+  scale_color_manual(values= params$color_vec) +
+  scale_fill_manual(values= params$color_vec)
+print(p)
+```
+
+```{r, fig.height=12, fig.width=12}
+plot_factors(multi_omics_mofa, 
+  factors = seq_len(params$num_factors),
+  color_by = mofa_group_var
+)
+```
+
+```{r}
+pca_dt <- MOFA2::get_factors(object = multi_omics_mofa, factors = seq_len(params$num_factors))
+
+MOFA2::get_variance_explained(object = multi_omics_mofa, factors = seq_len(params$num_factors))
+
+d3plot <- plot_ly(x = pca_dt$group1[,1], y = pca_dt$group1[,2], 
+                    z = pca_dt$group1[,3], 
+                    color = mofa_group_var)
+d3plot <- d3plot %>% add_markers()
+# d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
+#                      yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
+#                      zaxis = list(title = paste0('PC4', "(", pcvar[4], "%)"))))
+d3plot
+```
+
+```{r}
+weight_dt <- get_weights(object = multi_omics_mofa)
+
+saveRDS(weight_dt, paste0(output_dir, "weight_list.rds"))
+
+factor_dt <- MOFA2::get_factors(object = multi_omics_mofa)
+
+saveRDS(factor_dt, paste0(output_dir, "factor_data.rds"))
+
+var_dt <- MOFA2::get_variance_explained(object = multi_omics_mofa)
+
+saveRDS(var_dt, paste0(output_dir, "var_data.rds"))
+
+
+highest_weights <- weight_dt$feature[weight_dt$value >= quantile(weight_dt$value, 0.95) | weight_dt$value <= quantile(weight_dt$value, 0.05)]
+```
+
+## Factor highest weights {.tabset}
+
+```{r, results='asis'}
+var_exp_dt <- MOFA2::get_variance_explained(multi_omics_mofa)[[2]][[1]]/100
+
+keep_var_list <- list()
+
+multi_assay_list <- params$multi_omics_exp
+
+for(id in seq_len(params$num_factors)){
+    
+    # multi_assay_list[[id]] <- multi_omics[,,multi_omics_selected]
+    # keep_var_list[id] <- list(c())
+    
+    weight_dt <- get_weights(multi_omics_mofa, factors = id)
+    cat(paste0("### Factor ", id, "\n"))
+    cat("\n")
+    # pdf(paste0(output_dir, "factor_", id, "_top_variable_heatmaps.pdf"))
+    for(view_id in MOFA2::views_names(multi_omics_mofa)){
+        cat(paste0("#### ", view_id, "\n"))
+        cat("\n")
+        
+        
+        exp_dt <- MOFA2::get_data(multi_omics_mofa, views = view_id)[[1]][[1]]
+        exp_metadata <- colData(params$multi_omics_exp)
+        # exp_metadata <- colData(multi_omics[,,multi_omics_selected])
+            
+        feature_n_percent <- var_exp_dt[id,view_id]
+        # feature_n <- ceiling(min(nrow(exp_dt)*feature_n_percent, 2000))
+        feature_n <- ceiling(nrow(exp_dt)*feature_n_percent)
+
+        
+        factor_weight_dt <- weight_dt[[view_id]]
+        
+        samples_found <- !matrixStats::colAlls(x = exp_dt, value = NA)
+        
+        rownames(factor_weight_dt) <- gsub(paste0("_", view_id), "", rownames(factor_weight_dt))
+        rownames(exp_dt) <- gsub(paste0("_", view_id), "", rownames(exp_dt))
+
+        keep_vars <- rownames(factor_weight_dt)[order(abs(factor_weight_dt[,1]), 
+                                                    decreasing = TRUE)][seq_len(feature_n)]
+        
+        # keep_var_list[[id]] <- c(keep_var_list[[id]], keep_vars) 
+        
+        rowData(experiments(multi_assay_list)[[view_id]])[[paste0("Factor_", id, "_weights")]] <- factor_weight_dt[,1]
+        rowData(experiments(multi_assay_list)[[view_id]])[[paste0("Factor_", id, "_weights_sig")]] <- rownames(factor_weight_dt) %in% keep_vars
+        
+        
+        # experiment_list[[view_id]] <- experiments(multi_omics[,,multi_omics_selected])[[view_id]][keep_vars,]
+        if(feature_n < 2){next}
+
+        heatMapFun(exp_dt[keep_vars,samples_found], 
+                metadata = exp_metadata[samples_found,], 
+                stratificationVar = params$group_var, 
+                cdQuantile = 0, 
+                plot_name = paste(view_id, "Top", feature_n, 
+                                "Variables in factor", id, 
+                                "(By absolute weight)"), 
+                show_colnames = ifelse(length(keep_vars) >= 100, FALSE, TRUE), 
+                show_rownames = TRUE,
+                clustering_distance_rows = "euclidean")
+        cat("\n")
+
+    }
+    # dev.off()
+}
+saveRDS(multi_assay_list, paste0(output_dir, "multi_omics_filtered.rds"))
+```
+
+## Appendix
+
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+
+```

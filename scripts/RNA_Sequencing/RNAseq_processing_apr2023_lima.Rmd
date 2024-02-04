@@ -364,7 +364,7 @@ lima_DESeq_results$gene_lab <- ifelse(!is.na(lima_DESeq_results$gene_name),
                                    lima_DESeq_results$gene_name, 
                                    rownames(lima_DESeq_results))
 
-rowData(rna_seq_exp) <- as.data.frame(lima_DESeq_results)
+rowData(rna_seq_exp) <- lima_DESeq_results
 
 saveRDS(rna_seq_exp, paste0(params$output_dir, "RNA_Sequencing_exp_lima.rds"))
 ```
