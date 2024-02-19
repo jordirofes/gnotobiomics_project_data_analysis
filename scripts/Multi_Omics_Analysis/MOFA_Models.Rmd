@@ -37,7 +37,7 @@ if(!dir.exists(output_dir)){dir.create(output_dir)}
 ```
 
 
-```{r}
+```{r, fig.height=8, fig.width=8}
 multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = params$multi_omics_exp)
 plot_data_overview(multi_omics_mofa)
 ```
@@ -60,7 +60,7 @@ head(train_opts)
 ## LIMA model {.tabset}
 
 
-```{r}
+```{r, results='hide'}
 outfile <- file.path(output_dir,"model.hdf5")
 model_list <- list()
 

@@ -122,16 +122,19 @@ organ_exp <- lapply(names(organ_dt_list), function(organ_name){
                     found_dt <- gsub("\\[|\\]", "", found_dt)
 
                     if(found_dt == "" || grepl("uncultured|unknown|unidentified|metagenome", found_dt, ignore.case = TRUE)){
-                        hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
-                                                            hierarchy_found[h_id_num - 1], 
-                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
+                        # hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
+                        #                                     hierarchy_found[h_id_num - 1], 
+                        #                                     paste("Unknown", hierarchy_found[h_id_num - 1]))
+                        hierarchy_found[h_id_num] <- NA
                     } else{
                         hierarchy_found[h_id_num] <- found_dt
                     }
                 } else{
-                    hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
-                                                            hierarchy_found[h_id_num - 1], 
-                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
+                    # hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
+                    #                                         hierarchy_found[h_id_num - 1], 
+                    #                                         paste("Unknown", hierarchy_found[h_id_num - 1]))
+                    hierarchy_found[h_id_num] <- NA
+
                 }    
             }
             return(hierarchy_found)

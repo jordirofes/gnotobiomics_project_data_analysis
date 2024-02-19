@@ -36,6 +36,11 @@ source("../../scripts/Utility_Functions/utilities.R")
 
 ```
 
+```{r, include=FALSE}
+datatable(iris)
+```
+
+
 ## rGreat {.tabset}
 
 ```{r}
@@ -57,13 +62,13 @@ granges_list <- lapply(params$dmr_exp_list , function(ctrs_res){
 })
 ```
 
-### GO {.tabset}
+<!-- ### GO {.tabset} -->
 
 ```{r}
 enrich_results_list$ORA <- list()
 ```
 
-#### BP {.tabset}
+<!-- #### BP {.tabset} -->
 
 ```{r, cache=TRUE}
 set.seed(params$random_seed)
@@ -86,35 +91,33 @@ contrs_result_sig_list <- lapply(great_results, function(gr_res){
     enrich_res <- getEnrichmentTable(gr_res)
     enrich_res <- subset(enrich_res, p_adjust <= 0.05)
 
-    enrich_res <- rename(enrich_res, c("ID" = "id"))
+    enrich_res$ID <- enrich_res$id
     enrich_res <- clusterProfiler:::simplify_internal(
         res = enrich_res, cutoff = 0.7, by = "fold_enrichment", select_fun = max, 
         ontology = "BP", semData = bp_data)
-    # enrich_res <- test_f(res = enrich_res, cutoff = 0.6, ontology = "BP", by = "p_adjust", semData = bp_data)
-    
-    return(enrich_res)
+    gr_res@table <- enrich_res
+    return(list("BP" = gr_res))
 })
 contrs_names <- names(contrs_result_sig_list)
 
 enrich_results_list$ORA <- c(enrich_results_list$ORA, contrs_result_sig_list)
 
 template <- c(
-    "##### `r contrs_names[{{i}}]` \n",
+    "#### `r contrs_names[{{i}}]` \n", "\n",
     "```{r, echo = FALSE}\n",
-    "datatable(contrs_result_sig_list[[{{i}}]], options = list(scrollX = TRUE))",
+    "datatable(contrs_result_sig_list[[{{i}}]], options = list(scrollX = TRUE)) \n",
     "```\n",
     "\n"
 )
 ```
 
-```{r}
-tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
-                                          contrs_names = contrs_names, template = template)
-```
+<!-- # ```{r} -->
+<!-- # tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list[[1]],  -->
+<!-- #                                           contrs_names = contrs_names, template = template) -->
+<!-- # ``` -->
+<!-- #  -->
 
-`r knit(text=unlist(tables_chunk))`
-
-#### MF {.tabset}
+<!-- #### MF {.tabset} -->
 
 ```{r, cache=TRUE}
 set.seed(params$random_seed)
@@ -137,25 +140,25 @@ contrs_result_sig_list <- lapply(great_results, function(gr_res){
     enrich_res <- getEnrichmentTable(gr_res)
     enrich_res <- subset(enrich_res, p_adjust <= 0.05)
 
-    enrich_res <- rename(enrich_res, c("ID" = "id"))
+    enrich_res$ID <- enrich_res$id
     enrich_res <- clusterProfiler:::simplify_internal(
         res = enrich_res, cutoff = 0.7, by = "fold_enrichment", 
         select_fun = max, ontology = "MF", semData = mf_data)
-    return(enrich_res)
+    gr_res@table <- enrich_res
+    return(list("MF" = gr_res))
 })
 contrs_names <- names(contrs_result_sig_list)
 
 enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_sig_list)
 ```
 
-```{r}
-tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
-                                          contrs_names = contrs_names, template = template)
-```
+<!-- # ```{r} -->
+<!-- # tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list[[1]],  -->
+<!-- #                                           contrs_names = contrs_names, template = template) -->
+<!-- # ``` -->
+<!-- #  -->
 
-`r knit(text=unlist(tables_chunk))`
-
-#### CC {.tabset}
+<!-- #### CC {.tabset} -->
 
 ```{r, cache=TRUE}
 set.seed(params$random_seed)
@@ -178,28 +181,33 @@ contrs_result_sig_list <- lapply(great_results, function(gr_res){
     enrich_res <- getEnrichmentTable(gr_res)
     enrich_res <- subset(enrich_res, p_adjust <= 0.05)
 
-    enrich_res <- rename(enrich_res, c("ID" = "id"))
+    enrich_res$ID <- enrich_res$id
     enrich_res <- clusterProfiler:::simplify_internal(
         res = enrich_res, cutoff = 0.7, by = "fold_enrichment", 
         select_fun = max, ontology = "CC", semData = cc_data)
-    return(enrich_res)
+    gr_res@table <- enrich_res
+    return(list("CC" = gr_res))
 })
 contrs_names <- names(contrs_result_sig_list)
 
 enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_sig_list)
 ```
 
-```{r}
-tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
-                                          contrs_names = contrs_names, template = template)
-```
-
-`r knit(text=unlist(tables_chunk))`
-
-### KEGG {.tabset}
+<!-- # ```{r} -->
+<!-- # tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list[[1]],  -->
+<!-- #                                           contrs_names = contrs_names, template = template) -->
+<!-- # ``` -->
+<!-- #  -->
+        
+<!-- ### KEGG {.tabset} -->
 
 ```{r}
 kegg_pw <- rGREAT::getKEGGPathways("mmu")
+
+kegg_description <- gsub("^ ", "", sapply(strsplit(names(kegg_pw), ":"), function(x){x[2]}))
+
+names(kegg_pw) <- sapply(strsplit(names(kegg_pw), ":"), function(x){x[1]})
+names(kegg_description) <- names(kegg_pw)
 ```
 
 ```{r, cache=TRUE}
@@ -219,38 +227,38 @@ contrs_result_sig_list <- lapply(great_results, function(gr_res){
         return(data.frame())
     }
     enrich_res <- getEnrichmentTable(gr_res)
+    
+    enrich_res$description <- kegg_description[enrich_res$id]
     enrich_res <- subset(enrich_res, p_adjust <= 0.05)
-
-    return(enrich_res)
+    
+    gr_res@table <- enrich_res
+    return(list("kegg" = gr_res))
 })
 contrs_names <- names(contrs_result_sig_list)
 
 enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_sig_list)
-
-template <- c(
-    "#### `r contrs_names[{{i}}]` \n",
-    "```{r, echo = FALSE}\n",
-    "datatable(contrs_result_sig_list[[{{i}}]], options = list(scrollX = TRUE))",
-    "```\n",
-    "\n"
-)
 ```
 
-```{r}
-tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
-                                          contrs_names = contrs_names, template = template)
-```
-
-`r knit(text=unlist(tables_chunk))`
-
+<!-- # ```{r} -->
+<!-- # tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list[[1]],  -->
+<!-- #                                           contrs_names = contrs_names, template = template) -->
+<!-- # ``` -->
+<!-- #  -->
 
 
-### WP {.tabset}
+
+<!-- ### WP {.tabset} -->
 
 ```{r, results='hide'}
 wiki_pw <- GSA::GSA.read.gmt("../../inputs/wikipathways-20240101-gmt-Mus_musculus.gmt")
 wiki_genesets <- wiki_pw$genesets
 names(wiki_genesets) <- wiki_pw$geneset.names
+
+
+wp_description <- sapply(strsplit(names(wiki_genesets), "%"), function(x){x[1]})
+names(wiki_genesets) <- sapply(strsplit(names(wiki_genesets), "%"), 
+                                grep, value = TRUE, pattern = "WP[[:digit:]]+")
+names(wp_description) <- names(wiki_genesets)
 ```
 
 ```{r, cache=TRUE}
@@ -270,8 +278,11 @@ contrs_result_sig_list <- lapply(great_results, function(gr_res){
         return(data.frame())
     }
     enrich_res <- getEnrichmentTable(gr_res)
+    enrich_res$description <- wp_description[enrich_res$id]
+    
     enrich_res <- subset(enrich_res, p_adjust <= 0.05)
-    return(enrich_res)
+    gr_res@table <- enrich_res
+    return(list("wp" = gr_res))
 })
 contrs_names <- names(contrs_result_sig_list)
 
@@ -279,14 +290,13 @@ enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_s
 
 ```
 
-```{r}
-tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
-                                          contrs_names = contrs_names, template = template)
-```
-
-`r knit(text=unlist(tables_chunk))`
-
-### MSIGdbr H {.tabset}
+<!-- # ```{r} -->
+<!-- # tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list[[1]],  -->
+<!-- #                                           contrs_names = contrs_names, template = template) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- #  -->
+<!-- # ### MSIGdbr H {.tabset} -->
 
 ```{r}
 library(msigdbr)
@@ -315,7 +325,8 @@ contrs_result_sig_list <- lapply(great_results, function(gr_res){
     }
     enrich_res <- getEnrichmentTable(gr_res)
     enrich_res <- subset(enrich_res, p_adjust <= 0.05)
-    return(enrich_res)
+    gr_res@table <- enrich_res
+    return(list("msigdbrORA_H" = gr_res))
 })
 
 enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_sig_list)
@@ -323,14 +334,13 @@ enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_s
 contrs_names <- names(contrs_result_sig_list)
 ```
 
-```{r}
-tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
-                                          contrs_names = contrs_names, template = template)
-```
-
-`r knit(text=unlist(tables_chunk))`
-
-### MSIGdbr C2 {.tabset}
+<!-- # ```{r} -->
+<!-- # tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list[[1]],  -->
+<!-- #                                           contrs_names = contrs_names, template = template) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- #  -->
+<!-- # ### MSIGdbr C2 {.tabset} -->
 
 ```{r}
 library(msigdbr)
@@ -359,7 +369,8 @@ contrs_result_sig_list <- lapply(great_results, function(gr_res){
     }
     enrich_res <- getEnrichmentTable(gr_res)
     enrich_res <- subset(enrich_res, p_adjust <= 0.05)
-    return(enrich_res)
+    gr_res@table <- enrich_res
+    return(list("msigdbrORA_C2" = gr_res))
 })
 
 enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_sig_list)
@@ -367,18 +378,45 @@ enrich_results_list$ORA <- base::Map(c, enrich_results_list$ORA, contrs_result_s
 contrs_names <- names(contrs_result_sig_list)
 ```
 
-```{r}
-tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
-                                          contrs_names = contrs_names, template = template)
-```
-
-`r knit(text=unlist(tables_chunk))`
+<!-- # ```{r} -->
+<!-- # tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list[[1]],  -->
+<!-- #                                           contrs_names = contrs_names, template = template) -->
+<!-- # ``` -->
+<!-- #  -->
 
 ```{r}
 saveRDS(enrich_results_list,  paste0(params$output_dir, params$results_name, 
                                     "_dmr_enrich_results.rds"))
 ```
 
+```{r, results='asis'}
+for(enrich_type in names(enrich_results_list)){
+    enrich_list <- enrich_results_list[[enrich_type]]
+    
+    cat(paste0("### ", enrich_type, " {.tabset} \n"))
+    for(dt_type in names(enrich_list)){
+        
+        cat(paste0("#### ", dt_type, " {.tabset} \n"))
+        cat("\n")
+        enrich_results <- enrich_list[[dt_type]]
+
+        for(enrich_name in names(enrich_results)){
+            
+            dt_to_table <- getEnrichmentTable(enrich_results[[enrich_name]])
+            num_vars <- sapply(dt_to_table, is.numeric)
+            cat(paste0("##### ", enrich_name, " {.tabset} \n"))
+            cat("\n")
+            cat(knit_print(datatable(dt_to_table,
+                                    options = list(scrollX = TRUE, pageLength = 5
+                                    )) %>%
+                                formatRound(columns = colnames(dt_to_table)[num_vars], digits = 3)), "\n")
+            cat("\n")
+        }
+        cat("\n")
+    }
+    cat("\n")
+}
+```
 
 ## Appendix
 

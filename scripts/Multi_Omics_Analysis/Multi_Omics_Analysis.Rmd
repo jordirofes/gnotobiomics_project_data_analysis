@@ -30,6 +30,8 @@ library(TreeSummarizedExperiment)
 library(GGally)
 ```
 
+
+
 ## Loaded matrices
 
 ```{r}
@@ -45,12 +47,12 @@ filter_list <- c("16S", "Shotgun.cecum", "Shotgun.colon")
 ```{r}
 multi_omics_names <- names(experiments(multi_omics))
 
-multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S|unsupervised", multi_omics_names)]
+multi_omics_selected <- multi_omics_names[!grepl("16S|Shotgun|Functional|unsupervised", multi_omics_names)]
 
 # multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S|unsupervised|Targeted|Metallomics|Histone", multi_omics_names)]
 
 # multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("genus", multi_omics_names)])
-multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("Species|metaerg_kegg|cogs", multi_omics_names)])
+multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("Species|Genus|metaerg_kegg|cogs", multi_omics_names)])
 # |EC|metaer_kegg|cogs
 multi_omics_selected
 ```
@@ -99,6 +101,14 @@ experiments(multi_omics) <- ExperimentList(filtered_exps)
 
 ## Run MOFA2
 
+We have a multi-omic dataset with over 35 datasets, including the different levels of hierarchy for the 16S and Shotgun Metagenomics and the different annotations for the functional metagenomics results.
+
+We visualized the principal component analysis for each individual omic to have a vision of the data and select which datasets from the hierarchical levels and the functional metagenomics. With the results we choose to keep the Species hierarchy level and for the functional metagenomics the COGS and metaerg-kegg annotations.
+
+We also applied a p-value threshold of 0.05 in any of the contrast to filter variables and match the results from the whole genome bisulphite that, because we used the DSS method that finds DMRs from clusters of statistically significant CpGs were already biased.
+
+Thus, the MOFA model will help us find correlated feature patterns in the statistically significant data.
+
 ```{r}
 num_factors <- 3
 
@@ -126,7 +136,7 @@ param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
     multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE", multi_omics_selected],
     group_var = "group",
     num_factors = num_factors,
-    results_name = "any_sig_005_mofa_int",
+    results_name = "any_sig_gs_005_mofa_int",
     color_vec = c("CNT"="black", "HFD"="red", "INT"="blue")
 )
 # c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
@@ -137,6 +147,8 @@ xfun::Rscript_call(rmarkdown::render,
                                 params = param_list
                             )
                     )
+
+
 
 # param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
 #     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
@@ -156,115 +168,26 @@ xfun::Rscript_call(rmarkdown::render,
 #                     )
 ```
 
+We can look at the resulting html file and we can the that all most of the variance for all the omics data is captured by the two first factors and the third one is biased towards the RNA-Seq. This makes sense because we have big differences in variable size between all the omics, this phenomena is difficult to avoid because we have many omics with very low values, even if we didn't apply a filter, thus, as the first two factors, surprisingly don't seem to be affected by this effect, and we have all the omics represented at least with a 20% of explained variance in these, we decided to proceed with it.
 
+The factor boxplots show quite clearly two different patterns in the data, the first factor, represents features which change by the high fat diet (HFD) and are restored to similar levels by the intervention (INT); the second one shows features that are affected by HFD but the intervention fails to restore to control levels, keeping their levels changed.
 
+Correlating these factors with the explained variance of each omic, we can see many omics biased towards one of both factors thus, we can propose that the liver histone hodifications, metallomics, targeted metabolomics and methylomics (WGB); serum targeted metabolomics and the cecum and colon functional metagenomics KEGG have a higher variance explained in the first factor thus, are the omics with the most significant features that are restored by the intervention and the cecum metallomics and targeted metabolomics are biased toward the second factor, thus they are changed by the HFD and kept mostly unchanged by the intervention.
 
-```{r}
-# param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
-#     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
-#     multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE"],
-#     group_var = "group",
-#     num_factors = num_factors,
-#     results_name = "mofa_int",
-#     color_vec = c("CNT"="black", "HFD"="red", "INT"="blue")
-# )
-# # c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
-# xfun::Rscript_call(rmarkdown::render,
-#                     args = list(input = "./MOFA_Models.Rmd", 
-#                                 output_file = paste0(param_list$output_dir,
-#                                                      param_list$results_name, ".html"), 
-#                                 params = param_list
-#                             )
-#                     )
+These correlations with the first factor correlation reveal that epigenetic signatures, when affected by the high fat diet, are mostly restored to control levels after a life-style intervention, and the histone modifications and targeted metabolomics, which focused on epigenetically relevant metabolites.
 
-param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
-    output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
-    multi_omics_exp = multi_omics[,colData(multi_omics)$group != "INT"],
-    group_var = "group",
-    num_factors = num_factors,
-    results_name = "mofa_hfe",
-    color_vec = c("CNT"="black", "HFD"="red", "HFE"="green")
-)
-# c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
-xfun::Rscript_call(rmarkdown::render,
-                    args = list(input = "./MOFA_Models.Rmd", 
-                                output_file = paste0(param_list$output_dir,
-                                                     param_list$results_name, ".html"), 
-                                params = param_list
-                            )
-                    )
-```
+All the remaining omics: the liver untargeted metabolomics, rna-sequencing and the colon and cecum metagenomics and functional clusters of orthologous groups of proteins, have even weights indicating that they contain features that can explain the variance in both factors.
 
+Interestingly most of the metagenomics data, except the kegg functions show this pattern with the transcriptomics and untargeted metabolomics.
 
+Looking at the weights of each feature in these factors we can see which of them are most important in explaining these patterns of the data. We looked at the absolute value distribution of weights for each omic and used as threshold for variable selection a percentage of features proportional to the variance explained of each omic in each factor.
 
-
-```{r}
-mice_dt <- openxlsx::read.xlsx(paste0(params$input_dir, "AnimalData_OscarYanes.xlsx"))
-
-# mice_num <- mice_dt[,c("BW(g)", "WATep(g)", "Liver(g)")]
-mice_num <- mice_dt
-mice_s <- as.data.frame(mice_num)
-
-dict_vect <- c("Ctrl" = "CNT", "Ctrl ext" = "CNT", "HFD" = "HFD", "INT2" = "INT", "HFD excl." = "HFE")
-mice_s$group <- factor(dict_vect[mice_dt$Group], levels = c("CNT", "HFD", "INT", "HFE"))
-
-dict_vect_g <- c("CNT" = "C", "HFD" = "H", "INT" = "I", "HFE" = "E")
-
-mice_s$samplename <- paste0(make.names(mice_dt$ID), dict_vect_g[mice_s$group])
-
-
-mice_s$samplename[!mice_s$samplename %in% multi_omics$samplename]
-multi_omics$samplename[!multi_omics$samplename %in% mice_s$samplename]
-
-mice_s$samplename[mice_s$samplename == "X686I"] <- "X687I"
-
-mice_s <- dplyr::left_join(as.data.frame(colData(multi_omics)), mice_s, by = "samplename")
-mice_s
-```
-
-
-```{r}
-d3plot <- plot_ly(x = mice_s$`BW(g)`, y = mice_s$`WATep(g)`, z = mice_s$`Liver(g)`,
-                    color = as.factor(mice_s$Sacrifice))
-d3plot <- d3plot %>% add_markers()
-d3plot <- d3plot %>% layout(scene = list(
-    xaxis = list(title = "BW (g)"),
-    yaxis = list(title = "WATep (g)"),
-    zaxis = list(title = "Liver (g)")))
-d3plot
-```
-
-```{r}
-factor_dt <- readRDS(paste0(params$output_dir, "/MOFA_Results/specie_metaerg_pathway_any_sig_mofa_int/factor_data.rds"))
-
-mice_sub <- mice_s[mice_s$group.x != "HFE",]
-
-all(names(factor_dt$group1[,3]) == mice_sub$samplename)
-
-cor(mice_sub$`BW(g)`, factor_dt$group1[,3])
-cor(mice_sub$`WATep(g)`, factor_dt$group1[,3])
-cor(mice_sub$`Liver(g)`, factor_dt$group1[,3])
-
-
-ctr_sub <- mice_sub[mice_sub$group.x == "CNT",]
-ctr_fact <- factor_dt$group1[mice_sub$group.x == "CNT",]
-
-cor(ctr_sub$`BW(g)`, ctr_fact[,3])
-cor(ctr_sub$`WATep(g)`, ctr_fact[,3])
-cor(ctr_sub$`Liver(g)`, ctr_fact[,3])
-
-plot(ctr_sub$`BW(g)`, ctr_fact[,3])
-plot(ctr_sub$`WATep(g)`, ctr_fact[,3])
-plot(ctr_sub$`Liver(g)`, ctr_fact[,3])
-
-
-```
-
+We applied an overrepresentation analysis (ORA) to the significant genes and differentially methylated regions from each weight, dividing them into three subset: all the weights and dividing it into positive and negative weights.
 
 ### ORA analysis {.tabset}
 
 ```{r}
-output_dir <- paste0(params$output_dir, "MOFA_Results/any_sig_005_mofa_int/")
+output_dir <- paste0(params$output_dir, "MOFA_Results/any_sig_gs_005_mofa_int/")
 omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
 rna_seq_rd <- rowData(experiments(omic_dt)$RNA_Sequencing)
     
@@ -302,6 +225,11 @@ for(rna_seq_name in names(rna_seq_list)){
                         )
 }
 ```
+
+The positive weights from the factor 1, genes that increase with the high fat diet and get reduced by the intervention, are enriched with GO terms related to the immune system such as response to beta interferon, chemotaxis, phagocytosis... These can be very well related with the known inflammatory problems that arise from the high fat diet, the subsequent infiltration of of immune cells into the liver and its reversibility before reaching the liver cyrrosis and loss of function. The negative weights, which includes genes that are reduced by the high fat diet and increased with the intervention, indicate epigenetic changes showing GO terms such as demethylation, that inversely correlates with the WGB results where there was an increased methylation state in the high fat diet (could check if all the weights are positive in the WGB), meaning that the demethylation was reduced (Could plot all the genes related to demethylation and correlate them to the DMRs) and chromatin remodelling; and metabolic changes such as catabolic processes which makes sense to be reduced when there is an excess of nutrients.
+
+The positive weights from factor 2, genes that are increased by the high fat diet and they keep their expression levels, show changes in the metabolism, focused on lipids and small molecules      
+
 
 ### rGREAT Enrichment & Region Analysis {.tabset}
 
@@ -343,95 +271,264 @@ for(dna_seq_name in names(dna_met_list)){
 }
 ```
 
+### Comparing DMR and Transcriptomics enrichment results
 
 ```{r}
-library(msigdbr)
-txdb <- "TxDb.Mmusculus.UCSC.mm39.refGene"
-h_gene_sets = msigdbr(species = "Mus musculus", category = "H")
-
-h_gene_sets = split(h_gene_sets$entrez_gene, h_gene_sets$gs_name)
-h_gene_sets = lapply(h_gene_sets, as.character)  # just to make sure gene IDs are all in character.
-```
-
-```{r}
-sig_tables <- lapply(factor_ids, function(id){
-    multi_omics[keep_var_list[[id]],,"DNA_Methylation.liver"][["DNA_Methylation.liver"]]
-})
-names(sig_tables) <- paste("Factor", seq_along(sig_tables))
+library(GOSemSim)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
+library(DOSE)
+overlap_list <- list()
+for(factor_id in paste0("Factor_", seq_len(num_factors))){
+    rna_seq_enrich <- readRDS(paste0(output_dir, factor_id, "_rna_seq_enrich_results.rds"))
+    rna_seq_enrich <- rna_seq_enrich$ORA
+    dna_seq_enrich <- readRDS(paste0(output_dir, factor_id, "_dmr_enrich_results.rds"))
+    dna_seq_enrich <- dna_seq_enrich$ORA
     
-set.seed(1234)
-great_results <- lapply(sig_tables, function(ctrs_res){
-    if(nrow(ctrs_res) == 0){return(NA)}
-    sub_granges <- rowRanges(ctrs_res)
-    mcols(sub_granges) <- mcols(sub_granges)[!colnames(mcols(sub_granges)) %in% 
-                                               c("seqnames", "ranges", "strand", 
-                                                "seqlevels", "seqlengths",
-                                                "isCircular", "start", "end", 
-                                                "width", "element")]  
-    return(great(gr = sub_granges, gene_sets = h_gene_sets, 
-                tss_source = txdb))
-})
-
-contrs_result_sig_list <- lapply(great_results, function(gr_res){
-    if(!is(gr_res, "GreatObject")){
-        return(data.frame())
+    overlap_list[[factor_id]] <- list()
+    
+    for(type_enrich in names(rna_seq_enrich)){
+        rna_enrich_list <- rna_seq_enrich[[type_enrich]]
+        dna_enrich_list <- dna_seq_enrich[[type_enrich]]
+        
+        overlap_list[[factor_id]][[type_enrich]] <- list()
+        
+        for(enrich_id in names(rna_enrich_list)){
+            rna_obj <- rna_enrich_list[[enrich_id]]
+            rna_dt <- as.data.frame(rna_obj)
+            
+            dna_obj <- dna_enrich_list[[enrich_id]]
+            dna_dt <- dna_obj@table
+            
+            # if(enrich_id == "kegg"){
+            #     dna_dt$description <- gsub("^ ", "", sapply(strsplit(dna_dt$id, ":"), function(x){x[2]}))
+            #     dna_dt$id <- sapply(strsplit(dna_dt$id, ":"), function(x){x[1]})
+            # }
+            # if(enrich_id == "wp"){
+            #     dna_dt$description <- dna_dt$id
+            #     dna_dt$id <- sapply(strsplit(dna_dt$id, "%"), 
+            #                         grep, value = TRUE, pattern = "WP[[:digit:]]+")
+            #     
+            # }
+            if(enrich_id %in% c("BP", "CC", "MF")){
+                go_sem <- godata(OrgDb = org.Mm.eg.db, ont = tolower(enrich_id))
+                
+                go_sim <- go_similarity_matrix(rna_dt$ID, dna_dt$id, 
+                                                semData = go_sem, measure = "Wang")
+                rna_sim <- rownames(go_sim)[apply(go_sim >= 0.7, 1, any)]
+                dna_sim <- colnames(go_sim)[apply(go_sim >= 0.7, 2, any)]
+                
+                rna_filt <- rna_dt[rna_dt$ID %in% rna_sim,]
+                dna_filt <- dna_dt[dna_dt$id %in% dna_sim,]
+                
+                rna_gene_list <- strsplit(rna_filt$geneID, "/")
+                
+                overlap_list[[factor_id]][[type_enrich]][[enrich_id]] <- list(
+                    "go_rna_dt" = rna_filt, 
+                    "go_dna_dt" = dna_filt)
+                
+            } else{
+                rna_filt <- rna_dt[rna_dt$ID %in% intersect(rna_dt$ID, dna_dt$id),]
+                dna_filt <- dna_dt[dna_dt$id %in% intersect(rna_dt$ID, dna_dt$id),]
+                
+                rna_gene_list <- strsplit(rna_filt$geneID, "/")
+                rna_gene_list <- lapply(rna_gene_list, mapIds, x = org.Mm.eg.db, keytype = "ENTREZID",
+                                        column = "SYMBOL", multiVals = "first")
+                    
+                overlap_list[[factor_id]][[type_enrich]][[enrich_id]] <- list(
+                    "go_rna_dt" = rna_filt, 
+                    "go_dna_dt" = dna_filt)   
+            }
+            
+            names(rna_gene_list) <- rna_filt$ID
+            
+            dna_annot <- getRegionGeneAssociations(dna_obj)
+            dmr_gene_list <- as.list(mcols(dna_annot)$annotated_genes)
+            names(dmr_gene_list) <- rownames(mcols(dna_annot))
+            
+            found_gsets <- dna_obj@gene_sets[dna_filt$id]
+            
+            dna_gene_list <- lapply(found_gsets, function(x){
+                found_g <- lapply(dmr_gene_list, function(dmr_ids){
+                    dmr_ids[x]
+                })
+                found_g <- unlist(found_g)
+                unique(found_g[!is.na(found_g)])
+            })
+            gene_overlap <- intersect(unique(unlist(dna_gene_list)),
+                                      unique(unlist(rna_gene_list)))
+            found_pairs <- data.frame("transcript" = gene_overlap, 
+                       "dmr" = sapply(gene_overlap, function(x){
+                           found_dmr <- sapply(dmr_gene_list, function(dmr_info){
+                               any(dmr_info %in% x)
+                           })
+                           paste(names(found_dmr)[found_dmr], collapse = ";")
+                       }))
+            
+            overlap_list[[factor_id]][[type_enrich]][[enrich_id]]$gene_overlap <- found_pairs
+            
+            
+            
+            # overlap_list[[factor_id]][[type_enrich]][[enrich_id]] <- length(intersect(rna_dt, dna_dt))/length(union(rna_dt, dna_dt))
+            
+            
+        }
+        
     }
-    return(getEnrichmentTable(gr_res))
+}
+
+saveRDS(overlap_list, file = paste0(output_dir, "go_overlap_results.rds"))
+```
+
+## MOFA variables correlations (any significant)
+
+```{r}
+output_dir <- paste0(params$output_dir, "MOFA_Results/any_sig_gs_005_mofa_int/")
+corr_output_dir <- paste0(output_dir, "correlation_results/")
+
+omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
+
+network_omics <- list("All Omics" = names(assays(omic_dt)))
+
+# network_omics$`All Omics` <- grep("Untargeted|Targeted|RNASeq|species|metaerg_kegg|Metallomics|PTM|DNA_Methylation.liver",
+#                                   network_omics$`All Omics`, value = TRUE)
+
+# lapply(experiments(multi_omic_dt), function(x){colnames(rowData(x))})
+
+variables_dicts <- lapply(network_omics[[1]], function(omic_name){
+    if(omic_name == "RNA_Sequencing"){
+        return("gene_lab")
+    } else if(omic_name == "Untargeted_Metabolomics"){
+        return("HFD-CNT.PutativeMetabolites")
+        #return("HFD-CNT.formula")
+    } else if(grepl("DNA_Methylation", omic_name)){
+        return("geneName")
+    } else if(grepl("cogs", omic_name)){
+        return("Description")
+    } else{
+        return(NA)
+    }
 })
-contrs_names <- names(contrs_result_sig_list)
-template <- c(
-    "#### `r contrs_names[{{i}}]` \n",
-    "```{r, echo = FALSE}\n",
-    "datatable(contrs_result_sig_list[[{{i}}]], options = list(scrollX = TRUE))",
-    "```\n",
-    "\n"
-)
+names(variables_dicts) <- network_omics[[1]]
+variables_dicts[is.na(variables_dicts)] <- NULL
+
+add_var_names <- grep("weights|FC", colnames(rowData(omic_dt@ExperimentList$RNA_Sequencing)), value = T)
+
+corr_method_vect <- c("kendall", "spearman", "pearson")
+
+for(corr_method in corr_method_vect){
+    
+#     xfun::Rscript_call(rmarkdown::render,
+#                             args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
+#                               output_file = corr_output_dir,
+#                               params = list(
+#                                 corr_threshold = 0.8,
+#                                 corr_method = corr_method,
+#                                 multi_omic_path = omic_dt,
+#                                 group_metadata_var = "group",
+#                                 sample_levels_2_correlate = c("CNT", "HFD", "INT"),
+#                                 filter_variable_2_correlate = list(
+#                                     "Factor_1" = quote(Factor_1_weights_sig),
+#                                     "Factor_2" = quote(Factor_2_weights_sig)
+#                                 ),
+#                                 omic_list_2_correlate = network_omics,
+#                                 rowData_variable_name_list = variables_dicts,
+#                                 draw_networks = TRUE,
+#                                 add_autocorrelations = TRUE,
+#                                 keep_full_correlations = TRUE,
+#                                 output_dir = corr_output_dir,
+#                                 output_suffix = paste0("08_005_chi_f1f2_", corr_method), 
+#                                 add_variables = TRUE,
+#                                 variables_names = add_var_names))
+#                       )
+
+
+    xfun::Rscript_call(rmarkdown::render,
+                                args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
+                                  output_file = corr_output_dir,
+                                  params = list(
+                                    corr_threshold = 0.8,
+                                    corr_method = corr_method,
+                                    multi_omic_path = omic_dt,
+                                    group_metadata_var = "group",
+                                    sample_levels_2_correlate = c("CNT", "HFD", "INT"),
+                                    filter_variable_2_correlate = list(
+                                        "All" = NA
+                                    ),
+                                    omic_list_2_correlate = network_omics,
+                                    rowData_variable_name_list = variables_dicts,
+                                    draw_networks = TRUE,
+                                    add_autocorrelations = FALSE,
+                                    keep_full_correlations = TRUE,
+                                    output_dir = corr_output_dir,
+                                    output_suffix = paste0("08_005_chi", corr_method), 
+                                    add_variables = TRUE,
+                                    variables_names = add_var_names))
+                          )
+}
+# rmarkdown::render(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
+#                           output_file = corr_output_dir,
+#                           params = list(
+#                             corr_threshold = 0.9,
+#                             multi_omic_path = omic_dt,
+#                             group_metadata_var = "group",
+#                             sample_levels_2_correlate = c("CNT", "HFD", "INT"),
+#                             filter_variable_2_correlate = list(
+#                                 "All" = NA
+#                             ),
+#                             omic_list_2_correlate = network_omics,
+#                             rowData_variable_name_list = variables_dicts,
+#                             draw_networks = TRUE,
+#                             add_autocorrelations = FALSE,
+#                             keep_full_correlations = TRUE,
+#                             output_dir = corr_output_dir,
+#                             output_suffix = "09_chi"))
 ```
+
+### Network downstream analysis
 
 ```{r}
-tables_chunk <- significant_tables_chunks(contrs_result_sig_list = contrs_result_sig_list, 
-                                          contrs_names = contrs_names, template = template)
-```
+nw_dt <- readRDS(paste0(corr_output_dir, "network_results_08_chi.rds"))
+nw_dt <- nw_dt$All$`All Omics`
 
-`r knit(text=unlist(tables_chunk))`
-
-### Region Annotation
-
-```{r}
-omic_dt_list <- c("All Results" = multi_omics[["DNA_Methylation.liver"]], sig_tables[1:2])
-
-dmr_annotation_plot(omic_dt = omic_dt_list)
-# test_dt <- factor_tables[1:2,]
-# fisher.test(factor_tables[1,])
-```
-
-### Chromosome Plots
-
-```{r, fig.height=6, fig.width=8}
-possible_chromosomes  <- unique(seqnames(rowRanges(multi_omics[["DNA_Methylation.liver"]])))
-dmr_annotation_plot(omic_dt_list, annotation_labels = possible_chromosomes, 
-                    annotation_metadata_var = "seqnames", x_lab = "Chromosome Proportions")
-```
-
-
-```{r}
-# possible_annotations <- c("Intron", "Promoter", "Distal Intergenic", "3' UTR", "5' UTR", "Exon", "Downstream")
+# saveRDS(nw_dt, paste0(corr_output_dir, "network_results_08_chi.rds"))
 # 
-# factor_tables <- lapply(c("All Results" = multi_omics[["DNA_Methylation.liver"]], sig_tables[1:3]), function(exp_dt){
-#     exp_annotation <- sapply(possible_annotations, function(x){
-#         found_anno <- grepl(pattern = x, rowData(exp_dt)$annotation)
-#         sum(found_anno)
-#     })
-#     exp_annotation
-#     # table(unlist(exp_annotation))
-# })
-# factor_tables <- do.call(rbind, factor_tables)
-# factor_annotation_dt <-factor_tables/rowSums(factor_tables)
-# 
-# plot_dt <- reshape2::melt(factor_annotation_dt)
-# plot_dt$Var1 <- factor(plot_dt$Var1, levels = rev(levels(plot_dt$Var1)))
-# ggplot(plot_dt, aes(x = value, y = Var1, fill = Var2)) + geom_col() + scale_fill_brewer(palette = "Set2") + theme_minimal() + xlab("Region Proportions") + ylab(NULL) + theme(legend.title = element_blank())
+# type_attrs <- grep("type_", vertex_attr_names(nw_dt), value = TRUE)
+# type_attrs        
+# for(attr_name in type_attrs){
+#     nw_dt <- remove.vertex.attribute(nw_dt, name = attr_name)    
+# }
+edge_list <- get.edgelist(nw_dt)
+
+edge_attr(nw_dt, "Edge_Nodes") <- paste(V(nw_dt)[edge_list[,1]]$Node_Omic,
+                                        V(nw_dt)[edge_list[,2]]$Node_Omic, 
+                                        sep = "-")
+
+table(vertex_attr(nw_dt, name = "Node_Omic"))
+table(edge_attr(nw_dt, name = "Edge_Nodes"))
+
+
+filt_nw <- igraph::subgraph(nw_dt, 
+                            vertex_attr(nw_dt, name = "Node_Omic") %in% 
+                                c("RNA_Sequencing", "WGB_DNA_Methylation"))
+filt_nw
+filt_ed_list <- as.data.frame(igraph::as_edgelist(filt_nw))
+colnames(filt_ed_list) <- c("RNA_Sequencing", "WGB_DNA_Methylation")
+
+V(filt_nw)[degree(filt_nw)[max(degree(filt_nw))]]
+
+hist(table(filt_ed_list$RNA_Sequencing), breaks = 100, main = "RNA-Seq genes with >0.8 correlation with DMRs", 
+     xlab = "Number of correlated DMRs")
+length(table(filt_ed_list$RNA_Sequencing))
+
+hist(table(filt_ed_list$WGB_DNA_Methylation), breaks = 100, main = "DMRs with >0.8 correlation with RNA-Seq genes", 
+     xlab = "Number of correlated genes")
+length(table(filt_ed_list$WGB_DNA_Methylation))
+
+
+
 ```
+
 
 <!-- ## LIMA full unsupervised -->
 
@@ -541,6 +638,109 @@ dmr_annotation_plot(omic_dt_list, annotation_labels = possible_chromosomes,
 <!--     ) -->
 <!-- } -->
 <!-- ``` -->
+
+
+```{r}
+# param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
+#     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
+#     multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE"],
+#     group_var = "group",
+#     num_factors = num_factors,
+#     results_name = "mofa_int",
+#     color_vec = c("CNT"="black", "HFD"="red", "INT"="blue")
+# )
+# # c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
+# xfun::Rscript_call(rmarkdown::render,
+#                     args = list(input = "./MOFA_Models.Rmd", 
+#                                 output_file = paste0(param_list$output_dir,
+#                                                      param_list$results_name, ".html"), 
+#                                 params = param_list
+#                             )
+#                     )
+
+param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
+    output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
+    multi_omics_exp = multi_omics[,colData(multi_omics)$group != "INT"],
+    group_var = "group",
+    num_factors = num_factors,
+    results_name = "mofa_hfe",
+    color_vec = c("CNT"="black", "HFD"="red", "HFE"="green")
+)
+# c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
+xfun::Rscript_call(rmarkdown::render,
+                    args = list(input = "./MOFA_Models.Rmd", 
+                                output_file = paste0(param_list$output_dir,
+                                                     param_list$results_name, ".html"), 
+                                params = param_list
+                            )
+                    )
+```
+
+
+## Pre-Analysis
+
+
+```{r}
+mice_dt <- openxlsx::read.xlsx(paste0(params$input_dir, "AnimalData_OscarYanes.xlsx"))
+
+# mice_num <- mice_dt[,c("BW(g)", "WATep(g)", "Liver(g)")]
+mice_num <- mice_dt
+mice_s <- as.data.frame(mice_num)
+
+dict_vect <- c("Ctrl" = "CNT", "Ctrl ext" = "CNT", "HFD" = "HFD", "INT2" = "INT", "HFD excl." = "HFE")
+mice_s$group <- factor(dict_vect[mice_dt$Group], levels = c("CNT", "HFD", "INT", "HFE"))
+
+dict_vect_g <- c("CNT" = "C", "HFD" = "H", "INT" = "I", "HFE" = "E")
+
+mice_s$samplename <- paste0(make.names(mice_dt$ID), dict_vect_g[mice_s$group])
+
+
+mice_s$samplename[!mice_s$samplename %in% multi_omics$samplename]
+multi_omics$samplename[!multi_omics$samplename %in% mice_s$samplename]
+
+mice_s$samplename[mice_s$samplename == "X686I"] <- "X687I"
+
+mice_s <- dplyr::left_join(as.data.frame(colData(multi_omics)), mice_s, by = "samplename")
+mice_s
+```
+
+
+```{r}
+d3plot <- plot_ly(x = mice_s$`BW(g)`, y = mice_s$`WATep(g)`, z = mice_s$`Liver(g)`,
+                    color = as.factor(mice_s$Sacrifice))
+d3plot <- d3plot %>% add_markers()
+d3plot <- d3plot %>% layout(scene = list(
+    xaxis = list(title = "BW (g)"),
+    yaxis = list(title = "WATep (g)"),
+    zaxis = list(title = "Liver (g)")))
+d3plot
+```
+
+```{r}
+factor_dt <- readRDS(paste0(params$output_dir, "/MOFA_Results/any_sig_005_mofa_int_all_meta/factor_data.rds"))
+
+mice_sub <- mice_s[mice_s$group.x != "HFE",]
+
+all(names(factor_dt$group1[,3]) == mice_sub$samplename)
+
+cor(mice_sub$`BW(g)`, factor_dt$group1[,3])
+cor(mice_sub$`WATep(g)`, factor_dt$group1[,3])
+cor(mice_sub$`Liver(g)`, factor_dt$group1[,3])
+
+
+ctr_sub <- mice_sub[mice_sub$group.x == "CNT",]
+ctr_fact <- factor_dt$group1[mice_sub$group.x == "CNT",]
+
+cor(ctr_sub$`BW(g)`, ctr_fact[,3])
+cor(ctr_sub$`WATep(g)`, ctr_fact[,3])
+cor(ctr_sub$`Liver(g)`, ctr_fact[,3])
+
+plot(ctr_sub$`BW(g)`, ctr_fact[,3])
+plot(ctr_sub$`WATep(g)`, ctr_fact[,3])
+plot(ctr_sub$`Liver(g)`, ctr_fact[,3])
+
+
+```
 
 
 ## GFCV

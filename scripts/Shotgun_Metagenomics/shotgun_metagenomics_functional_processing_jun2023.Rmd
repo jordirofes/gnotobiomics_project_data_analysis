@@ -97,9 +97,6 @@ names(organ_dt_list_proc) <- names(organ_dt)
 # saveRDS(object = list("shotgun_data" = organ_dt_list_proc, "shotgun_metadata" = metadata_list), "./shotgun_functional_data_list.rds")
 ```
 
-
-
-
 ## Statistical Analysis
 
 ```{r}
@@ -351,7 +348,7 @@ lapply(names(stat_res), function(organ_name){
                                       colData = colData(hierarchy),
                                       design= ~ 0 + group)
         vst_dt <- t(assay(varianceStabilizingTransformation(raw_lima_DESeq, blind = FALSE)))
-        vst_pca <- prcomp(vst_dt, scale. = FALSE)
+        vst_pca <- prcomp(vst_dt, scale. = TRUE)
         
         p1 <- pca_plot(pca_data = vst_pca, pc_x = 1, pc_y = 2, 
                 group_var = hierarchy$group, 
@@ -377,13 +374,16 @@ lapply(names(stat_res), function(organ_name){
 lapply(names(stat_res), function(organ_name){
     organ <- stat_res[[organ_name]]
     lapply(names(organ), function(hierarchy_name){
-        hierarchy <- organ[[hierarchy_name]]
+        hierarchy <- organ[[hierarchy_name]][,rownames(colData(organ[[hierarchy_name]]))[colData(organ[[hierarchy_name]])$group != "HFE"]]
+        hierarchy <- hierarchy[rowSums(assay(hierarchy)) != 0,]
         # raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = assay(hierarchy),
         #                               colData = colData(hierarchy),
         #                               design= ~ 0 + group)
-        vst_dt <- t(assay(transformAssay(hierarchy, assay.type = "counts", 
+        hierarchy <- transformAssay(hierarchy, assay.type = "counts", 
+                                         method = "relabundance")
+        vst_dt <- t(assay(transformAssay(hierarchy, assay.type = "relabundance", 
                                          method = "rclr"), "rclr"))
-        vst_pca <- prcomp(vst_dt, scale. = FALSE)
+        vst_pca <- prcomp(vst_dt, scale. = TRUE)
         
         p1 <- pca_plot(pca_data = vst_pca, pc_x = 1, pc_y = 2, 
                 group_var = hierarchy$group, 

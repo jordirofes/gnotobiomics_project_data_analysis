@@ -565,3 +565,17 @@ ComBat_norm <- function(omic_dt, covariate, ...){
                                             batch = omic_dt[[covariate]]))
     omic_dt
 }
+
+
+go_similarity_matrix <- function(go_list1, go_list2, semData, measure){
+    sim_mat <- matrix(nrow = length(go_list1), ncol = length(go_list2))
+    for(go1 in seq_along(go_list1)){
+        for(go2 in seq_along(go_list2)){
+            sim_mat[go1, go2] <- goSim(go_list1[go1], go_list2[go2], 
+                                        semData = semData, measure = measure)
+        }
+    }
+    rownames(sim_mat) <- go_list1
+    colnames(sim_mat) <- go_list2
+    return(sim_mat)
+}

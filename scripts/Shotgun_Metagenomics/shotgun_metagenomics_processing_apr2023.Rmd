@@ -18,6 +18,10 @@ knitr::opts_chunk$set(echo = TRUE)
 library(DESeq2)
 library(SummarizedExperiment)
 library(mia)
+library(ggplot2)
+library(miaViz)
+library(scater)
+library(patchwork)
 library(TreeSummarizedExperiment)
 source("../../scripts/Utility_Functions/utilities.R")
 ```
@@ -104,16 +108,18 @@ shotgun_data <- lapply(names(shotgun_data_list), function(organ_name){
                 if(length(found_id)){
                     found_dt <- gsub(paste0(h_id, "__"), "", found_id)
                     if(found_dt == "" || grepl("uncultured|unknown|unidentified|metagenome", found_id, ignore.case = TRUE)){
-                        hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
-                                                            hierarchy_found[h_id_num - 1], 
-                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
+                        # hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
+                        #                                     hierarchy_found[h_id_num - 1], 
+                        #                                     paste("Unknown", hierarchy_found[h_id_num - 1]))
+                        hierarchy_found[h_id_num] <- NA
                     } else{
                         hierarchy_found[h_id_num] <- found_dt
                     }
                 } else{
-                    hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
-                                                            hierarchy_found[h_id_num - 1], 
-                                                            paste("Unknown", hierarchy_found[h_id_num - 1]))
+                    # hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
+                    #                                         hierarchy_found[h_id_num - 1], 
+                    #                                         paste("Unknown", hierarchy_found[h_id_num - 1]))
+                    hierarchy_found[h_id_num] <- NA
                 }    
             }
             return(hierarchy_found)
@@ -147,8 +153,13 @@ shotgun_data <- lapply(names(shotgun_data_list), function(organ_name){
         summ_exp <- mia::agglomerateByRank(x = summ_exp, rank = hierarchy_ranks[max_rank])
         summ_exp <- mia::addTaxonomyTree(summ_exp)
         
-        rowData(summ_exp)$specie_names <- rownames(summ_exp)
+        rowData(summ_exp)$prevalence <- getPrevalence(summ_exp, 
+                                                       detection = 1/100, 
+                                                       sort = FALSE,
+                                                       assay.type = "counts", 
+                                                       as_relative = TRUE)
         
+        rowData(summ_exp)$specie_names <- rownames(summ_exp)
         
         # x <- summ_exp
         # tree <- taxonomyTree(x)
@@ -192,6 +203,8 @@ shotgun_data <- lapply(names(shotgun_data_list), function(organ_name){
 names(shotgun_data) <- names(shotgun_data_list)
 ```
 
+### Relative abundances
+
 ```{r}
 lapply(names(shotgun_data), function(organ_names){
     organ <- shotgun_data[[organ_names]]
@@ -199,12 +212,265 @@ lapply(names(shotgun_data), function(organ_names){
         
         group_var <- colData(organ[[hierarchy_names]])[["group"]]
         hierarchy <- organ[[hierarchy_names]]
+        
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", method = "relabundance")
+        
+        # hierarchy <- hierarchy[!grepl("Unknown", rownames(hierarchy)),]
+        # 
+        plotAbundanceDensity(hierarchy, layout = "jitter", assay.type = "relabundance",
+                     n = min(floor(nrow(hierarchy)*0.1), 20), point_size=1, point_shape=19, point_alpha=0.1) + 
+                     scale_x_log10(label=scales::percent)
+        
+    })
+})
+```
+
+### Taxa prevalence
+
+```{r}
+library(scater)
+
+lapply(names(shotgun_data), function(organ_names){
+    organ <- shotgun_data[[organ_names]]
+    lapply(names(organ), function(hierarchy_names){
+        
+        group_var <- colData(organ[[hierarchy_names]])[["group"]]
+        hierarchy <- organ[[hierarchy_names]]
+        
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", method = "relabundance")
+        
+        # hierarchy <- hierarchy[!grepl("Unknown", rownames(hierarchy)),]
+        plotRowData(hierarchy, "prevalence", colour_by = hierarchy_names)
+    })
+})
+```
+
+## Scores plot
+
+```{r, fig.width=8, fig.height=6}
+
+pdf(paste0(params$output_dir, "scores_plot_raw_t.pdf"))
+print(lapply(names(shotgun_data), function(organ_name){
+    organ <- shotgun_data[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", 
+                                    method = "relabundance")
+        hierarchy <- hierarchy[grepl(hierarchy_name, rownames(hierarchy)),]
+        # 
+        hierarchy <- estimateDiversity(x = hierarchy, 
+                                       index = c("shannon", 
+                                                "log_modulo_skewness"))
+        hierarchy <- estimateFaith(x = hierarchy)
+        hierarchy <- estimateRichness(x = hierarchy, index = "observed")
+        hierarchy <- estimateEvenness(x = hierarchy, index = "simpson")
+        hierarchy <- estimateDominance(x = hierarchy, index = "relative")
+        hierarchy <- estimateDivergence(x = hierarchy, reference = "median", 
+                                        FUN = vegan::vegdist)
+        
+        plots <- lapply(c("observed", "shannon", "simpson", "relative", 
+                            "faith", "log_modulo_skewness", "divergence"),
+                        plotColData, object = hierarchy, 
+                        x = "group", colour_by = "group")
+        
+        plots <- lapply(plots, "+", 
+                        theme(axis.text.x = element_blank(),
+                              axis.title.x = element_blank(),
+                              axis.ticks.x = element_blank()))
+        
+        ((plots[[1]] | plots[[2]] | plots[[3]]) / 
+                (plots[[4]] | plots[[5]] | plots[[6]] | plots[[7]])) +
+            plot_layout(guides = "collect") + 
+            plot_annotation(paste(organ_name, hierarchy_name, "Scores"))
+    })
+}))
+dev.off()
+```
+
+
+```{r}
+# library(miaTime)
+library(miaViz)
+lapply(names(shotgun_data), function(organ_names){
+    organ <- shotgun_data[[organ_names]]
+    lapply(names(organ), function(hierarchy_names){
+        
+        group_var <- colData(organ[[hierarchy_names]])[["group"]]
+        hierarchy <- organ[[hierarchy_names]]
+        
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", method = "relabundance")
+        
+        hierarchy <- hierarchy[!grepl("Unknown", rownames(hierarchy)),]
+        
         alpha_div <- vegan::diversity(x = assay(hierarchy), index = "shannon", MARGIN = 2)
         
         boxplot(alpha_div ~ group_var, main = paste(organ_names, hierarchy_names, sep = "_"), 
                 xlab = "Group", ylab = "Shannon Index")
     })
 })
+```
+
+
+```{r}
+lapply(shotgun_data, function(organ_dt){
+    lapply(names(organ_dt), function(hierarchy_names){
+        hierarchy_dt <- organ_dt[[hierarchy_names]]
+    
+        hierarchy_dt <- transformAssay(hierarchy_dt, assay.type = "counts", method = "relabundance")
+    
+        # Getting top taxa on a Phylum level
+        top_taxa <- getTopFeatures(hierarchy_dt,top = 5, assay.type = "relabundance")
+        
+        # Renaming the "Phylum" rank to keep only top taxa and the rest to "Other"
+        cat_renamed <- lapply(rownames(hierarchy_dt),
+                           function(x){if (x %in% top_taxa) {x} else {"Other"}})
+        rowData(hierarchy_dt)[[hierarchy_names]] <- as.character(cat_renamed)
+        
+        # Visualizing the composition barplot, with samples order by "Bacteroidetes"
+        plotAbundance(hierarchy_dt, assay.type="relabundance", rank = hierarchy_names,
+                      order_rank_by="abund", 
+                      order_sample_by = "group", add_x_text = TRUE) + 
+            theme(axis.text.x = element_text(angle = 90))
+    })
+})
+```
+
+
+## Possible filters
+
+```{r}
+library(scater)
+
+shotgun_data_proc_test <- lapply(names(shotgun_data), function(organ_names){
+    organ <- shotgun_data[[organ_names]]
+    organ_f <- lapply(names(organ), function(hierarchy_names){
+        
+        group_var <- colData(organ[[hierarchy_names]])[["group"]]
+        hierarchy <- organ[[hierarchy_names]]
+        
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", method = "relabundance")
+        
+        subsetByPrevalentFeatures(hierarchy)
+        # hierarchy <- hierarchy[!grepl("Unknown", rownames(hierarchy)),]
+    })
+    names(organ_f) <- names(organ)
+    organ_f
+})
+names(shotgun_data_proc_test) <- names(shotgun_data)
+```
+
+## Scores plot
+
+```{r, fig.width=8, fig.height=6}
+
+library(ggplot2)
+library(miaViz)
+library(scater)
+library(patchwork)
+
+pdf(paste0(params$output_dir, "scores_plot_filt_prev.pdf"))
+print(lapply(names(shotgun_data_proc_test), function(organ_name){
+    organ <- shotgun_data_proc_test[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", method = "relabundance")
+        
+        # hierarchy <- hierarchy[!grepl("Unknown", rownames(hierarchy)),]
+        # 
+        hierarchy <- estimateDiversity(x = hierarchy, index = c("shannon", "log_modulo_skewness"))
+        hierarchy <- estimateFaith(x = hierarchy)
+        hierarchy <- estimateRichness(x = hierarchy, index = "observed")
+        hierarchy <- estimateEvenness(x = hierarchy, index = "simpson")
+        hierarchy <- estimateDominance(x = hierarchy, index = "relative")
+        hierarchy <- estimateDivergence(x = hierarchy, reference = "median", FUN = vegan::vegdist)
+        
+        plots <- lapply(c("observed", "shannon", "simpson", "relative", "faith", "log_modulo_skewness", "divergence"),
+                plotColData,
+                object = hierarchy,
+                x = "group",
+                colour_by = "group")
+        
+        plots <- lapply(plots, "+", 
+                        theme(axis.text.x = element_blank(),
+                              axis.title.x = element_blank(),
+                              axis.ticks.x = element_blank()))
+        
+        ((plots[[1]] | plots[[2]] | plots[[3]]) / 
+        (plots[[4]] | plots[[5]] | plots[[6]] | plots[[7]])) +
+          plot_layout(guides = "collect") + plot_annotation(paste(organ_name, hierarchy_name, "Scores"))
+    })
+}))
+dev.off()
+```
+
+
+
+```{r}
+library(scater)
+
+shotgun_data_proc_2 <- lapply(names(shotgun_data), function(organ_names){
+    organ <- shotgun_data[[organ_names]]
+    organ_f <- lapply(names(organ), function(hierarchy_names){
+        
+        group_var <- colData(organ[[hierarchy_names]])[["group"]]
+        hierarchy <- organ[[hierarchy_names]]
+        
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", method = "relabundance")
+        
+        mergeFeaturesByPrevalence(hierarchy, 
+                                   rank = hierarchy_names, 
+                                   other_label = "Other", 
+                                   prevalence = 5 / 100, 
+                                   detection = 1 / 100, 
+                                   as_relative = T)
+        # hierarchy <- hierarchy[!grepl("Unknown", rownames(hierarchy)),]
+    })
+    names(organ_f) <- names(organ)
+    organ_f
+})
+names(shotgun_data_proc_2) <- names(shotgun_data)
+```
+
+```{r, fig.width=8, fig.height=6}
+
+library(ggplot2)
+library(miaViz)
+library(scater)
+library(patchwork)
+
+pdf(paste0(params$output_dir, "scores_plot_aggr_prev.pdf"))
+print(lapply(names(shotgun_data_proc_2), function(organ_name){
+    organ <- shotgun_data_proc_2[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", method = "relabundance")
+        
+        # hierarchy <- hierarchy[!grepl("Unknown", rownames(hierarchy)),]
+        # 
+        hierarchy <- estimateDiversity(x = hierarchy, index = c("shannon", "log_modulo_skewness"))
+        # hierarchy <- estimateFaith(x = hierarchy)
+        hierarchy <- estimateRichness(x = hierarchy, index = "observed")
+        hierarchy <- estimateEvenness(x = hierarchy, index = "simpson")
+        hierarchy <- estimateDominance(x = hierarchy, index = "relative")
+        hierarchy <- estimateDivergence(x = hierarchy, reference = "median", FUN = vegan::vegdist)
+        
+        plots <- lapply(c("observed", "shannon", "simpson", "relative", "log_modulo_skewness", "divergence"),
+                plotColData,
+                object = hierarchy,
+                x = "group",
+                colour_by = "group")
+        
+        plots <- lapply(plots, "+", 
+                        theme(axis.text.x = element_blank(),
+                              axis.title.x = element_blank(),
+                              axis.ticks.x = element_blank()))
+        
+        ((plots[[1]] | plots[[2]] | plots[[3]]) / 
+        (plots[[4]] | plots[[5]] | plots[[6]])) +
+          plot_layout(guides = "collect") + plot_annotation(paste(organ_name, hierarchy_name, "Scores"))
+    })
+}))
+dev.off()
 ```
 
 ## Test aggregated phylum
@@ -224,11 +490,47 @@ agglomerated_dt <- lapply(names(shotgun_data), function(organ_names){
 names(agglomerated_dt) <- names(shotgun_data)
 
 n1 <- rownames(agglomerated_dt$cecum)
-n2 <- gsub("Phylum:", "", rownames(shotgun_data$cecum$phylum))
+n2 <- gsub("Phylum:", "", rownames(shotgun_data$cecum$Phylum))
 n2[!n2 %in% n1]
+
+lapply(agglomerated_dt, function(organ_dt){
+    organ_dt <- transformAssay(organ_dt, assay.type = "counts", method = "relabundance")
+
+    # Getting top taxa on a Phylum level
+    top_taxa <- getTopFeatures(organ_dt,top = 5, assay.type = "relabundance")
+    
+    # Renaming the "Phylum" rank to keep only top taxa and the rest to "Other"
+    phylum_renamed <- lapply(rowData(organ_dt)$Phylum,
+                       function(x){if (x %in% top_taxa) {x} else {"Other"}})
+    rowData(organ_dt)$Phylum <- as.character(phylum_renamed)
+    
+    # Visualizing the composition barplot, with samples order by "Bacteroidetes"
+    plotAbundance(organ_dt, assay.type="relabundance", rank = "Phylum",
+                  order_rank_by="abund", 
+                  order_sample_by = "group", add_x_text = TRUE) + 
+        theme(axis.text.x = element_text(angle = 90))
+})
+
+lapply(list("cecum" = shotgun_data$cecum$Phylum, 
+            "colon" = shotgun_data$colon$Phylum), function(organ_dt){
+    organ_dt <- transformAssay(organ_dt, assay.type = "counts", method = "relabundance")
+
+    # Getting top taxa on a Phylum level
+    top_taxa <- getTopFeatures(organ_dt,top = 5, assay.type = "relabundance")
+    # Renaming the "Phylum" rank to keep only top taxa and the rest to "Other"
+    phylum_renamed <- lapply(rownames(organ_dt),
+                       function(x){if (x %in% top_taxa) {x} else {"Other"}})
+    rowData(organ_dt)$Phylum <- as.character(phylum_renamed)
+    # Visualizing the composition barplot, with samples order by "Bacteroidetes"
+    plotAbundance(organ_dt, assay.type="relabundance", rank = "Phylum",
+                  order_rank_by="abund", 
+                  order_sample_by = "group", add_x_text = TRUE) + 
+        theme(axis.text.x = element_text(angle = 90))
+})
+
 ```
 
-
+### FIlter low abundance taxons
 
 ```{r}
 # Filtering taxons not present in atleast 80% of one group
@@ -256,18 +558,68 @@ shotgun_data_proc <- lapply(names(shotgun_data), function(organ_name){
 names(shotgun_data_proc) <- names(shotgun_data)
 ```
 
+## Scores plot
+
+```{r, fig.width=8, fig.height=6}
+
+library(ggplot2)
+library(miaViz)
+library(scater)
+library(patchwork)
+
+pdf(paste0(params$output_dir, "scores_plot_filt_80_group.pdf"))
+print(lapply(names(shotgun_data_proc), function(organ_name){
+    organ <- shotgun_data_proc[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", method = "relabundance")
+        
+        # hierarchy <- hierarchy[!grepl("Unknown", rownames(hierarchy)),]
+        # 
+        hierarchy <- estimateDiversity(x = hierarchy, index = c("shannon", "log_modulo_skewness"))
+        hierarchy <- estimateFaith(x = hierarchy)
+        hierarchy <- estimateRichness(x = hierarchy, index = "observed")
+        hierarchy <- estimateEvenness(x = hierarchy, index = "simpson")
+        hierarchy <- estimateDominance(x = hierarchy, index = "relative")
+        hierarchy <- estimateDivergence(x = hierarchy, reference = "median", FUN = vegan::vegdist)
+        
+        plots <- lapply(c("observed", "shannon", "simpson", "relative", "faith", "log_modulo_skewness", "divergence"),
+                plotColData,
+                object = hierarchy,
+                x = "group",
+                colour_by = "group")
+        
+        plots <- lapply(plots, "+", 
+                        theme(axis.text.x = element_blank(),
+                              axis.title.x = element_blank(),
+                              axis.ticks.x = element_blank()))
+        
+        ((plots[[1]] | plots[[2]] | plots[[3]]) / 
+        (plots[[4]] | plots[[5]] | plots[[6]] | plots[[7]])) +
+          plot_layout(guides = "collect") + plot_annotation(paste(organ_name, hierarchy_name, "Scores"))
+    })
+}))
+dev.off()
+```
+
 ```{r}
+library(scater)
+
 lapply(names(shotgun_data_proc), function(organ_names){
     organ <- shotgun_data_proc[[organ_names]]
     lapply(names(organ), function(hierarchy_names){
+        
         group_var <- colData(organ[[hierarchy_names]])[["group"]]
         hierarchy <- organ[[hierarchy_names]]
-        alpha_div <- vegan::diversity(x = assay(hierarchy), index = "shannon", MARGIN = 2)
         
-        boxplot(alpha_div ~ group_var, main = paste(organ_names, hierarchy_names, sep = "_"))
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", method = "relabundance")
+        
+        # hierarchy <- hierarchy[!grepl("Unknown", rownames(hierarchy)),]
+        plotRowData(hierarchy, "prevalence", colour_by = hierarchy_names)
     })
 })
 ```
+
 
 ```{r}
 # library(phyloseq)

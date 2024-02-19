@@ -340,7 +340,7 @@ enrich_results_list$GSEA <- base::Map(c, enrich_results_list$GSEA, enrich_result
 <!-- # ``` -->
 
 ```{r}
-saveRDS(enrich_results_list, paste0(params$output_dir, params$results_name, "_enrich_results.rds"))
+saveRDS(enrich_results_list, paste0(params$output_dir, params$results_name, "_rna_seq_enrich_results.rds"))
 ```
 
 
