@@ -1,12 +1,12 @@
-                    ---
+---
 title: "Untargeted Metabolomics Analysis"
 author: "Jordi Rofes Herrera"
 date: "27/1/2022"
 output: html_document
 params:
-    file_dir: "./RP_Positive/"
-    metadata_file: "./RP_Positive/LC_MS_metadata.csv"
-    output_dir: "./Hermes_Results/RP_Positive/"
+    file_dir: "../../inputs/Untargeted_Metabolomics/Hilic_Positive/"
+    metadata_file: "../../inputs/Untargeted_Metabolomics/Hilic_Positive/LC_MS_metadata.csv"
+    output_dir: "../../outputs/Untargeted_Metabolomics/Hermes_Results/Hilic_Positive/"
 ---
 
 ```{r setup, include=FALSE}
@@ -66,8 +66,38 @@ ms_data <- filterEmptySpectra(ms_data)
 register(SnowParam())
 ms_data <- findChromPeaks(ms_data, param = CentWaveParam(ppm = 10, peakwidth = c(5, 50)))
 
+# group_colors <- brewer.pal(length(table(pData(ms_data)$group)), "Set3")
+# names(group_colors) <- names(table(pData(ms_data)$group))
+# tc <- spectra(ms_data)
+# tic_dt <- sapply(tc, tic)
+# 
+# tic_dt <- split(x = tic_dt, f = fromFile(ms_data))
+# 
+# boxplot(tic_dt, col = group_colors[pData(ms_data)$group],
+#         ylab = "intensity", main = "Total ion current")
+
 saveRDS(ms_data, paste0(params$output_dir,"xcmsnexp_chrom_peaks.rds"))
 ```
+
+```{r}
+## Bin the BPC
+# bpis <- chromatogram(ms_data , aggregationFun = "max")
+# 
+# bpis_bin <- bin(bpis, binSize = 2)
+# 
+# ## Calculate correlation on the log2 transformed base peak intensities
+# cormat <- cor(log2(do.call(cbind, lapply(bpis_bin, intensity))))
+# colnames(cormat) <- rownames(cormat) <- bpis_bin$sample_name
+# 
+# ## Define which phenodata columns should be highlighted in the plot
+# ann <- data.frame(group = bpis_bin$group)
+# rownames(ann) <- bpis_bin$sample_name
+# 
+# ## Perform the cluster analysis
+# pheatmap(cormat, annotation = ann,
+#          annotation_color = list(group = group_colors))
+```
+
 
 ```{r}
 ms_data <- readRDS(paste0(params$output_dir,"xcmsnexp_chrom_peaks.rds"))
@@ -104,7 +134,8 @@ library(qHermes)
 library(xcms)
 ms_data <- readRDS(paste0(params$output_dir, "xcmsnexp_filled.rds"))
 hermes_dt <- readRDS(paste0(params$output_dir,"filteredSoiLists.rds"))
-ms_data <- mergeRHermesXCMSFeatures(XCMSnExp = ms_data, RHermesExp = hermes_dt, SOI = 4)
+ms_data <- qHermes::annotateFeaturesFromList(XCMSnExp = ms_data, RHermesExp = hermes_dt, 
+                                             SOI_id = 4, filter = TRUE)
 xcms_dt <- quantify(ms_data, value = "into")
 saveRDS(xcms_dt, file =  paste0(params$output_dir, "summarized_hermes_xcms.rds"))
 ```
