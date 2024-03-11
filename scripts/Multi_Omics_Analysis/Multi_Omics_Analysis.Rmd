@@ -52,7 +52,7 @@ multi_omics_selected <- multi_omics_names[!grepl("16S|Shotgun|Functional|unsuper
 # multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S|unsupervised|Targeted|Metallomics|Histone", multi_omics_names)]
 
 # multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("genus", multi_omics_names)])
-multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("Species|Genus|metaerg_kegg|cogs", multi_omics_names)])
+multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("Species|metaerg_kegg|cogs", multi_omics_names)])
 # |EC|metaer_kegg|cogs
 multi_omics_selected
 ```
@@ -136,7 +136,7 @@ param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
     multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE", multi_omics_selected],
     group_var = "group",
     num_factors = num_factors,
-    results_name = "any_sig_gs_005_mofa_int",
+    results_name = "any_sig_005_mofa_int",
     color_vec = c("CNT"="black", "HFD"="red", "INT"="blue")
 )
 # c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
@@ -383,10 +383,15 @@ saveRDS(overlap_list, file = paste0(output_dir, "go_overlap_results.rds"))
 ## MOFA variables correlations (any significant)
 
 ```{r}
-output_dir <- paste0(params$output_dir, "MOFA_Results/any_sig_gs_005_mofa_int/")
+output_dir <- paste0(params$output_dir, "MOFA_Results/any_sig_005_mofa_int/")
 corr_output_dir <- paste0(output_dir, "correlation_results/")
 
 omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
+
+sapply(names(experiments(omic_dt)), function(x){
+    x_dt <- experiments(omic_dt)[[x]]
+    hist(rowData(x_dt)$Factor_1_weights, main = x)
+})
 
 network_omics <- list("All Omics" = names(assays(omic_dt)))
 
@@ -418,36 +423,38 @@ corr_method_vect <- c("kendall", "spearman", "pearson")
 
 for(corr_method in corr_method_vect){
     
-#     xfun::Rscript_call(rmarkdown::render,
-#                             args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
-#                               output_file = corr_output_dir,
-#                               params = list(
-#                                 corr_threshold = 0.8,
-#                                 corr_method = corr_method,
-#                                 multi_omic_path = omic_dt,
-#                                 group_metadata_var = "group",
-#                                 sample_levels_2_correlate = c("CNT", "HFD", "INT"),
-#                                 filter_variable_2_correlate = list(
-#                                     "Factor_1" = quote(Factor_1_weights_sig),
-#                                     "Factor_2" = quote(Factor_2_weights_sig)
-#                                 ),
-#                                 omic_list_2_correlate = network_omics,
-#                                 rowData_variable_name_list = variables_dicts,
-#                                 draw_networks = TRUE,
-#                                 add_autocorrelations = TRUE,
-#                                 keep_full_correlations = TRUE,
-#                                 output_dir = corr_output_dir,
-#                                 output_suffix = paste0("08_005_chi_f1f2_", corr_method), 
-#                                 add_variables = TRUE,
-#                                 variables_names = add_var_names))
-#                       )
+    # xfun::Rscript_call(rmarkdown::render,
+    #                         args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
+    #                           output_file = output_dir,
+    #                           params = list(
+    #                             corr_threshold = 0,
+    #                             corr_method = corr_method,
+    #                             multi_omic_path = omic_dt,
+    #                             group_metadata_var = "group",
+    #                             sample_levels_2_correlate = c("CNT", "HFD", "INT"),
+    #                             filter_variable_2_correlate = list(
+    #                                 "Factor_1" = quote(Factor_1_weights_sig),
+    #                                 "Factor_2" = quote(Factor_2_weights_sig)
+    #                             ),
+    #                             omic_list_2_correlate = network_omics,
+    #                             rowData_variable_name_list = variables_dicts,
+    #                             draw_networks = TRUE,
+    #                             draw_cytoscape = FALSE,
+    #                             add_autocorrelations = FALSE,
+    #                             keep_full_correlations = TRUE,
+    #                             output_dir = corr_output_dir,
+    #                             output_suffix = paste0("0_005_chi_f1f2_", corr_method),
+    #                             add_variables = TRUE,
+    #                             variables_names = add_var_names,
+    #                             draw_cluster_scatter_plots = FALSE))
+    #                   )
 
 
     xfun::Rscript_call(rmarkdown::render,
                                 args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
-                                  output_file = corr_output_dir,
+                                  output_file = output_dir,
                                   params = list(
-                                    corr_threshold = 0.8,
+                                    corr_threshold = 0,
                                     corr_method = corr_method,
                                     multi_omic_path = omic_dt,
                                     group_metadata_var = "group",
@@ -457,13 +464,15 @@ for(corr_method in corr_method_vect){
                                     ),
                                     omic_list_2_correlate = network_omics,
                                     rowData_variable_name_list = variables_dicts,
-                                    draw_networks = TRUE,
+                                    draw_networks = FALSE,
+                                    draw_cytoscape = FALSE,
                                     add_autocorrelations = FALSE,
                                     keep_full_correlations = TRUE,
                                     output_dir = corr_output_dir,
-                                    output_suffix = paste0("08_005_chi", corr_method), 
+                                    output_suffix = paste0("0_005_chi", corr_method),
                                     add_variables = TRUE,
-                                    variables_names = add_var_names))
+                                    variables_names = add_var_names,
+                                    draw_cluster_scatter_plots = FALSE))
                           )
 }
 # rmarkdown::render(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",

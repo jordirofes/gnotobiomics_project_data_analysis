@@ -23,28 +23,45 @@ library(clusterProfiler)
 ## Loading the data
 
 ```{r}
-multi_omic_dt <- readRDS("../Multi_Omics_Analysis/Multivariate_Merged_Multi_Omics.rds")
-rna_seq_dt <- experiments(multi_omic_dt)[["RNASeq.liver"]]
+multi_omic_dt <- readRDS("../../outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_MA_exp_lima.rds")
+
+rna_seq_dt <- experiments(multi_omic_dt)[["RNA_Sequencing"]]
+
+
+p_val_dt <- rowData(rna_seq_dt)[,grepl("adj.p.value", colnames(rowData(rna_seq_dt)))]
+rna_seq_filt <- rna_seq_dt[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+    
+gsg <- goodSamplesGenes(datExpr = t(assay(rna_seq_filt)))
+gsg$allOK
+
 dt_list <- assay(rna_seq_dt)
-rowMetadata <- rowData(rna_seq_dt)
-metadata <- colData(rna_seq_dt)
+rowMetadata <- rowData(rna_seq_filt)
+metadata <- colData(rna_seq_filt)
 ```
 
 ## WGCNA Network
 
 ```{r}
 wgcna_soft_thr <- WGCNA::pickSoftThreshold(data = t(dt_list), 
-                                           networkType = "signed", powerVector = seq(1:30))
+                                           networkType = "signed", powerVector = 1:30)
 ```
 
 ```{r}
-sft <- wgcna_soft_thr
-cex1 <- 0.9
-plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+spt <- wgcna_soft_thr
+# par(mar=c(1,1,1,1))
+plot(spt$fitIndices[,1],spt$fitIndices[,2],
 xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
-main = paste("Scale independence"));
-text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
-labels = sft$fitIndices$Power, cex=cex1,col="red");
+main = paste("Scale independence"))
+text(spt$fitIndices[,1],spt$fitIndices[,2],col="red")
+abline(h=0.80,col="red")
+```
+
+```{r}
+# par(mar=c(1,1,1,1))
+plot(spt$fitIndices[,1], spt$fitIndices[,5],
+xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+main = paste("Mean connectivity"))
+text(spt$fitIndices[,1], spt$fitIndices[,5], labels= spt$fitIndices[,1],col="red")
 ```
 
 ```{r}
@@ -53,8 +70,10 @@ bwnet <- blockwiseModules(datExpr = t(dt_list), maxBlockSize = 5000, power = 17,
                         TOMType = "signed", minModuleSize = 30, 
                         reassignThreshold = 0, mergeCutHeight = 0.25,
                         numericLabels = TRUE, saveTOMs = TRUE, 
-                        saveTOMFileBase = "lima_blockwise", verbose = 3)
+                        saveTOMFileBase = "lima_blockwise", 
+                        verbose = 3, randomSeed = 1234)
 ```
+
 
 ```{r}
 # Convert labels to colors for plotting
@@ -65,6 +84,7 @@ plotDendroAndColors(bwnet$dendrograms[[1]], mergedColors[bwnet$blockGenes[[1]]],
 dendroLabels = FALSE, hang = 0.03,
 addGuide = TRUE, guideHang = 0.05)
 ```
+
 ```{r}
 moduleLabels <- bwnet$colors
 moduleColors <- labels2colors(bwnet$colors)

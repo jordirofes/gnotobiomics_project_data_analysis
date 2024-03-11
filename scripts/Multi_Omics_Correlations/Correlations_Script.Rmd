@@ -5,14 +5,14 @@ date: "2023-09-21"
 output: html_document
 params:
     corr_method: "kendall"
-    corr_threshold: 0.6
+    corr_threshold: 0
     multi_omic_path: !r omic_dt
     group_metadata_var: "group"
     
     
     sample_levels_2_correlate: !r c("CNT", "HFD", "INT")
     
-    filter_variable_2_correlate: !r list("Weight 1" = quote(Factor_1_weights_sig))
+    filter_variable_2_correlate: !r list("All" = NA)
     omic_list_2_correlate: !r network_omics
     rowData_variable_name_list: !r variables_dicts
     
@@ -29,12 +29,12 @@ params:
     draw_cluster_scatter_plots: TRUE
     draw_networks: TRUE
     
-    add_autocorrelations: TRUE
+    add_autocorrelations: FALSE
     keep_full_correlations: TRUE
     draw_cytoscape: TRUE
     
     output_dir: !r corr_output_dir
-    output_suffix: "0_chi_test"
+    output_suffix: "0_005_chi_all"
 ---
 
 ```{r setup, include=FALSE}
@@ -54,6 +54,7 @@ library(knitr)
 library(igraph)
 library(RCy3)
 library(ggplot2)
+library(data.table)
 ```
 
 ```{r}
@@ -123,19 +124,6 @@ if(!all(is.na(params$rowData_variable_name_list)) &&
     variable_dictionary <- NA
 }
 
-# if(params$add_fold_change){
-#     fold_change_dictionary <- lapply(experiments(multi_omic_dt), function(exp_dt){
-#         if(params$fold_change_variable %in% colnames(rowData(exp_dt))){
-#             dict_vect <- rowData(exp_dt)[[params$fold_change_variable]]
-#             names(dict_vect) <- rownames(exp_dt)    
-#         } else{
-#             dict_vect <- rep(NA, length(rownames(exp_dt)))
-#             names(dict_vect) <- rownames(exp_dt)
-#         }
-#         dict_vect
-#     })
-# }
-
 corr_nw_path <- paste0(params$output_dir, "network_results_", params$output_suffix, ".rds")
 
 if(file.exists(corr_nw_path)){
@@ -162,8 +150,7 @@ omic_variable_correlation_list <- lapply(multi_omic_filtered_list, function(mult
         }
         
         if(params$add_autocorrelations){
-            # multi_omic_autocorrelations <- lapply(assays(multi_omic_filtered[,,omic_names]), 
-            #                                   function(omic_assays){cor(t(omic_assays))})
+            
             corr_output_list$Autocorrelations <- lapply(
                 experiments(multi_omic_filtered)[omic_names], 
                     function(omic_assays){
@@ -172,9 +159,9 @@ omic_variable_correlation_list <- lapply(multi_omic_filtered_list, function(mult
                             x = omic_assays, symmetric = TRUE,
                             assay.type1 = "dt1", assay.type2 = "dt1", 
                             filter_self_correlations = TRUE, 
-                            cor_threshold = params$corr_threshold, 
+                            cor_threshold = 0, 
                             p_adj_method = params$p_adj_test, 
-                            p_adj_threshold = params$p_adj_thr, 
+                            p_adj_threshold = 0, 
                             method = params$corr_method, 
                             test_significance = params$correlation_test)
                         subset(ac_t, !is.na(cor))
@@ -208,14 +195,11 @@ omic_variable_correlation_list <- lapply(multi_omic_filtered_list, function(mult
             
             test_corr <- mia::getExperimentCrossAssociation(
                 multi_omic_filtered_2, assay.type1 = "dt1", assay.type2 = "dt1",
-                method = params$corr_method, cor_threshold = params$corr_threshold, 
-                p_adj_method = params$p_adj_test, p_adj_threshold = params$p_adj_thr, 
+                method = params$corr_method, cor_threshold = NULL, 
+                p_adj_method = params$p_adj_test, p_adj_threshold = NULL, 
                 test_significance = params$correlation_test)
             subset(test_corr, !is.na(cor))
-            
-            # cor_mat <- cor(t(assay(experiments(multi_omic_filtered_2)[[omic_name_pairs[1]]])), 
-            #     t(assay(experiments(multi_omic_filtered_2)[[omic_name_pairs[2]]])), method = "kendall")
-            
+
         })  
         names(corr_output_list$Multi_Omic_Correlations) <- apply(omic_combn, 2, 
                                                                 paste0, 
@@ -223,64 +207,12 @@ omic_variable_correlation_list <- lapply(multi_omic_filtered_list, function(mult
         
         corr_output_list
         
-        # cor_thr_list <- mapply(function(omic_1_name, omic_2_name){
-        #     
-        #     omic_pair_names <- c(omic_1_name, omic_2_name)
-        #     
-        #     intersect_samples <- Reduce(intersect, 
-        #                         lapply(experiments(multi_omic_filtered[,,omic_pair_names]),
-        #                             function(exp_data){
-        #                                 colnames(exp_data)[exp_data[[params$group_metadata_var]] %in%
-        #                                             params$sample_levels_2_correlate]}))
-        #     multi_omic_filtered_2 <- multi_omic_filtered[,intersect_samples, omic_pair_names]
-        #     multi_omic_filtered_assays <- assays(multi_omic_filtered_2)
-        #     cor_mat <- cor(t(multi_omic_filtered_assays[[omic_1_name]]), 
-        #         t(multi_omic_filtered_assays[[omic_2_name]]))
-        #     
-        # }, omic_1_name = omic_names[-length(omic_names)], 
-        #     omic_2_name = omic_names[-1], SIMPLIFY = FALSE)
-        # names(cor_thr_list) <- merged_names
-        # 
-        # list("Autocorrelations" = multi_omic_autocorrelations, 
-        #     "Multi_Omic_Correlations" = cor_thr_list)
     }) 
     return(omic_cor_list[!sapply(omic_cor_list, function(x){all(is.na(x))})])
 })
 ```
 
 ## Correlation Networks
-
-```{r}
-merge_disjoint_edge_attributes <- function(graph, attr_to_merge){
-    
-    graph_edge_attr_names <- edge_attr_names(graph)
-    
-    for(attr_name in attr_to_merge){
-        
-        graph_edge_attr_found <- graph_edge_attr_names[grep(paste0(attr_name, "_*[0123456789]*$"), 
-                                    x = graph_edge_attr_names)]
-        
-        attr_data <- lapply(graph_edge_attr_found, function(x){
-            get.edge.attribute(graph = graph, name = x)
-        })
-        attr_data <- do.call(cbind, attr_data)
-        edge_attr(graph, name = attr_name) <- apply(attr_data, 1, 
-                                                            FUN = function(x){
-            x[!is.na(x)][1]
-        })
-        
-        attr_to_remove_vec <- grep(paste0(attr_name, "_[0123456789]+$"), 
-                                    x = graph_edge_attr_names, value = TRUE)
-        for(attr_to_remove in attr_to_remove_vec){
-            graph <- remove.edge.attribute(graph = graph, 
-                            name = attr_to_remove)  
-        }
-            
-    }
-    return(graph)
-}
-```
-
 
 ```{r, eval=compute_corr_nw}
 omic_variable_networks <- lapply(names(omic_variable_correlation_list), 
@@ -290,63 +222,31 @@ omic_variable_networks <- lapply(names(omic_variable_correlation_list),
     
     lapply(omic_variable_correlation, function(omic_correlation){
         
-        omic_graph_list <- lapply(names(omic_correlation$Multi_Omic_Correlations), function(omic_name){
-            multi_corr <- omic_correlation$Multi_Omic_Correlations[[omic_name]]
-            # if(omic_name == "Shotgun.cecum.class-Functional_Shotgun.colon.cogs"){browser()}
-            # omic_graph <- graph_from_incidence_matrix(omic_correlation$Multi_Omic_Correlations[[omic_name]],
-            #                                         mode = "out", directed = FALSE, weighted = TRUE)
-            if(is.null(multi_corr) || nrow(multi_corr) == 0){return(NULL)}
-            
-            omic_graph <- graph_from_edgelist(as.matrix(multi_corr[,1:2]),
-                                            directed = FALSE)
-            edge_attr(omic_graph, "weight") <- multi_corr$cor
-            edge_attr(omic_graph, "adj.p.value") <- multi_corr$p_adj
-            
-            # omic_graph <- igraph::subgraph.edges(
-            #         omic_graph, 
-            #         eids = E(omic_graph)[abs(edge_attr(omic_graph, "weight")) >= params$corr_threshold]
-            # )
-            
-            print(omic_name)
-            edge_attr(omic_graph, name = "Edge_Type") <- omic_name
-            
-            omic_graph
-        })
-        omic_graph_list <- omic_graph_list[sapply(omic_graph_list, 
-                                                function(x){!is.null(x)})]
-        omic_graph_merge <- graph.union(omic_graph_list)
+        omic_edge_dt <- data.table::rbindlist(omic_correlation$Multi_Omic_Correlations)
+        omic_edge_dt$Edge_Type <- "Multi_Omic_Correlation"
         
         if(params$add_autocorrelations){
-            autocor_graph <- lapply(names(omic_correlation$Autocorrelations), function(omic_name_auto){
-                omic_autocorr <- omic_correlation$Autocorrelations[[omic_name_auto]]
-                
-                if(is.null(omic_autocorr) || nrow(omic_autocorr) == 0){return(NULL)}
-                
-                omic_autocorr_graph <- graph_from_edgelist(as.matrix(omic_autocorr[,1:2]), directed = FALSE)
-                # omic_autocorr_graph <- igraph::subgraph.edges(
-                #     omic_autocorr_graph, 
-                #     eids = E(omic_autocorr_graph)[abs(edge_attr(omic_autocorr_graph, 
-                #                                             "weight")) >= params$corr_threshold]
-                # )
-                edge_attr(omic_autocorr_graph, "weight") <- omic_correlation$Autocorrelations[[omic_name_auto]]$cor
-                edge_attr(omic_autocorr_graph, "adj.p.value") <- omic_correlation$Autocorrelations[[omic_name_auto]]$p_adj
-                
-                vertex_attr(omic_autocorr_graph, "Node_Omic") <- omic_name_auto
-                edge_attr(omic_autocorr_graph, "Edge_Type") <- "Autocorrelation"
-                omic_autocorr_graph
-            })
-            autocor_graph <- autocor_graph[sapply(autocor_graph, function(x){!is.null(x)})]
-            
-            autocor_graph <- disjoint_union(autocor_graph)
-            omic_graph_merge <- graph.union(autocor_graph, omic_graph_merge)
+            autocor_edge_dt <- data.table::rbindlist(omic_correlation$Autocorrelations)
+            autocor_edge_dt$Edge_Type <- "Autocorrelation"
+            omic_edge_dt <- rbind(omic_edge_dt, autocor_edge_dt)
         }
 
-        omic_graph_merge <- merge_disjoint_edge_attributes(graph = omic_graph_merge, 
-                                                c("weight", "Edge_Type", "adj.p.value"))
+        omic_graph_merge <- graph_from_edgelist(as.matrix(omic_edge_dt[,1:2]), 
+                                                     directed = FALSE)
+        edge_attr(omic_graph_merge, "weight") <- omic_edge_dt$cor
+        edge_attr(omic_graph_merge, "p.value") <- omic_edge_dt$pval
+        
         vertex_attr(omic_graph_merge, 
                     name = "Node_Omic") <- omic_correlation$Omic_Node_Dict[names(V(omic_graph_merge))]
         
-        
+        edge_attr(omic_graph_merge, "adj.p.value") <- p.adjust(edge_attr(omic_graph_merge, "p.value"), 
+                                                                method = params$p_adj_test)
+        omic_graph_merge <- subgraph.edges(omic_graph_merge,
+                                        eids = E(omic_graph_merge)[edge_attr(omic_graph_merge, 
+                                                                            "adj.p.value") <= params$p_adj_thr])
+        omic_graph_merge <- subgraph.edges(omic_graph_merge,
+                                        eids = E(omic_graph_merge)[abs(edge_attr(omic_graph_merge, 
+                                                                            "weight")) >= params$corr_threshold])
         if(!all(is.na(variable_dictionary))){
             vertex_attr(omic_graph_merge, "Readable_Name") <- sapply(names(V(omic_graph_merge)), 
                                                                     function(v_name){
@@ -358,18 +258,6 @@ omic_variable_networks <- lapply(names(omic_variable_correlation_list),
                 }
             })
         }
-        # if(!all(is.na(fold_change_dictionary))){
-        #     vertex_attr(omic_graph_merge, params$fold_change_variable) <- sapply(names(V(omic_graph_merge)),
-        #                                                             function(v_name){
-        #         omic_id <- vertex_attr(omic_graph_merge, name = "Node_Omic", index = v_name)
-        #         if(omic_id %in% names(fold_change_dictionary)){
-        #             fold_change_dictionary[[omic_id]][v_name]
-        #         } else{
-        #             return(v_name)
-        #         }
-        #     })
-        # }
-        
         if(params$add_variables){
             for(var_name in params$variables_names){
                 var_dictionary <- lapply(experiments(multi_omic_dt), function(exp_dt){
@@ -399,16 +287,10 @@ omic_variable_networks <- lapply(names(omic_variable_correlation_list),
             vertex_attr(omic_graph_merge, 
                         name = "Clustering") <- switch(params$cluster_algorithm, "Infomaps" = {
                 as.character(membership(cluster_infomap(graph = omic_graph_merge, 
-                            e.weights = rep(1, length(E(omic_graph_merge))), 
+                            e.weights = abs(edge_attr(omic_graph_merge, "weight")), 
                             v.weights = rep(1, length(V(omic_graph_merge))))))
             })
             
-        }
-        
-        type_attrs <- grep("type_", vertex_attr_names(omic_graph_merge), value = TRUE)
-        
-        for(attr_name in type_attrs){
-            omic_graph_merge <- remove.vertex.attribute(omic_graph_merge, name = attr_name)    
         }
         
         omic_graph_merge
@@ -470,18 +352,6 @@ lapply(omic_variable_networks, function(omic_networks){
                 }
             })
             
-            # labels_dt$long_name <- sapply(as.character(labels_dt$long_name), 
-            #     function(x){
-            #         if(length(strsplit(x, "")[[1]]) > 50){
-            #               return(stringr::str_trunc(x, width = 50, side = "center"))
-            #         } else{
-            #             return(x)
-            #         }
-            # })
-            # plot_dt$long_name <- factor(sapply(plot_dt$var_id, function(x){
-            #     labels_dt$long_name[labels_dt$var_id == x]}), levels = labels_dt$long_name)
-            # 
-            
             plot_dt$var_id <- factor(plot_dt$var_id)
             
             legend_colors <- color_vect[as.character(sapply(levels(plot_dt$var_id), function(x){
@@ -499,7 +369,7 @@ lapply(omic_variable_networks, function(omic_networks){
                 ggtitle(paste("Cluster", clu_id)) + 
                 xlab(NULL) + ylab("Normalized Values") + 
                 scale_color_manual(values = color_vect) + 
-                guides(shape = guide_legend(label.theme = element_text(size = 0.5),
+                guides(shape = guide_legend(label.theme = element_text(size = 1),
                                             order = 2,  byrow = TRUE,
                                             override.aes = list(
                                                 color = legend_colors
@@ -534,9 +404,9 @@ names(shape_vect_ext) <- names(experiments(multi_omic_dt))
 for(omic_variable_network in omic_variable_networks){
     for(omic_network in omic_variable_network){
         # vertex.color = vertex_attr(test_sub, name = "Node_Omic")
-        plot.igraph(omic_network, vertex.size = 0.5, edge.size = 0.1, 
-                    vertex.label.cex = 0.2, edge.arrow.size = 0.1, 
-                    layout = layout_as_tree(omic_network))
+        # plot.igraph(omic_network, vertex.size = 0.5, edge.size = 0.1, 
+        #             vertex.label.cex = 0.2, edge.arrow.size = 0.1, 
+        #             layout = layout_as_tree(omic_network))
         
         RCy3::createNetworkFromIgraph(omic_network)
         RCy3::copyVisualStyle(from.style = "default", 
