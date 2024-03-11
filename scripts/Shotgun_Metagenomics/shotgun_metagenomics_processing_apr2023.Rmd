@@ -567,13 +567,13 @@ library(miaViz)
 library(scater)
 library(patchwork)
 
-pdf(paste0(params$output_dir, "scores_plot_filt_80_group.pdf"))
+pdf(paste0(params$output_dir, "scores_plot_filt_80_group_t.pdf"))
 print(lapply(names(shotgun_data_proc), function(organ_name){
     organ <- shotgun_data_proc[[organ_name]]
     lapply(names(organ), function(hierarchy_name){
         hierarchy <- organ[[hierarchy_name]]
         hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", method = "relabundance")
-        
+        hierarchy <- hierarchy[grepl(hierarchy_name, rownames(hierarchy)),]
         # hierarchy <- hierarchy[!grepl("Unknown", rownames(hierarchy)),]
         # 
         hierarchy <- estimateDiversity(x = hierarchy, index = c("shannon", "log_modulo_skewness"))

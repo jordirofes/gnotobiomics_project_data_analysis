@@ -11,6 +11,7 @@ params:
     blank_name: "RP_Blank"
     output_results: "../../outputs/Untargeted_Metabolomics/Hermes_Results/RP_Positive/"
     data_type: "RP_Positive"
+    mummichog_ionization: "positive"
 ---
 
 ```{r setup, include=FALSE}
@@ -31,6 +32,7 @@ library(ggplot2)
 library(plotly)
 library(mixOmics)
 library(vsn)
+library(dplyr)
 
 pca_plot <- function(pca_data, pc_x, pc_y, group_var, ellipse_var, allElipse =TRUE, interactive = TRUE, level = 0.95){
     pc_var <- pca_data$sdev^2
@@ -88,10 +90,13 @@ xcms_p <- pmp::filter_peaks_by_fraction(xcms_dt, min_frac = 0.8, classes = gf_li
                                         qc_label = params$qc_name, method = "across")
 xcms_p <- pmp::filter_peaks_by_fraction(xcms_p, min_frac = 0.3, classes = gf_lima_meta$groups_m, 
                                         qc_label = params$qc_name, method = "QC")
-xcms_p <- pmp::filter_peaks_by_blank(xcms_p, fold_change = 1, classes = gf_lima_meta$groups_m, blank_label = params$blank_name, qc_label = params$qc_name, fraction_in_blank = 0, remove_samples = TRUE, remove_peaks = TRUE)
+xcms_p <- pmp::filter_peaks_by_blank(xcms_p, fold_change = 1, classes = gf_lima_meta$groups_m, 
+                                     blank_label = params$blank_name, qc_label = params$qc_name,
+                                     fraction_in_blank = 0, remove_samples = TRUE, remove_peaks = TRUE)
 
-xcms_p <- pmp::filter_peaks_by_rsd(xcms_p, max_rsd = 35, classes = gf_lima_meta$groups_m[gf_lima_meta$groups_m != params$blank_name], 
-                                   qc_label = params$qc_name, remove_peaks = TRUE)
+xcms_p <- pmp::filter_peaks_by_rsd(xcms_p, max_rsd = 35, 
+                                    classes = gf_lima_meta$groups_m[gf_lima_meta$groups_m != params$blank_name], 
+                                    qc_label = params$qc_name, remove_peaks = TRUE)
 dt_pca <- pmp::mv_imputation(xcms_p, method = "knn", k = 10)
 
 pca_dt <- prcomp(t(assay(dt_pca)), center = TRUE, scale. = TRUE)
@@ -103,7 +108,9 @@ pca_plot(pca_dt, 1, 2, group_var = gf_lima_meta$groups_m[gf_lima_meta$groups_m !
 
 ```{r}
 xcms_p_dc <- pmp::QCRSC(df = xcms_p, order = c(1:92), batch = rep(1, 92), spar = 0, 
-                        qc_label = params$qc_name, classes = gf_lima_meta$groups_m[gf_lima_meta$groups_m != params$blank_name])
+                        qc_label = params$qc_name, classes = gf_lima_meta$groups_m[gf_lima_meta$groups_m != params$blank_name], )
+
+
 dt_pca <- pmp::mv_imputation(xcms_p_dc, method = "knn", k = 10)
 
 gf_lima_meta_nb <- gf_lima_meta[gf_lima_meta$groups_m != params$blank_name,]
@@ -190,9 +197,9 @@ xcms_p_dc_filt$sex <- factor(xcms_p_dc_filt$sex_m, levels = c("M", "F"))
 xcms_p_dc_filt$gfcv <- factor(xcms_p_dc_filt$gfcv, levels = c("C", "G"))
 
 tukey_results <- apply(assay(xcms_p_dc_filt), 1, function(dt_var){
-    anova_results <- aov(dt_var ~ batch + sex + gfcv + sex:gfcv, 
+    anova_results <- aov(log(dt_var) ~ batch + sex + gfcv + sex:gfcv, 
                         data = colData(xcms_p_dc_filt))
-    anova_results_no_int <- aov(dt_var ~ batch + sex + gfcv, 
+    anova_results_no_int <- aov(log(dt_var) ~ batch + sex + gfcv, 
                                 data = colData(xcms_p_dc_filt))
     
     list("Interaction Term" = as.data.frame(summary(anova_results)[[1]][4,]),
@@ -271,8 +278,8 @@ colnames(xcms_p_dc_filt) <- xcms_p_dc_filt$samplename
 rowData(xcms_p_dc_filt) <- cbind(rowData(xcms_p_dc_filt), 
                                 do.call(cbind, data_table))
 
-saveRDS(xcms_p_dc_filt,
-        paste0(params$output_results, "xcms_hermes_exp_gfcv.rds"))
+# saveRDS(xcms_p_dc_filt,
+#         paste0(params$output_results, "xcms_hermes_exp_gfcv.rds"))
 ```
 
 ### LIMA model analysis
@@ -311,23 +318,54 @@ lima_metadata
 
 comp_names <- apply(t(combn(levels(lima_metadata$group), m = 2))[,2:1], 1, 
                     paste, collapse = "-")
-comp_matrix <- matrix(NA, nrow = length(comp_names), ncol = 4)
+comp_matrix <- matrix(NA, nrow = length(comp_names), ncol = 2)
 rownames(comp_matrix) <- comp_names
 
 tukey_results <- apply(assay(xcms_p_dc_filt), 1, function(dt_var){
-    anova_results <- aov(dt_var ~ 0 + group, data = lima_metadata) 
+    anova_results <- kruskal.test(dt_var, g = lima_metadata$group)
+    anova_results <- data.frame("statistic" = anova_results$statistic,
+                                "parameter" = anova_results$parameter,
+                                "p.value" = anova_results$p.value)
+
+    # anova_results2 <- aov(dt_var ~ 0 + group, data = lima_metadata)
+    # comp_results <- list("Group_Test" = summary(anova_results)[[1]]["group",])
+    comp_results <- list("Group_Test" = anova_results)
     #plot(anova_results)
-    if(summary(anova_results)[[1]]["group", "Pr(>F)"] <= 0.1){
-        return(TukeyHSD(anova_results, which = c("group"))$group)
+    if(comp_results$Group_Test$p.value <= 0.05){
+        comp_results$Pairwise_Tests <- DescTools::ConoverTest(dt_var, lima_metadata$group)[[1]]
+        # comp_results$Pairwise_Tests <- TukeyHSD(anova_results, which = c("group"))$group
+        return(comp_results)
     } else{
-        return(comp_matrix)
+        comp_results$Pairwise_Tests <- comp_matrix
+        return(comp_results)
     }
-    
+
 })
+# tukey_results <- apply(assay(xcms_p_dc_filt), 1, function(dt_var){
+#     anova_results <- aov(log(dt_var) ~ 0 + group, data = lima_metadata)
+#     comp_results <- list("Group_Test" = summary(anova_results)[[1]]["group",])
+#     if(summary(anova_results)[[1]]["group", "Pr(>F)"] <= 0.1){
+#         comp_results$Pairwise_Tests <- TukeyHSD(anova_results, which = c("group"))$group
+#         return(comp_results)
+#         
+#     } else{
+#         comp_results$Pairwise_Tests <- comp_matrix
+# #         return(comp_results)
+#     }
+# })
+
+
+anova_test_results <- lapply(tukey_results, function(ctrs){
+    ctrs$Group_Test
+})
+anova_test_results <- do.call(rbind, anova_test_results)
+# colnames(anova_test_results)[5] <- c("pvalue")
+anova_test_results$adj.p.value <- p.adjust(anova_test_results$p.value)
 
 contrasts_results <- lapply(comp_names, function(ctrs_row){
     ctrs_result_list <- lapply(tukey_results, function(ctrs){
-        if(!(ctrs_row %in% rownames(ctrs))){return(rep(NA, 4))}
+        ctrs <- ctrs$Pairwise_Tests
+        if(!(ctrs_row %in% rownames(ctrs))){return(rep(NA, 2))}
         ctrs[ctrs_row,]   
     })
     do.call(rbind, ctrs_result_list)
@@ -336,10 +374,14 @@ names(contrasts_results) <- comp_names
 
 contrasts_results <- lapply(contrasts_results, function(ctrs){
     ctrs <- as.data.frame(ctrs)
-    colnames(ctrs) <- c("difference", "lower", "upper", "pvalue")
+    colnames(ctrs) <- c("difference", "pvalue")
     ctrs$adj.p.value <- p.adjust(ctrs[,"pvalue"], method = "fdr")
     ctrs
 })
+
+contrasts_results$Group_Test <-  anova_test_results
+
+contrasts_results <- do.call(cbind, contrasts_results)
 
 feature_data <- as.data.frame(rowData(xcms_p_dc_filt))
 
@@ -358,12 +400,7 @@ feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
 feature_data$soi <- sapply(feature_data$soi, function(x){paste(x, collapse = ",")})
 feature_data$formula <- sapply(feature_data$formula, function(x){paste(x, collapse = "/")})
 
-data_table <- lapply(contrasts_results, function(ctrs){
-    cbind(feature_data[, c("mzmed","rtmed", "PutativeMetabolites")], 
-                    feature_data[,c("formula","soi")], 
-        "p.value" = ctrs$pvalue, 
-        "adj.p.value" = ctrs$adj.p.value)
-})
+feature_data <- cbind(feature_data, contrasts_results)
 
 assay(xcms_p_dc_filt) <- as.data.frame(assay(xcms_p_dc_filt))
 
@@ -377,10 +414,84 @@ colnames(xcms_p_dc_filt) <- xcms_p_dc_filt$samplename
 # rownames(data_table) <- paste0(params$data_type, ".", 
 #                                 rownames(data_table))
 
-rowData(xcms_p_dc_filt) <- cbind(rowData(xcms_p_dc_filt), 
-                                do.call(cbind, data_table))
+rowData(xcms_p_dc_filt) <- feature_data
+```
+
+```{r}
+mummichog_test <- as.data.frame(rowData(xcms_p_dc_filt)[c("mzmed", "rtmed",
+                                            "Group_Test.p.value",
+                                            "Group_Test.statistic")])
+colnames(mummichog_test) <- c("mz", "rtime", "p-value", "t-score")
+
+mummichog_test$custom_id <- rownames(mummichog_test)
+
+write.table(x = mummichog_test,
+            file = "../../outputs/Untargeted_Metabolomics/Mummichog_results/mummichog_file.txt",
+            sep = "\t", row.names = FALSE, quote = FALSE)
+
+reticulate::py_config()
+system(command = paste0("mummichog -f ..\\..\\outputs\\Untargeted_Metabolomics\\Mummichog_results\\mummichog_file.txt -o myResults_Test_Full -m ", params$mummichog_ionization), wait = T)
+
+mummichog_folder <- grep("myResults",
+                         list.dirs(path = ".", full.names = T,
+                                    recursive = F), value = T)
+new_folder <- paste0(params$output_results, mummichog_folder)
+
+if(!dir.exists(new_folder)) dir.create(new_folder)
+file.copy(from = mummichog_folder, to = params$output_results, recursive = T)
+unlink(mummichog_folder, recursive = T)
+```
+
+
+```{r}
+# emp_compounds <- readLines(paste0(new_folder, "/tables/ListOfEmpiricalCompounds.tsv"))
+# emp_compounds <- strsplit(emp_compounds, split = "\t")
+# emp_compounds <- do.call(rbind, emp_compounds)
+# colnames(emp_compounds) <- emp_compounds[1,]
+# emp_compounds <- as.data.frame(emp_compounds[-1,])
+
+emp_compounds2 <- readLines(paste0(new_folder, "/tables/userInput_to_EmpiricalCompounds.tsv"))
+emp_compounds2 <- strsplit(emp_compounds2, split = "\t")
+emp_compounds2 <- do.call(rbind, emp_compounds2)
+colnames(emp_compounds2) <- emp_compounds2[1,]
+emp_compounds2 <- as.data.frame(emp_compounds2[-1,])
+
+
+pathway_enrich <- readLines(paste0(new_folder, "/tables/mcg_pathwayanalysis_myResults_Test_Full.tsv"))
+pathway_enrich <- strsplit(pathway_enrich, split = "\t")
+pathway_enrich <- do.call(rbind, pathway_enrich)
+colnames(pathway_enrich) <- pathway_enrich[1,]
+pathway_enrich <- as.data.frame(pathway_enrich[-1,])
+
+pathway_list <- strsplit(pathway_enrich$`overlap_EmpiricalCompounds (id)`, split = ";")
+names(pathway_list) <- pathway_enrich$pathway
+
+emp_compounds2$pathways_tested <- sapply(emp_compounds2$EID, function(x){
+    found <- names(pathway_list)[sapply(pathway_list, function(y){any(y %in% x)})]
+    if(length(found)){
+        return(paste(found, collapse = ";"))
+    } else{
+        return(NA)
+    }
+})
+
+merged_res <- lapply(rownames(rowData(xcms_p_dc_filt)), function(x){
+    found <- emp_compounds2[emp_compounds2$CompoundID_from_user == x, 
+                    c("input_row", "EID" , "str_row_ion", "compounds", 
+                        "compound_names", "CompoundID_from_user", "pathways_tested")]
+    if(nrow(found) == 0){
+        return(rep(NA, 7))
+    } else if(nrow(found) == 1){
+        return(found)
+    } else if(nrow(found) > 1){
+        return(sapply(found, paste, collapse = ";"))
+    }
+})
+merged_res <- do.call(rbind, merged_res)
+
+rowData(xcms_p_dc_filt) <- cbind(rowData(xcms_p_dc_filt), merged_res)
 
 saveRDS(xcms_p_dc_filt,
         paste0(params$output_results, "xcms_hermes_exp_lima.rds"))
 ```
-    
+

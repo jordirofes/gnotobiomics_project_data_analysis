@@ -534,9 +534,9 @@ names(shape_vect_ext) <- names(experiments(multi_omic_dt))
 for(omic_variable_network in omic_variable_networks){
     for(omic_network in omic_variable_network){
         # vertex.color = vertex_attr(test_sub, name = "Node_Omic")
-        plot.igraph(omic_network, vertex.size = 0.5, edge.size = 0.1, 
-                    vertex.label.cex = 0.2, edge.arrow.size = 0.1, 
-                    layout = layout_as_tree(omic_network))
+        # plot.igraph(omic_network, vertex.size = 0.5, edge.size = 0.1, 
+        #             vertex.label.cex = 0.2, edge.arrow.size = 0.1, 
+        #             layout = layout_as_tree(omic_network))
         
         RCy3::createNetworkFromIgraph(omic_network)
         RCy3::copyVisualStyle(from.style = "default", 
