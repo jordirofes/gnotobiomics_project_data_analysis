@@ -327,12 +327,28 @@ stat_res <- lapply(stat_res, function(organ){
             
             return(dt)
         }, "metaerg_kegg" = {
+            
+            rowData(organ[[dt_name]])$Description <- rownames(rowData(organ[[dt_name]]))  
+            
             return(organ[[dt_name]])
         })
     })
     names(organ_res) <- names(organ)
     organ_res
 })
+
+stat_res <- lapply(names(stat_res), function(organ_name){
+    organ <- stat_res[[organ_name]]
+    organ_res <- lapply(organ, function(dt){
+        rowData(dt)$readable_name <- str_replace(paste(organ_name, rowData(dt)$Description),
+                                                "^\\w{1}", toupper)
+        return(dt)
+    })
+    names(organ_res) <- names(organ)
+    organ_res
+})
+
+names(stat_res) <- names(organ_dt_list_proc)
 
 saveRDS(stat_res, paste0(params$output_dir, "Shotgun_Metagenomics_Functional_exp_lima.rds"))
 ```

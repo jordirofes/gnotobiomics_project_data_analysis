@@ -86,10 +86,13 @@ rownames(ptm_data) <- make.names(rownames(ptm_data))
 ptm_metadata <- data.frame("samplename" = make.names(ptm_metadata$Replicate_Name),
                            "group" = ptm_metadata$group)
 ptm_results <- do.call(cbind, comp_results_list)
+ptm_results$readable_name <- gsub("_|\\.", "-", gsub("\\.[^_]+$|\\.$", "", rownames(ptm_results)))
 
 ptm_exp <- SummarizedExperiment(assays = as.data.frame(t(ptm_data)), 
                                  colData = ptm_metadata,
                                  rowData = ptm_results)
+rownames(ptm_exp)
+
 saveRDS(ptm_exp, paste0(params$output_dir, "Histone_Modifications_Proteomics_exp_lima.rds"))
 ```
 

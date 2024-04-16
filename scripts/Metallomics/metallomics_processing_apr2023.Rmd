@@ -189,6 +189,8 @@ metal_exp_list <- lapply(names(lima_data_list), function(organ_name){
     organ_metadata$samplename <- make.names(organ_metadata$samplename)
     rownames(organ_metadata) <- organ_metadata$samplename
     merged_rowdata <- do.call(cbind, organ_res)
+    merged_rowdata$readable_name <- str_replace(paste(organ_name, rownames(merged_rowdata)), 
+                                                        "^\\w{1}", toupper)
     # rownames(merged_rowdata) <- paste0(organ_name, ".", rownames(merged_rowdata))
     # 
     SummarizedExperiment(assays = as.data.frame(organ_data), 

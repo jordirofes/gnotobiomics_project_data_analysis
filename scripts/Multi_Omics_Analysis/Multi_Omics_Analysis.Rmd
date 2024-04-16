@@ -48,7 +48,7 @@ filter_list <- c("16S", "Shotgun.cecum", "Shotgun.colon")
 ```{r}
 multi_omics_names <- names(experiments(multi_omics))
 
-multi_omics_selected <- multi_omics_names[!grepl("16S|Shotgun|Functional|unsupervised", multi_omics_names)]
+multi_omics_selected <- multi_omics_names[!grepl("16S|Shotgun|unsupervised", multi_omics_names)]
 
 # multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S|unsupervised|Targeted|Metallomics|Histone", multi_omics_names)]
 
@@ -291,7 +291,7 @@ for(dna_seq_name in names(dna_met_list)){
     )
     xfun::Rscript_call(rmarkdown::render,
                         args = list(input = "../WGB_DNA_Methylation/DMR_enrichment_analysis.Rmd", 
-                                    output_file = paste0(param_list$output_dir, 
+                                    output_file = paste0(rgreat_output_dir, 
                                                          "WGB_Sequencing_Enrichment_",
                                                          dna_seq_name, ".html"), 
                                     params = param_list
@@ -372,6 +372,8 @@ for(factor_id in names(unt_met_dt)){
 
 # setwd(old_dir)
 ```
+
+
 
 
 ### Comparing DMR and Transcriptomics enrichment results
@@ -533,12 +535,186 @@ lapply(names(overlap_list), function(factor_id){
 })
 ```
 
+### KEGG joint pathway analysis
+
+```{r}
+output_dir <- paste0(params$output_dir, "MOFA_Results/any_sig_005_mofa_int/")
+omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
+
+experiments(omic_dt) <- ExperimentList(lapply(experiments(omic_dt), function(omic_exp){
+    
+    omic_rd <- rowData(omic_exp)[,grepl("Factor_[1,2,3]_weights$", colnames(rowData(omic_exp)))]
+    
+    rowData(omic_exp)$max_weight_id <- apply(abs(as.matrix(omic_rd)), 1, which.max)
+    omic_exp
+}))
+
+
+rna_seq_rd <- lapply(experiments(omic_dt)[c("RNA_Sequencing", "WGB_DNA_Methylation", "Untargeted_Metabolomics")], rowData)
+num_factors <- 2
+
+
+
+
+library(stringr)
+kegg_db_path <- paste0(params$output_dir, "mmu_kegg_pathway_db.rds")
+test <- rGREAT::getKEGGPathways("mmu")
+
+pathway_ids <- sapply(strsplit(names(test), ":"), function(x){x[[1]]})
+names(test) <- pathway_ids
+
+if(!file.exists(kegg_db_path)){
+    library(KEGGREST)
+    
+    kegg_db_info <- lapply(pathway_ids, function(x){keggGet(x)[[1]]})
+    names(kegg_db_info) <- pathway_ids
+    saveRDS(kegg_db_info, kegg_db_path)    
+} else{
+    kegg_db_info <- readRDS(kegg_db_path)    
+}
+
+gene_enrich_db <- lapply(names(kegg_db_info), function(kegg_db_id){
+    gene_info <- as.numeric(kegg_db_info[[kegg_db_id]]$GENE)
+    
+    gene_info <- gene_info[!is.na(gene_info)]    
+    as.character(gene_info)
+})
+names(gene_enrich_db) <- names(kegg_db_info)
+
+integ_enrich_db <- lapply(names(kegg_db_info), function(kegg_db_id){
+    gene_info <- as.numeric(kegg_db_info[[kegg_db_id]]$GENE)
+    
+    gene_info <- gene_info[!is.na(gene_info)]    
+    compound_info <- names(kegg_db_info[[kegg_db_id]]$COMPOUND)
+    db_info <- c(gene_info, compound_info)
+    if(length(db_info) == 0){return(NA)}    
+    data.frame("term" = kegg_db_id, "gene" = db_info)        
+})
+
+names(integ_enrich_db) <- names(kegg_db_info)
+
+
+for(pathway_id in names(integ_enrich_db[is.na(integ_enrich_db)])){
+    integ_enrich_db[[pathway_id]] <- data.frame("term" = pathway_id, "gene" = test[[pathway_id]])
+}
+integ_enrich_db <- do.call(rbind, integ_enrich_db)
+
+term2name_dt <- lapply(names(kegg_db_info), function(kegg_id){
+    data.frame("term" = kegg_id, "name" = kegg_db_info[[kegg_id]]$NAME)
+})
+term2name_dt <- do.call(rbind, term2name_dt)
+
+omic_enrich <- c("Untargeted_Metabolomics", "RNA_Sequencing", "WGB_DNA_Methylation")
+ids_enrich_names <- c("metabo_analyst_cp", "entrezID", "geneId")
+
+library(SummarizedExperiment)
+
+omic_dict_list <- mapply(function(omic_id, enrich_var){
+    
+    omic_data <- omic_dt[[omic_id]]
+    omic_dict <- rowData(omic_data)[[enrich_var]]
+    
+    names(omic_dict) <- paste0(omic_id, ".", rownames(omic_data))
+    
+    omic_dict
+    
+}, omic_id = omic_enrich, enrich_var = ids_enrich_names)
+
+```
+
+
+```{r}
+feature_seq_list <- lapply(seq_len(num_factors), function(factor_id){
+    
+    # factor_col_sig <- paste0("Factor_", factor_id, "_weights_sig")
+    factor_col_sig <- paste0("max_weight_id == ", factor_id)
+    
+    factor_col <- paste0("Factor_", factor_id, "_weights")
+    
+    weight_expr_list <- list("All_Weights" = parse(text = factor_col_sig),
+                            "Positive_Weights" = parse(text = paste0(factor_col_sig, " & ", factor_col, " > 0")),
+                            "Negative_Weights" = parse(text = paste0(factor_col_sig, " & ", factor_col, " < 0")))
+    
+    lapply(weight_expr_list, function(weight_expr){
+        filtered_sig_features <- lapply(rna_seq_rd, function(x){
+            x <- as.data.frame(x)
+            rownames(x)[eval(expr = weight_expr, envir = x)]
+        })
+        # filtered_sig_features <- Reduce(c, filtered_sig_features)
+        filtered_sig_features
+    })
+})
+names(feature_seq_list) <- paste0("Factor_", seq_len(num_factors))
+```
+
+```{r}
+factor_ids_enrich <- lapply(feature_seq_list, function(factor_dt){
+    
+    lapply(factor_dt, function(weight_type_dt){
+        
+        metabo_dt <- omic_dict_list[["Untargeted_Metabolomics"]][paste0("Untargeted_Metabolomics", 
+                                                                        ".", weight_type_dt[["Untargeted_Metabolomics"]])]
+        
+        metabo_dt <- metabo_dt[!is.null(metabo_dt)]
+        metabo_dt <- strsplit(metabo_dt, ";")
+        metabo_dt <- metabo_dt[!is.na(metabo_dt)]
+        
+        wgb_dt <- omic_dict_list[["WGB_DNA_Methylation"]][paste0("WGB_DNA_Methylation", 
+                                                                ".", weight_type_dt[[ "WGB_DNA_Methylation"]])]
+        wgb_dt <- wgb_dt[!is.null(wgb_dt) & !is.na(wgb_dt)]
+        
+        rna_dt <- omic_dict_list[["RNA_Sequencing"]][paste0("RNA_Sequencing",
+                                                            ".", weight_type_dt[["RNA_Sequencing"]])]
+        rna_dt <- rna_dt[!is.null(rna_dt) & !is.na(rna_dt)]
+        
+        unlist(c(metabo_dt, rna_dt, wgb_dt))
+    })
+})
+
+universe_list_ids <- lapply(names(rna_seq_rd), function(omic_name){
+    omic_ids <- omic_dict_list[[omic_name]][paste0(omic_name, ".", rownames(rna_seq_rd[[omic_name]]))]
+    omic_ids <- omic_ids[!is.null(omic_ids)]
+    omic_ids <- unlist(strsplit(omic_ids, ";"))
+    omic_ids[!is.na(omic_ids)]
+
+})
+names(universe_list_ids) <- names(rna_seq_rd)
+universe_list_ids <- unlist(Reduce(c, universe_list_ids))
+```
+
+```{r}
+library(clusterProfiler)
+enrich_results_list_full <- lapply(factor_ids_enrich, function(factor_dt){
+    lapply(factor_dt, function(weight_dt){
+        enricher(gene = weight_dt, universe = universe_list_ids, 
+                pvalueCutoff = 0.05, pAdjustMethod = "fdr", 
+                TERM2GENE = integ_enrich_db, TERM2NAME = term2name_dt)
+    })
+})
+
+```
+
+```{r, fig.height=6, fig.width=8}
+library(ggplot2)
+pdf(paste0(output_dir, "Kegg_Joint_Pathway_Enrichment.pdf"))
+lapply(names(enrich_results_list_full), function(factor_id){
+    factor_dt <- enrich_results_list_full[[factor_id]]
+    lapply(names(factor_dt), function(weight_id){
+        weight_dt <- factor_dt[[weight_id]]
+        
+        plot_name <- gsub("_", " ", paste(factor_id, weight_id))
+        
+        dotplot(weight_dt) + ggtitle(paste("Kegg joint pathway enrichment" , plot_name))
+    })
+})
+dev.off()
+```
 
 ## MOFA variables correlations (any significant)
 
 ```{r}
 output_dir <- paste0(params$output_dir, "MOFA_Results/any_sig_005_mofa_int/")
-corr_output_dir <- paste0(output_dir, "correlation_results/")
+corr_output_dir <- paste0(output_dir, "correlation_results_max_weight/")
 
 omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
 
@@ -546,6 +722,14 @@ sapply(names(experiments(omic_dt)), function(x){
     x_dt <- experiments(omic_dt)[[x]]
     hist(rowData(x_dt)$Factor_1_weights, main = x)
 })
+
+experiments(omic_dt) <- ExperimentList(lapply(experiments(omic_dt), function(omic_exp){
+    
+    omic_rd <- rowData(omic_exp)[,grepl("Factor_[1,2,3]_weights$", colnames(rowData(omic_exp)))]
+    
+    rowData(omic_exp)$max_weight_id <- apply(abs(as.matrix(omic_rd)), 1, which.max)
+    omic_exp
+}))
 
 network_omics <- list("All Omics" = names(assays(omic_dt)))
 
@@ -558,12 +742,12 @@ variables_dicts <- lapply(network_omics[[1]], function(omic_name){
     if(omic_name == "RNA_Sequencing"){
         return("gene_lab")
     } else if(omic_name == "Untargeted_Metabolomics"){
-        return("HFD-CNT.PutativeMetabolites")
+        return("metaboanalyst_compound_names")
         #return("HFD-CNT.formula")
     } else if(grepl("DNA_Methylation", omic_name)){
         return("geneName")
-    } else if(grepl("cogs", omic_name)){
-        return("Description")
+    } else if(grepl("Shotgun|Metallomics|16S|Targeted|Histone", omic_name)){
+        return("readable_name")  
     } else{
         return(NA)
     }
@@ -573,10 +757,36 @@ variables_dicts[is.na(variables_dicts)] <- NULL
 
 add_var_names <- grep("weights|FC", colnames(rowData(omic_dt@ExperimentList$RNA_Sequencing)), value = T)
 
-corr_method_vect <- c("kendall", "spearman", "pearson")
+# corr_method_vect <- c("kendall", "spearman", "pearson")
+corr_method_vect <- c("spearman")
 
 for(corr_method in corr_method_vect){
-    
+    xfun::Rscript_call(rmarkdown::render,
+                            args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
+                              output_file = output_dir,
+                              params = list(
+                                corr_threshold = 0,
+                                corr_method = corr_method,
+                                multi_omic_path = omic_dt,
+                                group_metadata_var = "group",
+                                sample_levels_2_correlate = c("CNT", "HFD", "INT"),
+                                filter_variable_2_correlate = list(
+                                    "Factor_1" = quote(max_weight_id == 1),
+                                    "Factor_2" = quote(max_weight_id == 2)
+                                ),
+                                p_adj_thr = 1,
+                                omic_list_2_correlate = network_omics,
+                                rowData_variable_name_list = variables_dicts,
+                                draw_networks = TRUE,
+                                draw_cytoscape = FALSE,
+                                add_autocorrelations = FALSE,
+                                keep_full_correlations = TRUE,
+                                output_dir = corr_output_dir,
+                                output_suffix = paste0("0_005_chi_f1f2_", corr_method),
+                                add_variables = TRUE,
+                                variables_names = add_var_names,
+                                draw_cluster_scatter_plots = FALSE))
+                      )
     # xfun::Rscript_call(rmarkdown::render,
     #                         args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
     #                           output_file = output_dir,
@@ -590,6 +800,7 @@ for(corr_method in corr_method_vect){
     #                                 "Factor_1" = quote(Factor_1_weights_sig),
     #                                 "Factor_2" = quote(Factor_2_weights_sig)
     #                             ),
+    #                             p_adj_thr = 1,
     #                             omic_list_2_correlate = network_omics,
     #                             rowData_variable_name_list = variables_dicts,
     #                             draw_networks = TRUE,
@@ -604,30 +815,30 @@ for(corr_method in corr_method_vect){
     #                   )
 
 
-    xfun::Rscript_call(rmarkdown::render,
-                                args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
-                                  output_file = output_dir,
-                                  params = list(
-                                    corr_threshold = 0,
-                                    corr_method = corr_method,
-                                    multi_omic_path = omic_dt,
-                                    group_metadata_var = "group",
-                                    sample_levels_2_correlate = c("CNT", "HFD", "INT"),
-                                    filter_variable_2_correlate = list(
-                                        "All" = NA
-                                    ),
-                                    omic_list_2_correlate = network_omics,
-                                    rowData_variable_name_list = variables_dicts,
-                                    draw_networks = FALSE,
-                                    draw_cytoscape = FALSE,
-                                    add_autocorrelations = FALSE,
-                                    keep_full_correlations = TRUE,
-                                    output_dir = corr_output_dir,
-                                    output_suffix = paste0("0_005_chi", corr_method),
-                                    add_variables = TRUE,
-                                    variables_names = add_var_names,
-                                    draw_cluster_scatter_plots = FALSE))
-                          )
+    # xfun::Rscript_call(rmarkdown::render,
+    #                             args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
+    #                               output_file = output_dir,
+    #                               params = list(
+    #                                 corr_threshold = 0,
+    #                                 corr_method = corr_method,
+    #                                 multi_omic_path = omic_dt,
+    #                                 group_metadata_var = "group",
+    #                                 sample_levels_2_correlate = c("CNT", "HFD", "INT"),
+    #                                 filter_variable_2_correlate = list(
+    #                                     "All" = NA
+    #                                 ),
+    #                                 omic_list_2_correlate = network_omics,
+    #                                 rowData_variable_name_list = variables_dicts,
+    #                                 draw_networks = FALSE,
+    #                                 draw_cytoscape = FALSE,
+    #                                 add_autocorrelations = FALSE,
+    #                                 keep_full_correlations = TRUE,
+    #                                 output_dir = corr_output_dir,
+    #                                 output_suffix = paste0("0_005_chi", corr_method),
+    #                                 add_variables = TRUE,
+    #                                 variables_names = add_var_names,
+    #                                 draw_cluster_scatter_plots = FALSE))
+    #                       )
 }
 # rmarkdown::render(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
 #                           output_file = corr_output_dir,
@@ -653,36 +864,136 @@ for(corr_method in corr_method_vect){
 ```{r}
 library(ProteoNet)
 library(igraph)
+library(dplyr)
+library(org.Mm.eg.db)
+output_dir <- paste0(params$output_dir, "MOFA_Results/any_sig_005_mofa_int/")
+corr_output_dir <- paste0(output_dir, "correlation_results_max_weight/")
 
-# exp_list <- experiments(omic_dt)
-# 
-# for(exp_id in names(exp_list)){
-#     assayNames(exp_list[[exp_id]]) <- "dt"
-#     exp_list[[exp_id]] <- SummarizedExperiment(
-#         assays = assays(exp_list[[exp_id]]), 
-#         rowData = as.data.frame(rowData(exp_list[[exp_id]])), 
-#         colData = colData(exp_list[[exp_id]]))
-#     rownames(exp_list[[exp_id]]) <- paste0(exp_id, ".", rownames(exp_list[[exp_id]]))
-#     
-# }
-# 
-# test_omics <- Reduce(f = combineRows, 
-#                      x = exp_list)
-# 
-# createProteoNetExp(assayData = omic_dt@ExperimentList$)
-
-# full_nw <- readRDS(paste0(corr_output_dir, "network_results_0_005_chi_f1f2_kendall.rds"))
+omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
 
 nw_paths <- list.files(corr_output_dir, pattern = "\\.rds$", full.names = T)
 nw_graphs <- lapply(nw_paths, readRDS)
 
+
+variables_dicts <- lapply(names(assays(omic_dt)), function(omic_name){
+    if(omic_name == "RNA_Sequencing"){
+        return("gene_lab")
+    } else if(omic_name == "Untargeted_Metabolomics"){
+        return("metaboanalyst_compound_names")
+        #return("HFD-CNT.formula")
+    } else if(grepl("DNA_Methylation", omic_name)){
+        return("geneName")
+    } else if(grepl("Shotgun|Metallomics|16S|Targeted|Histone", omic_name)){
+        return("readable_name")  
+    } else{
+        return(NA)
+    }
+})
+names(variables_dicts) <- names(assays(omic_dt))
+variables_dicts[is.na(variables_dicts)] <- NULL
+
 score_names <- gsub("\\.rds", "", sapply(strsplit(basename(nw_paths), "_"),
                                             function(x){x[length(x)]}))
 
-score_filters <- c(0.6, 0.8, 0.8)
+# score_filters <- c(0.6, 0.8, 0.8)
+# names(score_filters) <- score_names
+# names(nw_graphs) <- score_names
+# 
+# 
+# score_filters$spearman$Factor_2
+score_filters <- c(0.8)
 names(score_filters) <- score_names
 names(nw_graphs) <- score_names
 
+# score_filters <- list("spearman" = list("Factor_1" = 0.85, "Factor_2" = 0.8))
+# names(nw_graphs) <- score_names
+
+# rowData(omic_dt[["Shotgun_Metagenomics.cecum.Species"]])$readable_name <- paste("Shotgun", rowData(omic_dt[["Shotgun_Metagenomics.cecum.Species"]])$readable_name)
+# 
+# rowData(omic_dt[["Shotgun_Metagenomics.colon.Species"]])$readable_name <- paste("Shotgun", rowData(omic_dt[["Shotgun_Metagenomics.colon.Species"]])$readable_name)
+# 
+# 
+# rowData(omic_dt[["16S_Metagenomics.cecum.Species"]])$readable_name <- paste("16S", 
+#                                                                             rowData(omic_dt[["16S_Metagenomics.cecum.Species"]])$readable_name)
+# 
+# rowData(omic_dt[["16S_Metagenomics.c.Species"]])$readable_name <- paste("16S", rowData(omic_dt[["16S_Metagenomics.cecum.Species"]])$readable_name)
+```
+
+```{r}
+variable_dictionary <- lapply(names(variables_dicts), function(dataset_name){
+        
+    dataset_var <- rowData(omic_dt[[dataset_name]])[variables_dicts[[dataset_name]]]
+    dataset_vector <- unlist(dataset_var[[1]])
+    names(dataset_vector) <- paste0(dataset_name, ".", rownames(dataset_var))
+    
+    dataset_vector
+})
+names(variable_dictionary) <- names(variables_dicts)
+
+nw_graphs <- lapply(nw_graphs, function(score_dt){
+    lapply(score_dt, function(factor_dt){
+        vertex_attr(factor_dt[["All Omics"]], "Readable_Name") <- sapply(names(V(factor_dt[["All Omics"]])), 
+                                                                    function(v_name){
+                omic_id <- vertex_attr(factor_dt[["All Omics"]], name = "Node_Omic", index = v_name)
+                if(omic_id %in% names(variable_dictionary)){
+                    variable_dictionary[[omic_id]][v_name]
+                } else{
+                    return(v_name)
+                }
+            })
+        factor_dt
+    })
+})
+
+```
+
+```{r}
+# filter_scores <- seq(0.2, 0.9, by = 0.05)
+# 
+# nw_filter_score <- lapply(names(nw_graphs), function(score_id){
+#     score_dt <- nw_graphs[[score_id]]
+# 
+#     score_res <- lapply(names(score_dt), function(weight_id){
+#         weight_dt <- score_dt[[weight_id]][["All Omics"]]
+# 
+#         pdf(paste0(corr_output_dir, "degree_distribution_", score_id, "_", weight_id, ".pdf"))
+# 
+#         power_fit_pval <- sapply(filter_scores, function(x){
+#             if(x == 1 || x == 0){return(NA)}
+#             graph_weights <- abs(edge_attr(weight_dt,
+#                                     name = "weight"))
+#             sub_g <- subgraph.edges(weight_dt,
+#                         E(weight_dt)[graph_weights >= x],
+#                         delete.vertices = TRUE)
+#             if(length(sub_g) == 0){return(NA)}
+#             hist(degree(sub_g), breaks = 100, main = x)
+#             return(power.law.fit(degree(sub_g))$KS.stat)
+#             degree(sub_g)
+#         })
+# 
+#         dev.off()
+# 
+#         names(power_fit_pval) <- filter_scores
+#         power_fit_pval
+#         # return(names(power_fit_pval)[which.min(power_fit_pval)])
+#     })
+#     names(score_res) <- names(score_dt)
+#     score_res
+# })
+# names(nw_filter_score) <- names(nw_graphs)
+# score_filters <- lapply(nw_filter_score, function(score_dt){
+#     lapply(score_dt, function(weight_dt){
+#         # lapply(weight_dt, function(filter_scores){
+#         #     if(all(is.na(filter_scores))){return(NA)}
+#         #     return(power.law.fit(filter_scores)$KS.stat)
+#         # })
+#         # plot(x = names(weight_dt), y = weight_dt)
+#         return(names(weight_dt)[which.min(weight_dt)])
+#     })
+# })
+```
+
+```{r}
 rand_seed <- 1234
 universe_list <- lapply(nw_graphs, function(score_dt){
     lapply(score_dt, function(weight_dt){
@@ -691,22 +1002,34 @@ universe_list <- lapply(nw_graphs, function(score_dt){
         })
     })
 })
-
+# 
+# 
+# score_filters[[score_id]]]
 
 nw_graphs <- lapply(names(nw_graphs), function(score_id){
     score_dt <- nw_graphs[[score_id]]
-    lapply(score_dt, function(weight_dt){
+    score_res <- lapply(names(score_dt), function(weight_id){
+        weight_dt <- score_dt[[weight_id]]
+
         lapply(weight_dt, function(graph_dt){
-            subgraph.edges(graph_dt, 
-                        E(graph_dt)[abs(edge_attr(graph_dt, 
-                                                name = "weight")) >= score_filters[score_id]], 
+            graph_weights <- abs(edge_attr(graph_dt,
+                            name = "weight"))
+            graph_adj.p.val <- edge_attr(graph_dt, name = "adj.p.value")
+            subgraph.edges(graph_dt,
+                        E(graph_dt)[graph_weights >= score_filters[score_id] & E(graph_dt)[graph_adj.p.val <= 0.05]],
                         delete.vertices = TRUE)
+            # subgraph.edges(graph_dt,
+                        # E(graph_dt)[graph_weights >= as.numeric(score_filters[[score_id]][[weight_id]] & E(graph_dt)[graph_adj.p.val <= 0.05])],
+                        # delete.vertices = TRUE)
+
         })
     })
+    names(score_res) <- names(score_dt)
+    score_res
 })
 names(nw_graphs) <- score_names
 # graph_weights <- abs(edge_attr(nw_dt, name = "weight"))
-# 
+#
 # hist(graph_weights)
 # hist(degree.distribution(nw_dt), breaks = 100)
 
@@ -714,34 +1037,27 @@ names(nw_graphs) <- score_names
 nw_graphs <- lapply(nw_graphs, function(score_dt){
     lapply(score_dt, function(weight_dt){
         lapply(weight_dt, function(graph_dt){
-            vertex_attr(graph_dt, name = "Infomaps.web") <- membership(infomaps_website_clustering(
-                graph = graph_dt, weights = abs(edge_attr(graph_dt, name = "weight")),
-                rand.seed = rand_seed, num_trials = 10))
+            membership_dt <- membership(infomaps_website_clustering(
+                                        graph = graph_dt, weights = abs(edge_attr(graph_dt, name = "weight")),
+                                        rand.seed = rand_seed, num_trials = 10))
+            vertex_attr(graph_dt, name = "Infomaps.web") <- paste0("CL_", membership_dt)
             return(graph_dt)
         })
     })
 })
 
-# vertex_attr(nw_dt, name = "Infomaps.igraph") <- membership(
-#     infomap.community(graph = nw_dt, e.weights = graph_weights)
-# )
 
-# vertex_attr(nw_dt, name = "Leiden.igraph") <- leiden::leiden(
-#     nw_dt, seed = rand_seed, n_iterations = 1)
+lapply(names(nw_graphs), function(score_id){
+    score_dt <- nw_graphs[[score_id]]
+    lapply(names(score_dt), function(weight_id){
 
-# vertex_attr(nw_dt, name = "Leiden.igraph") <- igraph::membership(igraph::cluster_leiden(nw_dt, resolution_parameter = 0.1))
+        weight_dt <- score_dt[[weight_id]]
+        lapply(weight_dt, function(graph_dt){
+            hist(table(vertex_attr(graph_dt, name = "Infomaps.web")), breaks = 100)
+        })
+    })
+})
 
-
-
-# t1 <- vertex_attr(full_nw, "Node_Omic")
-# t2 <- vertex_attr(nw_dt, "Node_Omic")
-# test <- data.frame("Node_Omic" = c(t1, t2), "Type" = c(rep("Full", length(t1)), rep("Sub", length(t2))))
-# table_test <- table(test)
-# table_test
-# fisher.test(table_test, simulate.p.value = TRUE)
-# 
-# table(vertex_attr(nw_dt, "Infomaps.web"))
-# table(vertex_attr(nw_dt, "Infomaps.igraph"))
 ```
 
 ```{r}
@@ -755,76 +1071,874 @@ nw_graphs <- lapply(nw_graphs, function(score_dt){
 ```
 
 ```{r}
-library(org.Mm.eg.db)
-library(GOSemSim)
-library(rGREAT) 
-enrich_multi_omic_clusters <- function(graph, membership_attribute, universe, min_n = 25){
-    
-    membership_vector <- vertex_attr(graph, membership_attribute)
-    clu_vertex <- lapply(unique(membership_vector), function(cl_id){
-        names(V(graph))[membership_vector == cl_id]
-    })
-    clu_vertex <- clu_vertex[lengths(clu_vertex) >= min_n]
-    rna_seq_tag <- "RNA_Sequencing\\."
-    dna_seq_tag <- "WGB_DNA_Methylation\\."
-    
-    universe_rna_seq <- grep(rna_seq_tag, universe, value = TRUE)
-    universe_rna_seq <- gsub(rna_seq_tag, "", universe_rna_seq)
-    
-    universe_dna_seq <- grep(dna_seq_tag, universe, value = TRUE)
-    universe_dna_seq <- gsub(dna_seq_tag, "", universe_dna_seq)
-    universe_dna_seq <- rowRanges(omic_dt[["WGB_DNA_Methylation"]][universe_dna_seq,])
-    bp_data <- godata(OrgDb = org.Mm.eg.db, ont = "BP")
-    
-    enrich_res <- lapply(clu_vertex, function(clu_ids){
-        rna_seq_ids <- grep(rna_seq_tag, clu_ids, value = TRUE)
-        rna_seq_ids <- gsub(rna_seq_tag, "", rna_seq_ids)
-        rna_seq_enrich <- clusterProfiler::enrichGO(
-            gene = rna_seq_ids, OrgDb = org.Mm.eg.db, 
-            keyType = "ENSEMBL", ont = "BP", 
-            pvalueCutoff = 0.05, pAdjustMethod = "fdr", 
-            universe = universe_rna_seq)
-        rna_seq_enrich <- as.data.frame(rna_seq_enrich)
-        
-        dna_seq_ids <- grep(dna_seq_tag, clu_ids, value = TRUE)
-        dna_seq_ids <- gsub(dna_seq_tag, "", dna_seq_ids)
-        dna_seq_ids <- rowRanges(omic_dt[["WGB_DNA_Methylation"]][dna_seq_ids,])
-        
-        dna_seq_enrich <- great(gr = dna_seq_ids, 
-                                gene_sets = "GO:BP",  
-                                tss_source = "TxDb.Mmusculus.UCSC.mm39.refGene", 
-                                background = universe_dna_seq)
-        
-        dna_seq_enrich <- getEnrichmentTable(dna_seq_enrich)
-        dna_seq_enrich <- subset(dna_seq_enrich, p_adjust <= 0.05)
-        
-        return(list("RNA_Seq_Enrich" = rna_seq_enrich, 
-                    "DMR_Enrich" = dna_seq_enrich))
-    })    
-}
+## DMR & RNA_Seq enrich
 
-enrich_results <- lapply(names(nw_graphs), function(score_id){
-    score_dt <- nw_graphs[[score_id]]
-    score_results <- lapply(names(score_dt), function(weight_name){
-        weight_dt <- score_dt[[weight_name]][["All Omics"]]
-        universe_dt <- universe_list[[score_id]][[weight_name]][["All Omics"]]
-        
-        enrich_multi_omic_clusters(graph = weight_dt, 
-                                   membership_attribute = "Infomaps.web", 
-                                   universe = universe_dt)
+# library(org.Mm.eg.db)
+# library(GOSemSim)
+# library(rGREAT) 
+# enrich_multi_omic_clusters <- function(graph, membership_attribute, universe, min_n = 25){
+#     
+#     membership_vector <- vertex_attr(graph, membership_attribute)
+#     clu_vertex <- lapply(unique(membership_vector), function(cl_id){
+#         names(V(graph))[membership_vector == cl_id]
+#     })
+#     clu_vertex <- clu_vertex[lengths(clu_vertex) >= min_n]
+#     rna_seq_tag <- "RNA_Sequencing\\."
+#     dna_seq_tag <- "WGB_DNA_Methylation\\."
+#     
+#     
+#     
+#     general_tag <- paste0(rna_seq_tag, "|", dna_seq_tag)
+#     
+#     enrich_res <- lapply(clu_vertex, function(clu_ids){
+#         rna_seq_ids <- grep(rna_seq_tag, clu_ids, value = TRUE)
+#         rna_seq_ids <- gsub(rna_seq_tag, "", rna_seq_ids)
+#         
+#         clusterProfiler::enrichGO(
+#             gene = rna_seq_ids, OrgDb = org.Mm.eg.db, 
+#             keyType = "ENSEMBL", ont = "BP", 
+#             pvalueCutoff = 0.05, pAdjustMethod = "fdr", 
+#             universe = universe_rna_seq)
+#     }) 
+#         
+#     # universe_rna_seq <- grep(rna_seq_tag, universe, value = TRUE)
+#     # universe_rna_seq <- gsub(rna_seq_tag, "", universe_rna_seq)
+#         
+#     # universe_dna_seq <- grep(dna_seq_tag, universe, value = TRUE)
+#     # universe_dna_seq <- gsub(dna_seq_tag, "", universe_dna_seq)
+#     # universe_dna_seq <- rowRanges(omic_dt[["WGB_DNA_Methylation"]][universe_dna_seq,])
+#     # bp_data <- godata(OrgDb = org.Mm.eg.db, ont = "BP")
+#     
+#     # enrich_res <- lapply(clu_vertex, function(clu_ids){
+#     #     rna_seq_ids <- grep(rna_seq_tag, clu_ids, value = TRUE)
+#     #     rna_seq_ids <- gsub(rna_seq_tag, "", rna_seq_ids)
+#     #     rna_seq_enrich <- clusterProfiler::enrichGO(
+#     #         gene = rna_seq_ids, OrgDb = org.Mm.eg.db, 
+#     #         keyType = "ENSEMBL", ont = "BP", 
+#     #         pvalueCutoff = 0.05, pAdjustMethod = "fdr", 
+#     #         universe = universe_rna_seq)
+#     #     rna_seq_enrich <- as.data.frame(rna_seq_enrich)
+#         
+#         # dna_seq_ids <- grep(dna_seq_tag, clu_ids, value = TRUE)
+#         # dna_seq_ids <- gsub(dna_seq_tag, "", dna_seq_ids)
+#         # dna_seq_ids <- rowRanges(omic_dt[["WGB_DNA_Methylation"]][dna_seq_ids,])
+#         # 
+#         # dna_seq_enrich <- great(gr = dna_seq_ids, 
+#         #                         gene_sets = "GO:BP",  
+#         #                         tss_source = "TxDb.Mmusculus.UCSC.mm39.refGene", 
+#         #                         background = universe_dna_seq)
+#         # 
+#         # dna_seq_enrich <- getEnrichmentTable(dna_seq_enrich)
+#         # dna_seq_enrich <- subset(dna_seq_enrich, p_adjust <= 0.05)
+#         
+#         # return(list("RNA_Seq_Enrich" = rna_seq_enrich, 
+#         #             "DMR_Enrich" = dna_seq_enrich))
+#     #     rna_seq_enrich
+#     # }) 
+#     enrich_res
+# }
+membership_attribute <- "Infomaps.web"
+min_n = 10;
+
+rna_seq_tag <- "RNA_Sequencing\\."
+dna_seq_tag <- "WGB_DNA_Methylation\\."
+general_tag <- paste0(rna_seq_tag, "|", dna_seq_tag)
+
+
+dna_seq_dict <- rowData(omic_dt[["WGB_DNA_Methylation"]])$geneId
+names(dna_seq_dict) <- rownames(omic_dt[["WGB_DNA_Methylation"]])
+rna_seq_dict <- rowData(omic_dt[["RNA_Sequencing"]])$entrezID
+names(rna_seq_dict) <- rownames(omic_dt[["RNA_Sequencing"]])
+
+universe_dict <- c(dna_seq_dict, rna_seq_dict)
+universe_dict
+
+
+# enrich_results <- lapply(names(nw_graphs), function(score_id){
+#     score_dt <- nw_graphs[[score_id]]
+#     score_results <- lapply(names(score_dt), function(weight_name){
+#         weight_dt <- score_dt[[weight_name]][["All Omics"]]
+#         universe_dt <- universe_list[[score_id]][[weight_name]][["All Omics"]]
+#         
+#         universe <- grep(general_tag, universe_dt, value = TRUE)
+#         universe <- gsub(general_tag, "", universe)
+#         
+#         universe <- universe_dict[universe]
+#         
+#         membership_vector <- vertex_attr(weight_dt, membership_attribute)
+#         clu_vertex <- lapply(unique(membership_vector), function(cl_id){
+#             names(V(weight_dt))[membership_vector == cl_id]
+#         })
+#         names(clu_vertex) <- unique(membership_vector)
+#         clu_vertex <- clu_vertex[lengths(clu_vertex) >= min_n]
+# 
+#         enrich_res <- lapply(clu_vertex, function(clu_ids){
+#             clu_ids_t <- grep(general_tag, clu_ids, value = TRUE)
+#             clu_ids_t <- gsub(general_tag, "", clu_ids_t)
+#             clu_ids_t <- universe_dict[clu_ids_t]
+#         
+#             enrich_clu <- clusterProfiler::enrichGO(
+#                 gene = clu_ids_t, OrgDb = org.Mm.eg.db, 
+#                 keyType = "ENTREZID", ont = "BP", 
+#                 pvalueCutoff = 0.05, pAdjustMethod = "fdr", 
+#                 universe = universe)
+#             if(nrow(as.data.frame(enrich_clu)) == 0){return(NA)}
+#             clusterProfiler::simplify(enrich_clu)
+#         }) 
+#         enrich_res[!is.na(enrich_res)]
+#     })
+#     names(score_results) <- names(score_dt)
+#     score_results
+# })
+# names(enrich_results) <- names(nw_graphs)
+```
+
+```{r}
+library(clusterProfiler)
+# 
+# 
+# 
+# graph <- nw_graphs$pearson$Factor_1$`All Omics`
+# 
+# integ_res_dir <- paste0(corr_output_dir, "/", score_id, "/")
+# if(!dir.exists(integ_res_dir)){dir.create(integ_res_dir)}
+# 
+# output_path <- paste0(integ_res_dir, "/Factor_1/")
+# results_name <- "Factor_1_All"
+
+
+clu_ids_enrich <- lapply(nw_graphs, function(score_dt){
+    lapply(score_dt, function(factor_dt){
+        graph <- factor_dt[["All Omics"]]
+        membership_vector <- vertex_attr(graph, membership_attribute)
+        clu_vertex <- lapply(unique(membership_vector), function(cl_id){
+            names(V(graph))[membership_vector == cl_id]
+        })
+        names(clu_vertex) <- unique(membership_vector)
+        cluster_id_list <-  lapply(clu_vertex, function(clu_ids){
+            if(length(clu_ids) <= min_n){return(NA)}
+            metabo_dt <- omic_dict_list[["Untargeted_Metabolomics"]][grep("Untargeted_Metabolomics", 
+                                                                            clu_ids, value = T)]
+            metabo_dt <- metabo_dt[!is.null(metabo_dt)]
+            metabo_dt <- strsplit(metabo_dt, ";")
+            metabo_dt <- metabo_dt[!is.na(metabo_dt)]
+            
+            wgb_dt <- omic_dict_list[["WGB_DNA_Methylation"]][grep("WGB_DNA_Methylation", 
+                                                                            clu_ids, value = T)]
+            wgb_dt <- wgb_dt[!is.null(wgb_dt) & !is.na(wgb_dt)]
+            
+            rna_dt <- omic_dict_list[["RNA_Sequencing"]][grep("RNA_Sequencing", 
+                                                                            clu_ids, value = T)]
+            rna_dt <- rna_dt[!is.null(rna_dt) & !is.na(rna_dt)]
+            
+            return(c(metabo_dt, rna_dt, wgb_dt))
+            # sapply(clu, function(clu_ids){
+            #     browser()
+            #     
+            #     
+            #     
+            #     omic_dt <- strsplit(clu_ids, "\\.")
+            # })
+        })
+        cluster_id_list[!is.na(cluster_id_list)]
     })
-    names(score_results) <- names(score_dt)
-    score_results
 })
-names(enrich_results) <- names(nw_graphs)
+
+universe_list_ids <- lapply(nw_graphs, function(score_dt){
+    lapply(score_dt, function(factor_dt){
+        graph <- factor_dt[["All Omics"]]
+        
+        universe_ids <- names(V(graph))
+    
+        metabo_dt <- omic_dict_list[["Untargeted_Metabolomics"]][grep("Untargeted_Metabolomics", 
+                                                                            universe_ids, value = T)]
+        metabo_dt <- metabo_dt[!is.null(metabo_dt)]
+        metabo_dt <- unlist(strsplit(metabo_dt, ";"))
+        metabo_dt <- metabo_dt[!is.na(metabo_dt)]
+        
+        wgb_dt <- omic_dict_list[["WGB_DNA_Methylation"]][grep("WGB_DNA_Methylation", 
+                                                                        universe_ids, value = T)]
+        wgb_dt <- wgb_dt[!is.null(wgb_dt) & !is.na(wgb_dt)]
+        
+        rna_dt <- omic_dict_list[["RNA_Sequencing"]][grep("RNA_Sequencing", 
+                                                                        universe_ids, value = T)]
+        rna_dt <- rna_dt[!is.null(rna_dt) & !is.na(rna_dt)]
+            
+        universe_ids_f <- c(metabo_dt, wgb_dt, rna_dt)
+        universe_ids_f
+    })
+})
+
+enrich_results_list <- lapply(names(clu_ids_enrich), function(score_id){
+    factor_results <- lapply(names(clu_ids_enrich[[score_id]]), function(factor_id){
+        enrich_results <- lapply(clu_ids_enrich[[score_id]][[factor_id]], function(clu_ids){
+            
+            clu_ids <- unlist(clu_ids)
+            
+            enrich_res <- enricher(gene = clu_ids, universe = universe_list_ids[[score_id]][[factor_id]], 
+                                    pvalueCutoff = 0.05, pAdjustMethod = "fdr", 
+                                    TERM2GENE = integ_enrich_db, TERM2NAME = term2name_dt)
+            if(nrow(as.data.frame(enrich_res)) == 0){return(NA)}
+            return(enrich_res)
+        })
+        return(enrich_results[!is.na(enrich_results)])
+    })
+    names(factor_results) <- names(clu_ids_enrich[[score_id]])
+    factor_results
+})
+names(enrich_results_list) <- names(clu_ids_enrich)
+```
+
+```{r, fig.height=6, fig.width=8}
+library(ggplot2)
+lapply(names(enrich_results_list), function(factor_id){
+    factor_dt <- enrich_results_list[[factor_id]]
+    lapply(names(factor_dt), function(weight_id){
+        
+        weight_dt <- factor_dt[[weight_id]]
+        nw_output_dir <- paste0(corr_output_dir, factor_id, "/")
+        
+        if(!dir.exists(nw_output_dir)){dir.create(nw_output_dir)}
+        pdf(paste0(nw_output_dir, "Clu_Kegg_Joint_Pathway_Enrichment_", 
+                    factor_id, "_", weight_id, ".pdf"))
+        lapply(names(weight_dt), function(clu_id){
+            clu_dt <- weight_dt[[clu_id]]
+            plot_name <- gsub("_", " ", clu_id)
+            
+            print(dotplot(clu_dt) + ggtitle(paste("Kegg joint pathway enrichment" , plot_name)))
+        })
+        dev.off()
+    })
+})
+```
 
 
-library(RCy3)
-for(clu_dt in seq_along(clu_vertex)){
-    clu_sg <- subgraph(nw_dt, V(nw_dt)[names(V(nw_dt)) %in% clu_vertex[[clu_dt]]])
-    RCy3::createNetworkFromIgraph(igraph = clu_sg)
+```{r}
+## All MOFA2 background
+# full_mofa_features <- unlist(rownames(omic_dt))
+# full_mofa_features <- paste0(names(full_mofa_features), ".", full_mofa_features)
+# 
+# metabo_dt <- omic_dict_list[["Untargeted_Metabolomics"]][grep("Untargeted_Metabolomics", 
+#                                                                     full_mofa_features, value = T)]
+# metabo_dt <- metabo_dt[!is.null(metabo_dt)]
+# metabo_dt <- unlist(strsplit(metabo_dt, ";"))
+# metabo_dt <- metabo_dt[!is.na(metabo_dt)]
+# 
+# wgb_dt <- omic_dict_list[["WGB_DNA_Methylation"]][grep("WGB_DNA_Methylation", 
+#                                                                 full_mofa_features, value = T)]
+# wgb_dt <- wgb_dt[!is.null(wgb_dt) & !is.na(wgb_dt)]
+# 
+# rna_dt <- omic_dict_list[["RNA_Sequencing"]][grep("RNA_Sequencing", 
+#                                                                 full_mofa_features, value = T)]
+# rna_dt <- rna_dt[!is.null(rna_dt) & !is.na(rna_dt)]
+# 
+# full_universe_ids <- c(metabo_dt, wgb_dt, rna_dt)
+# 
+# enrich_results_list_full <- lapply(names(clu_ids_enrich), function(score_id){
+#     factor_results <- lapply(names(clu_ids_enrich[[score_id]]), function(factor_id){
+#         enrich_results <- lapply(clu_ids_enrich[[score_id]][[factor_id]], function(clu_ids){
+#             enrich_res <- enricher(gene = clu_ids, universe = full_universe_ids, 
+#                                     pvalueCutoff = 0.05, pAdjustMethod = "fdr", 
+#                                     TERM2GENE = integ_enrich_db, TERM2NAME = term2name_dt)  
+#             if(nrow(as.data.frame(enrich_res)) == 0){return(NA)}
+#             return(enrich_res)
+#         })
+#         return(enrich_results[!is.na(enrich_results)])
+#     })
+#     names(factor_results) <- names(clu_ids_enrich[[score_id]])
+#     factor_results
+# })
+# names(enrich_results_list_full) <- names(clu_ids_enrich)
+
+# clu_dict_list <- lapply(clu_ids_enrich, function(score_dt){
+#     lapply(score_dt, function(weight_dt){
+#         lapply(weight_dt, function(clu_dt){
+#             dict_res <- names(clu_dt)
+#             names(dict_res) <- clu_dt
+#             dict_res    
+#         })
+#     })
+# })
+
+```
+
+```{r}
+enrich_results_selected <- enrich_results_list
+
+for(score_id in names(nw_graphs)){
+    for(weight_id in names(nw_graphs[[score_id]])){
+        dict_dt <- clu_ids_enrich[[score_id]][[weight_id]]
+        
+        term_list <- lapply(names(enrich_results_selected[[score_id]][[weight_id]]), 
+                            function(clu_id){
+                                res_enrich <- as.data.frame(enrich_results_selected[[score_id]][[weight_id]][[clu_id]])
+                                if(nrow(res_enrich) == 0){return(NA)}
+                                res_enrich$ID <- paste0("kegg_pathway.", clu_id, ".", res_enrich$ID)
+                                res_enrich$Infomaps.web <- clu_id
+                                res_enrich
+                            })
+        names(term_list) <- names(enrich_results_selected[[score_id]][[weight_id]])
+
+        term_list <- term_list[!is.na(term_list)]
+        
+        
+        
+        ## Define nodes n1
+        term_dt <- lapply(names(term_list), function(clu_id){
+            geneID_list <- strsplit(term_list[[clu_id]]$geneID, "/")
+            names(geneID_list) <- term_list[[clu_id]]$ID
+            
+            found_ids <- lapply(names(geneID_list), function(pathway_ids){
+                ids <- geneID_list[[pathway_ids]]
+                
+                found <- names(dict_dt[[clu_id]])[sapply(dict_dt[[clu_id]], function(ids_dict){any(ids_dict %in% ids)})]
+                
+                # found <- neighborhood(graph = nw_graphs[[score_id]][[weight_id]][["All Omics"]],
+                #                     order = 1, nodes = found)
+                # browser()
+                # unique(unlist(sapply(found, names)))
+                unique(unlist(found))
+                # unlist(strsplit(paste(pathway_ids,  unique(found), sep = "\t"), "\t"))
+            })
+            names(found_ids) <- names(geneID_list)
+            found_ids
+            # Reduce(c, found_ids)
+        })
+        names(term_dt) <- names(term_list) 
+        
+        ## Define edges n1
+        
+        term_dt_n1 <- lapply(term_dt, function(clu_dt){
+            
+            found_ids <- lapply(names(clu_dt), function(pathway_ids){
+                ids <- clu_dt[[pathway_ids]]
+                ids <- unique(unlist(ids))
+                unlist(strsplit(paste(pathway_ids,  unique(ids), sep = "\t"), "\t"))
+            })
+            names(found_ids) <- names(clu_dt)
+            # found_ids
+            Reduce(c, found_ids)
+        })
+        names(term_dt_n1) <- names(term_list) 
+        
+        term_dt_n1 <- Reduce(c, term_dt_n1)
+        
+        
+        
+        ## Define edges n2
+        term_dt_n2 <- lapply(term_dt, function(clu_dt){
+            
+            found_ids <- lapply(names(clu_dt), function(pathway_ids){
+                ids <- clu_dt[[pathway_ids]]
+                
+                found <- neighborhood(graph = nw_graphs[[score_id]][[weight_id]][["All Omics"]],
+                                    order = 1, nodes = ids)
+                found <- unique(unlist(sapply(found, names)))
+                unlist(strsplit(paste(pathway_ids,  unique(found), sep = "\t"), "\t"))
+            })
+            names(found_ids) <- names(clu_dt)
+            # found_ids
+            Reduce(c, found_ids)
+        })
+        names(term_dt_n2) <- names(term_list) 
+        
+        term_dt_n2 <- Reduce(c, term_dt_n2)
+        
+        # term_description <- term_list$Description
+        # names(term_description) <- term_list$ID
+        
+        ## Define Nodes
+        term_list <- do.call(rbind, term_list)
+        
+        nw_graphs[[score_id]][[weight_id]][["All Omics"]] <- add.vertices(
+            graph = nw_graphs[[score_id]][[weight_id]][["All Omics"]], 
+            nv = nrow(term_list), 
+            attr = list("name" = term_list$ID, 
+                        "Readable_Name" = term_list$Description, 
+                        "Node_Omic" = "kegg pathway", 
+                        "Infomaps.web" = term_list$Infomaps.web))
+        
+        nw_graphs[[score_id]][[weight_id]][["All Omics"]] <- add.edges(
+            graph = nw_graphs[[score_id]][[weight_id]][["All Omics"]], 
+            edges = term_dt_n1, attr = list("weight" = 0, "Type" = "kegg_n1"))
+        
+        nw_graphs[[score_id]][[weight_id]][["All Omics"]] <- add.edges(
+            graph = nw_graphs[[score_id]][[weight_id]][["All Omics"]], 
+            edges = term_dt_n2, attr = list("weight" = 0, "Type" = "kegg_n2"))
+    }
 }
 ```
+
+
+```{r}
+library(MultiAssayExperiment)
+library(RCy3)
+omic_names_dup <- sapply(strsplit(names(experiments(omic_dt)), "\\."), function(x){x[[1]]})
+
+unique_omics <- unique(omic_names_dup)
+
+omic_colors <- RColorBrewer::brewer.pal(n = length(unique_omics), name = "Set3")
+
+col_list <- lapply(seq_along(unique_omics), function(omic_id){
+    omic_name <- unique_omics[omic_id]
+    omic_num <- length(omic_names_dup[omic_names_dup == omic_name])
+    omic_col <- omic_colors[omic_id]
+    
+    col_ramp <- colorRampPalette(colors = c(omic_col, "white"))(omic_num + 8)[seq_len(omic_num)]
+    return(col_ramp)
+})
+color_vect <- unlist(col_list)
+names(color_vect) <- names(experiments(omic_dt))
+
+cytoscapePing()
+
+shape_vect <- RCy3::getNodeShapes()[seq_along(unique_omics)]
+shape_vect[is.na(shape_vect)] <- "ELLIPSE"
+
+shape_vect_ext <- unlist(lapply(seq_along(shape_vect), function(omic_id){
+    omic_name <- unique_omics[omic_id]
+    shape_omic <- shape_vect[omic_id]
+    omic_num <- length(omic_names_dup[omic_names_dup == omic_name])
+    
+    return(rep(shape_omic, omic_num))
+}))
+names(shape_vect_ext) <- names(experiments(omic_dt))
+
+term_network_list <- list()
+
+for(score_id in names(nw_graphs)){
+    score_dt <- nw_graphs[[score_id]]
+    
+    term_network_list[[score_id]] <- list()
+    
+    for(weight_id in names(score_dt)){
+    
+        term_network_list[[score_id]][[weight_id]] <- list()
+
+        weight_dt <- score_dt[[weight_id]][["All Omics"]]
+        
+        clu_dt <- vertex_attr(weight_dt, name = "Infomaps.web")
+        # vertex.color = vertex_attr(test_sub, name = "Node_Omic")
+        # plot.igraph(omic_network, vertex.size = 0.5, edge.size = 0.1, 
+        #             vertex.label.cex = 0.2, edge.arrow.size = 0.1, 
+        #             layout = layout_as_tree(omic_network))
+        sufix_id <- paste0(score_id, ".", weight_id)
+        
+        RCy3::createNetworkFromIgraph(weight_dt)
+        RCy3::renameNetwork(title = sufix_id)
+        
+        RCy3::copyVisualStyle(from.style = "default", 
+                              to.style = sufix_id)
+        RCy3::setVisualStyle(sufix_id)
+        
+        set.seed(1234)
+        clu_colors <- RCy3::paletteColorRandom(value.count = length(unique(clu_dt)))
+        
+        
+        # RCy3::setNodeColorMapping(table.column = "Infomaps.web",
+        #                           table.column.values = unique(clu_dt),
+        #                           colors = clu_colors,
+        #                           mapping.type = "discrete", style.name = sufix_id)
+        RCy3::setNodeColorMapping(table.column = "Node_Omic",
+                                  table.column.values = names(color_vect),
+                                  colors = color_vect,
+                                  mapping.type = "discrete", style.name = sufix_id)
+        
+        RCy3::setNodeShapeMapping(table.column = "Node_Omic", 
+                                  table.column.values = names(shape_vect_ext), 
+                                  shapes = shape_vect_ext, style.name = sufix_id)
+        
+        RCy3::setNodeLabelMapping(table.column = "Readable_Name", style.name = sufix_id)
+        
+        RCy3::setNodeFontSizeDefault(new.size = 6, style.name = sufix_id)
+        
+        small_node <- names(V(weight_dt))[grepl("Shotgun_Metagenomics_Functional", 
+                                                vertex_attr(weight_dt, name = "Node_Omic"))]
+        
+        RCy3::setNodePropertyBypass(node.names = small_node, new.values = 60, 
+                                    visual.property = "NODE_LABEL_WIDTH")
+        RCy3::setNodePropertyBypass(node.names = small_node, new.values = 4, 
+                                    visual.property = "NODE_LABEL_FONT_SIZE")
+        
+        # RCy3::setNodeColorMapping(table.column = make.names(params$fold_change_variable), 
+        #                         colors = colorRampPalette(colors = c("blue", 
+        #                                                             "white", 
+        #                                                             "red")),
+        #                         style.name = params$output_suffix)
+        RCy3::setEdgeColorMapping(table.column = "weight", 
+                                colors = colorRampPalette(colors = c("#B3CDE3", 
+                                                                    "#FBB4AE")), 
+                                style.name = sufix_id)
+        
+        
+        for(clu_id in names(enrich_results_selected[[score_id]][[weight_id]])){
+            
+            term_network_list[[score_id]][[weight_id]][[clu_id]] <- list()
+            
+            clu_name <- paste0(sufix_id, ".", clu_id)
+            
+            
+            RCy3::createSubnetwork(nodes = clu_id, nodes.by.col = "Infomaps.web", 
+                                   subnetwork.name = clu_name, network = sufix_id)
+            
+            clu_nw <- subgraph(graph = weight_dt, 
+                                vids = V(weight_dt)[vertex_attr(graph = weight_dt, 
+                                                                name = "Infomaps.web") == clu_id])
+            
+            clu_nw_n2 <- subgraph.edges(clu_nw, 
+                                        E(clu_nw)[grepl("kegg_n2", edge_attr(clu_nw, name = "Type"))])
+            
+            clu_vertex <- V(clu_nw_n2)[vertex_attr(clu_nw_n2, name = "Node_Omic") == "kegg pathway"]
+            
+            term_nw_list <- lapply(names(clu_vertex), function(term_name){
+                neighbors_ids <- names(neighbors(clu_nw_n2, term_name))
+                neighbors_ids <- neighbors_ids[!grepl("RNA_Sequencing|Untargeted_Metabolomics|WGB_DNA|kegg_pathway",
+                                                    neighbors_ids)]
+                c(neighbors_ids, term_name)
+            })
+            names(term_nw_list) <- names(clu_vertex)
+
+            
+            # term_neighbors <- lapply(seq_along(clu_vertex), function(x){
+            #     neighborhood_2 <- names(neighborhood(weight_dt, order = 2, 
+            #                                         nodes = clu_vertex[x])[[1]])
+            #     neighborhood_1 <- names(neighborhood(weight_dt, order = 1, 
+            #                                         nodes = clu_vertex[x])[[1]])
+            #     return(neighborhood_2[!neighborhood_2 %in% neighborhood_1])
+            # })
+            # names(term_neighbors) <- names(clu_vertex)
+            # 
+            # term_neighbors_filtered <- lapply(names(term_neighbors), function(term_names){
+            #     term_ids <- term_neighbors[[term_names]]
+            #     filtered_ids <- term_ids[!grepl("RNA_Sequencing|Untargeted_Metabolomics|WGB_DNA|kegg_pathway",
+            #                                     term_ids)]
+            #     c(filtered_ids, term_names)
+            # })
+            
+            # names(term_neighbors_filtered) <- names(clu_vertex)
+            # term_neighbors_n2 <- lapply(seq_along(clu_vertex), function(x){
+            #     igraph::V
+            # })
+            
+            
+            term_description <- vertex_attr(weight_dt, name = "Readable_Name", names(clu_vertex))
+            
+            for(term_id in seq_along(term_nw_list)){
+                
+                term_network_list[[score_id]][[weight_id]][[clu_id]][[term_description[term_id]]] <- subgraph(clu_nw_n2, 
+                                                                              vids = term_nw_list[[term_id]])
+                
+                term_name <- paste0(clu_name, ".", term_description[term_id])
+                
+                RCy3::createSubnetwork(nodes = term_nw_list[[term_id]], nodes.by.col = "name", 
+                                   subnetwork.name = term_name, network = clu_name)
+                RCy3::layoutNetwork(layout.name = "hierarchical", network = term_name)
+                
+                network_output_dir <- paste0(corr_output_dir, score_id, "/")
+                
+                if(!dir.exists(network_output_dir)){
+                    dir.create(network_output_dir)
+                }
+                if(length(term_nw_list[[term_id]]) <= 1){next}
+                Sys.sleep(time = 2.5)
+                
+                RCy3::exportSVG(filename = paste0(network_output_dir, 
+                                                make.names(term_name), ".svg"),
+                                network = term_name)
+            }
+         }
+        
+    }
+}
+saveSession(paste0(corr_output_dir, "correlation_results_f1f2_network_full"))
+```
+
+```{r}
+omic_names_dict <- c("Histone Modifications", "Liver Metallomics", 
+                            "Cecum Metallomics", "RNA Sequencing", 
+                            "Cecum Targeted Metabolomics", "Liver Targeted Metabolomics", 
+                            "Serum Targeted Metabolomics", "Untargeted Metabolomics", 
+                            "Liver DNA Methylation", 
+                            "Cecum 16S Metagenomics", "Colon 16S Metagenomics", 
+                            "Cecum Shotgun Metagenomics", "Colon Shotgun Metagenomics", 
+                            "Cecum Shotgun Functional Metaerg KEGG", "Shotgun Functional Colon Metaerg KEGG", 
+                            "Cecum Shotgun Functional COGS", "Shotgun Functional Colon Metaerg COGS")
+names(omic_names_dict) <- names(experiments(omic_dt))
+
+feature_ids_dict <- lapply(names(variables_dicts), function(dataset_name){
+        
+    dataset_var <- rowData(omic_dt[[dataset_name]])[variables_dicts[[dataset_name]]]
+    dataset_vector <- unlist(dataset_var[[1]])
+    names(dataset_vector) <- paste0(dataset_name, ".", rownames(dataset_var))
+    
+    dataset_vector
+})
+names(feature_ids_dict) <- names(variables_dicts)
+
+# feature_ids <- term_nw_list[[term_id]]
+
+# plot_title <- term_name
+
+if(!is.null(omic_names_dict)){
+    names(color_vect) <- omic_names_dict[as.character(names(color_vect))]
+}
+
+group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(omic_dt$group)), 
+                                             name = "Set1")
+names(group_color_dict) <- levels(omic_dt$group)
+
+plot_nw_term <- function(omic_dt, feature_ids, group_var = "group", 
+                        sample_var = "samplename", feature_ids_dict = NULL, 
+                        omic_names_dict = NULL, group_color_dict, plot_title){
+    plot_dt <- lapply(names(experiments(omic_dt)), function(omic_id){
+        omic_filt <- omic_dt[[omic_id]]
+        found <- paste0(omic_id, ".", rownames(omic_filt)) %in% feature_ids
+        if(any(found)){
+            return(omic_filt[found,])
+        } else{
+            return(NA)
+        }
+    })
+    names(plot_dt) <- names(experiments(omic_dt))
+    plot_dt <- plot_dt[!is.na(plot_dt)]
+    
+    library(reshape2)
+    
+    group_var_dict <- colData(omic_dt)[[group_var]]
+    names(group_var_dict) <- colData(omic_dt)[[sample_var]]
+    
+    # Melt data to plot and add omic name and group variable
+    plot_dt <- lapply(names(plot_dt), function(omic_exp_name){
+        omic_exp <- plot_dt[[omic_exp_name]]
+        melted_dt <- melt(as.matrix(assay(omic_exp)))
+        
+        colnames(melted_dt)[1:2] <- c("var_id", "sample_name")
+        # melted_dt$var_id <- factor(gsub(paste0(omic_exp_name, "."), "", melted_dt$var_id))
+         melted_dt$var_id <- factor(paste(omic_exp_name, 
+                                        melted_dt$var_id, sep = "."))
+        melted_dt$omic_name <- factor(omic_exp_name)
+        
+        melted_dt$group <- factor(group_var_dict[as.character(melted_dt$sample_name)])
+        
+        if(!is.null(omic_names_dict)){
+            melted_dt$omic_name <- factor(omic_names_dict[as.character(melted_dt$omic_name)])
+        }
+        if(!is.null(feature_ids_dict)){
+            melted_dt$var_id <- factor(feature_ids_dict[[omic_exp_name]][as.character(melted_dt$var_id)])
+        }
+        
+        melted_dt
+    })
+    
+    plot_dt <- do.call(rbind, plot_dt)
+    
+    plot_dt$var_id <- factor(str_wrap(plot_dt$var_id, width = 40))
+    
+    sample_levels <- levels(plot_dt$sample_name)
+    reordered_sample_levels <- sample_levels[order(group_var_dict[as.character(sample_levels)])]
+    
+    plot_dt$sample_name <- reorder(plot_dt$sample_name, 
+                                    new.order = reordered_sample_levels)
+    
+    x_colors <- group_color_dict[as.character(group_var_dict[levels(plot_dt$sample_name)])]
+    
+    if(all(is.null(plot_dt))){browser()}
+    labels_dt <- distinct(plot_dt[,c("var_id", "omic_name")])
+    # labels_dt <- labels_dt[order(labels_dt$omic_name),]
+    
+    var_omic_dict <- labels_dt$omic_name
+    names(var_omic_dict) <- labels_dt$var_id
+    
+    var_levels <- levels(plot_dt$var_id)
+    reordered_var_levels <- var_levels[order(var_omic_dict[as.character(var_levels)])]
+    
+    plot_dt$var_id <- reorder(plot_dt$var_id, 
+                            new.order = reordered_var_levels)
+    
+    legend_colors <- color_vect[as.character(sapply(levels(plot_dt$var_id), function(x){
+        labels_dt$omic_name[as.character(labels_dt$var_id) == x]
+    }))]
+
+    names(legend_colors) <- levels(plot_dt$var_id)
+    legend_colors
+    
+    p <- ggplot(plot_dt, aes(x = sample_name, y = value, color = omic_name, 
+                             group = var_id, shape = var_id)) + 
+        geom_point() + geom_smooth(aes(color = omic_name, fill = omic_name),
+                                   se = FALSE, span = 0.5, alpha = 0.1) + theme_minimal() + 
+        theme(axis.text.x = element_text(angle = 90, colour = x_colors), 
+                legend.position = "right", 
+                legend.justification = "top", 
+                legend.title = element_blank(), 
+                plot.title = element_text(hjust = 0.5),
+                legend.spacing.y = unit(0.1, "cm")) + 
+        ggtitle(plot_title) + 
+        xlab(NULL) + ylab("Normalized Values") + 
+        scale_color_manual(values = color_vect)  + 
+        guides(shape = guide_legend(label.theme = element_text(size = 7.5), 
+                                    order = 2,  byrow = TRUE,
+                                    override.aes = list(
+                                        color = legend_colors
+                                    ),
+                                    keyheight = 0.05), 
+               col = guide_legend(order = 1), fill = "none") + 
+        scale_shape_manual(values = rep(16, length(unique(plot_dt$var_id)))) 
+    return(p)
+}
+```
+
+
+```{r}
+lapply(names(term_network_list), function(score_id){
+    score_nw <- term_network_list[[score_id]]
+    lapply(names(score_nw), function(factor_id){
+        factor_nw <- score_nw[[factor_id]]
+        
+        pdf(paste0(corr_output_dir, "Correlation_Plots_", 
+                        score_id, "_", factor_id, ".pdf"), width = 12, height = 8)
+        lapply(names(factor_nw), function(clu_id){
+            
+            clu_nw <- factor_nw[[clu_id]]
+            lapply(names(clu_nw), function(term_id){
+                term_nw <- clu_nw[[term_id]]
+                feature_ids <- names(V(term_nw))
+                
+                if(length(feature_ids) == 1){return(NULL)}
+                
+                print(plot_nw_term(omic_dt = omic_dt, feature_ids = feature_ids,
+                            feature_ids_dict = feature_ids_dict, 
+                            omic_names_dict = omic_names_dict,
+                            group_color_dict = group_color_dict,
+                            plot_title = paste(clu_id, term_id)))
+            })
+            
+        })
+        dev.off()
+    })
+})
+```
+
+
+
+```{r}
+# annotate(x = 20, y = 10, geom = "text", label = labels_dt$var_id)
+# print(p)
+# 
+# labels_dt <- distinct(plot_dt[,c("omic_var_id_readable", "omic_name_readable", "omic_var_id")])
+# labels_dt <- labels_dt[order(labels_dt$omic_name_readable),]
+# 
+# ###
+# 
+# legend_colors <- color_vect[as.character(sapply(levels(plot_dt$omic_var_id_readable), function(x){
+#     labels_dt$omic_var_id_readable[as.character(labels_dt$omic_var_id_readable) == x]
+# }))]
+# 
+# 
+# p <- ggplot(plot_dt, aes(x = sample_name, y = value, color = omic_name_readable, 
+#                          group = omic_var_id_readable, 
+#                          shape = omic_var_id_readable)) + 
+#     geom_point() + geom_smooth(aes(color = omic_name_readable, fill = omic_name_readable),
+#                                se = TRUE, span = 0.5, alpha = 0.1) + theme_minimal() + 
+#     theme(axis.text.x = element_text(angle = 90), 
+#             legend.position = "right", 
+#             legend.justification = "top", 
+#             legend.title = element_blank(), 
+#             plot.title = element_text(hjust = 0.5),
+#             legend.spacing.y = unit(0.1, "cm")) + 
+#     ggtitle(term_name) + 
+#     xlab(NULL) + ylab("Normalized Values") + 
+#     scale_color_manual(values = color_vect) +
+#     scale_fill_manual(values = color_vect) + 
+#     guides(shape = guide_legend(label.theme = element_text(size = 7.5), 
+#                                 order = 2,  byrow = TRUE,
+#                                 override.aes = list(
+#                                     color = legend_colors
+#                                 ),
+#                                 keyheight = 0.05), 
+#            col = guide_legend(order = 1), fill = "none") + 
+#     scale_shape_manual(values = rep(16, length(unique(plot_dt$omic_var_id))))
+#     # annotate(x = 20, y = 10, geom = "text", label = labels_dt$var_id)
+# print(p)
+# 
+# #######
+# # test <- reshape2::dcast(plot_dt, formula = 1 ~ omic_var_id, fun.aggregate = mean)
+# library(dplyr)
+# av_dt <- plot_dt %>% group_by(group, omic_var_id) %>% summarise(avg = mean(value), dt_sd = sd(value), omic_name = unique(omic_name))
+# 
+# p2 <- ggplot(av_dt, aes(x = group, y = avg, color = omic_name, 
+#                          group = omic_var_id, shape = omic_var_id)) + 
+#     geom_point() + geom_line() + geom_ribbon(aes(ymax = avg + dt_sd, 
+#                        ymin = avg - dt_sd, fill = omic_name),
+#                        alpha=0.2) + theme_minimal() + 
+#     theme(axis.text.x = element_text(angle = 90), 
+#             legend.position = "right", 
+#             legend.justification = "top", 
+#             legend.title = element_blank(), 
+#             plot.title = element_text(hjust = 0.5),
+#             legend.spacing.y = unit(0.1, "cm")) + 
+#     ggtitle(term_name) + 
+#     xlab(NULL) + ylab("Normalized Values") + 
+#     scale_color_manual(values = color_vect) + 
+#     scale_fill_manual(values = color_vect) +
+#     guides(shape = guide_legend(label.theme = element_text(size = 7.5), 
+#                                 order = 2,  byrow = TRUE,
+#                                 override.aes = list(
+#                                     color = legend_colors
+#                                 ),
+#                                 keyheight = 0.05), 
+#            col = guide_legend(order = 1), fill = "none") + 
+#     scale_shape_manual(values = rep(16, length(unique(plot_dt$omic_var_id))))
+#     # annotate(x = 20, y = 10, geom = "text", label = labels_dt$var_id)
+# print(p2)
+
+```
+
+
+
+```{r}
+# enrich_graph_clusters <- function(cluster_id_list, membership_attribute, 
+#                                   universe, min_n = 25){
+#     membership_vector <- vertex_attr(graph, membership_attribute)
+#     clu_vertex <- lapply(unique(membership_vector), function(cl_id){
+#         names(V(graph))[membership_vector == cl_id]
+#     })
+#     clu_vertex <- clu_vertex[lengths(clu_vertex) >= min_n]
+#     rna_seq_tag <- "RNA_Sequencing\\."
+#     dna_seq_tag <- "WGB_DNA_Methylation\\."
+#     
+#     universe_rna_seq <- grep(rna_seq_tag, universe, value = TRUE)
+#     universe_rna_seq <- gsub(rna_seq_tag, "", universe_rna_seq)
+#     
+#     universe_dna_seq <- grep(dna_seq_tag, universe, value = TRUE)
+#     universe_dna_seq <- gsub(dna_seq_tag, "", universe_dna_seq)
+#     universe_dna_seq <- rowRanges(omic_dt[["WGB_DNA_Methylation"]][universe_dna_seq,])
+# }
+
+
+ # KEGGREST::keggFind(database = "compound", query = universe_features_kegg[1])[[1]]$PATHWAY
+
+# mSet<-InitDataObjects("conc", "pathinteg", FALSE)
+# mSet<-SetOrganism(mSet, "mmu")
+# 
+# geneListFile<-"replace_with_your_file_name"
+# geneList<-readChar(geneListFile, file.info(geneListFile)$size)
+# 
+# mSet<-PerformGeneMapping(mSet, geneList, "hsa", "symbol");
+# 
+# cmpdListFile<-"replace_with_your_file_name"
+# cmpdList<-readChar(cmpdListFile, file.info(cmpdListFile)$size)
+# mSet<-PerformCmpdMapping(mSet, cmpdList, "hsa", "name");
+# mSet<-CreateMappingResultTable(mSet)
+# 
+# mSet<-PrepareIntegData(mSet);
+# mSet<-PerformIntegPathwayAnalysis(mSet, "dc", "hyper", "all", "query");
+# 
+# mSet<-PlotPathSummary(mSet, F, "path_view_0_", "png", 72, width=NA, NA, NA )
+# mSet<-CreateIntegMatchingTable(mSet);
+# 
+# saveRDS(mSet, paste0(output_path, results_name))
+```
+
 
 <!-- ## LIMA full unsupervised -->
 
@@ -936,239 +2050,239 @@ for(clu_dt in seq_along(clu_vertex)){
 <!-- ``` -->
 
 
-```{r}
-# param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
-#     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
-#     multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE"],
-#     group_var = "group",
-#     num_factors = num_factors,
-#     results_name = "mofa_int",
-#     color_vec = c("CNT"="black", "HFD"="red", "INT"="blue")
-# )
-# # c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
-# xfun::Rscript_call(rmarkdown::render,
-#                     args = list(input = "./MOFA_Models.Rmd", 
-#                                 output_file = paste0(param_list$output_dir,
-#                                                      param_list$results_name, ".html"), 
-#                                 params = param_list
-#                             )
-#                     )
-
-param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
-    output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
-    multi_omics_exp = multi_omics[,colData(multi_omics)$group != "INT"],
-    group_var = "group",
-    num_factors = num_factors,
-    results_name = "mofa_hfe",
-    color_vec = c("CNT"="black", "HFD"="red", "HFE"="green")
-)
-# c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green")
-xfun::Rscript_call(rmarkdown::render,
-                    args = list(input = "./MOFA_Models.Rmd", 
-                                output_file = paste0(param_list$output_dir,
-                                                     param_list$results_name, ".html"), 
-                                params = param_list
-                            )
-                    )
-```
-
-
-## Pre-Analysis
-
-
-```{r}
-mice_dt <- openxlsx::read.xlsx(paste0(params$input_dir, "AnimalData_OscarYanes.xlsx"))
-
-# mice_num <- mice_dt[,c("BW(g)", "WATep(g)", "Liver(g)")]
-mice_num <- mice_dt
-mice_s <- as.data.frame(mice_num)
-
-dict_vect <- c("Ctrl" = "CNT", "Ctrl ext" = "CNT", "HFD" = "HFD", "INT2" = "INT", "HFD excl." = "HFE")
-mice_s$group <- factor(dict_vect[mice_dt$Group], levels = c("CNT", "HFD", "INT", "HFE"))
-
-dict_vect_g <- c("CNT" = "C", "HFD" = "H", "INT" = "I", "HFE" = "E")
-
-mice_s$samplename <- paste0(make.names(mice_dt$ID), dict_vect_g[mice_s$group])
-
-
-mice_s$samplename[!mice_s$samplename %in% multi_omics$samplename]
-multi_omics$samplename[!multi_omics$samplename %in% mice_s$samplename]
-
-mice_s$samplename[mice_s$samplename == "X686I"] <- "X687I"
-
-mice_s <- dplyr::left_join(as.data.frame(colData(multi_omics)), mice_s, by = "samplename")
-mice_s
-```
-
-
-```{r}
-d3plot <- plot_ly(x = mice_s$`BW(g)`, y = mice_s$`WATep(g)`, z = mice_s$`Liver(g)`,
-                    color = as.factor(mice_s$Sacrifice))
-d3plot <- d3plot %>% add_markers()
-d3plot <- d3plot %>% layout(scene = list(
-    xaxis = list(title = "BW (g)"),
-    yaxis = list(title = "WATep (g)"),
-    zaxis = list(title = "Liver (g)")))
-d3plot
-```
-
-```{r}
-factor_dt <- readRDS(paste0(params$output_dir, "/MOFA_Results/any_sig_005_mofa_int_all_meta/factor_data.rds"))
-
-mice_sub <- mice_s[mice_s$group.x != "HFE",]
-
-all(names(factor_dt$group1[,3]) == mice_sub$samplename)
-
-cor(mice_sub$`BW(g)`, factor_dt$group1[,3])
-cor(mice_sub$`WATep(g)`, factor_dt$group1[,3])
-cor(mice_sub$`Liver(g)`, factor_dt$group1[,3])
-
-
-ctr_sub <- mice_sub[mice_sub$group.x == "CNT",]
-ctr_fact <- factor_dt$group1[mice_sub$group.x == "CNT",]
-
-cor(ctr_sub$`BW(g)`, ctr_fact[,3])
-cor(ctr_sub$`WATep(g)`, ctr_fact[,3])
-cor(ctr_sub$`Liver(g)`, ctr_fact[,3])
-
-plot(ctr_sub$`BW(g)`, ctr_fact[,3])
-plot(ctr_sub$`WATep(g)`, ctr_fact[,3])
-plot(ctr_sub$`Liver(g)`, ctr_fact[,3])
-
-
-```
-
-
-## GFCV
-
-## Loaded matrices
-
-```{r}
-library(MOFA2)
-multi_omics_raw <- readRDS("./Merged_Multi_Omics_gfcv.rds")
-multi_omics <- readRDS("./Multivariate_Merged_Multi_Omics_gfcv.rds")
-names(experiments(multi_omics))
-
-filter_list <- c("16S")
-
-selected_omics <- lapply(filter_list, function(dt_name){
-    omic_dt_names <- grep(dt_name, names(experiments(multi_omics)))
-    omic_exp_list <- experiments(multi_omics[,,omic_dt_names])
-    
-    sig_vars_num <- sapply(omic_exp_list, function(omic_exp){
-        var_dt <- rowData(omic_exp)
-        p_val_dt <- var_dt[,grep("adj.p.value", colnames(var_dt))]
-        sig_vars <- apply(p_val_dt, 1, function(p_vals){
-            any(p_vals <= 0.05, na.rm = TRUE)
-        })
-        sum(unlist(sig_vars))
-    })
-    sig_vars_num
-})
-names(selected_omics) <- filter_list
-
-a <- do.call(cbind, selected_omics)
-
-selected_omics <- lapply(filter_list, function(dt_name){
-    omic_dt_names <- grep(dt_name, names(experiments(multi_omics)))
-    omic_exp_list <- experiments(multi_omics[,,omic_dt_names])
-    
-    sig_vars_num <- sapply(omic_exp_list, function(omic_exp){
-        nrow(omic_exp)
-    })
-    sig_vars_num
-})
-names(selected_omics) <- filter_list
-
-b <- do.call(cbind, selected_omics)
-```
-
-## Preparing the omics matrices 
-
-```{r}
-multi_omics_names <- names(experiments(multi_omics))
-
-multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S", multi_omics_names)]
-# multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("genus", multi_omics_names)])
-multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("specie", multi_omics_names)])
-multi_omics_selected
-```
-
-```{r}
-filtered_exps <- lapply(multi_omics_selected, function(multi_omics_names){
-    multi_omics_exp <- experiments(multi_omics)[[multi_omics_names]]
-
-    if(grepl("RNASeq", multi_omics_names)){
-        var_cd <- apply(assay(multi_omics_exp), 1, function(var_dt){
-            sd(var_dt, na.rm = TRUE)/mean(var_dt, na.rm = TRUE)
-        })
-        multi_omics_exp <- multi_omics_exp[names(var_cd)[var_cd >= quantile(var_cd, 0)],]
-    }
-    multi_omics_exp
-})
-names(filtered_exps) <- multi_omics_selected
-experiments(multi_omics) <- ExperimentList(filtered_exps)
-```
-```{r}
-multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = multi_omics)
-plot_data_overview(multi_omics_mofa)
-```
-
-
-```{r}
-multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = multi_omics[,,multi_omics_selected])
-plot_data_overview(multi_omics_mofa)
-```
-
-## Parameters
-
-```{r}
-data_opts <- get_default_data_options(multi_omics_mofa)
-head(data_opts)
-
-model_opts <- get_default_model_options(multi_omics_mofa)
-head(model_opts)
-model_opts$num_factors <- 8
-
-train_opts <- get_default_training_options(multi_omics_mofa)
-head(train_opts)
-```
-
-## Model and training
-
-```{r}
-multi_omics_mofa <- prepare_mofa(
-  object = multi_omics_mofa,
-  data_options = data_opts,
-  model_options = model_opts,
-  training_options = train_opts
-)
-
-outfile <- file.path(getwd(),"model.hdf5")
-multi_omics_mofa <- run_mofa(multi_omics_mofa, outfile, use_basilisk = TRUE)
-
-```
-
-## Downstream Analysis
-
-```{r}
-# file_path <- "./model.hdf5"
-# model <- load_model(file_path)
-colData(multi_omics)$sample <- colData(multi_omics)$samplename
-
-samples_metadata(multi_omics_mofa) <- left_join(samples_metadata(multi_omics_mofa), as.data.frame(colData(multi_omics)), by = "sample")
-
-plot_variance_explained(multi_omics_mofa) + theme(axis.text.x = element_text(angle = 90))
-
-p <- plot_factor(multi_omics_mofa, group_by = "group.y", factors = 1:5, 
-                 color_by = "group.y", 
-                 add_violin = TRUE)
-
-p <- p + 
-  scale_color_manual(values=c("CVM"="black", "CVF"="red", "GFM"="blue", "GFF"="green")) +
-  scale_fill_manual(values=c("CVM"="black", "CVF"="red", "GFM"="blue", "GFF"="green"))
-print(p)
-```
+<!-- # ```{r} -->
+<!-- # # param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/", -->
+<!-- # #     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/", -->
+<!-- # #     multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE"], -->
+<!-- # #     group_var = "group", -->
+<!-- # #     num_factors = num_factors, -->
+<!-- # #     results_name = "mofa_int", -->
+<!-- # #     color_vec = c("CNT"="black", "HFD"="red", "INT"="blue") -->
+<!-- # # ) -->
+<!-- # # # c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green") -->
+<!-- # # xfun::Rscript_call(rmarkdown::render, -->
+<!-- # #                     args = list(input = "./MOFA_Models.Rmd",  -->
+<!-- # #                                 output_file = paste0(param_list$output_dir, -->
+<!-- # #                                                      param_list$results_name, ".html"),  -->
+<!-- # #                                 params = param_list -->
+<!-- # #                             ) -->
+<!-- # #                     ) -->
+<!-- #  -->
+<!-- # param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/", -->
+<!-- #     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/", -->
+<!-- #     multi_omics_exp = multi_omics[,colData(multi_omics)$group != "INT"], -->
+<!-- #     group_var = "group", -->
+<!-- #     num_factors = num_factors, -->
+<!-- #     results_name = "mofa_hfe", -->
+<!-- #     color_vec = c("CNT"="black", "HFD"="red", "HFE"="green") -->
+<!-- # ) -->
+<!-- # # c("CNT"="black", "HFD"="red", "INT"="blue", "HFE"="green") -->
+<!-- # xfun::Rscript_call(rmarkdown::render, -->
+<!-- #                     args = list(input = "./MOFA_Models.Rmd",  -->
+<!-- #                                 output_file = paste0(param_list$output_dir, -->
+<!-- #                                                      param_list$results_name, ".html"),  -->
+<!-- #                                 params = param_list -->
+<!-- #                             ) -->
+<!-- #                     ) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- #  -->
+<!-- # ## Pre-Analysis -->
+<!-- #  -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # mice_dt <- openxlsx::read.xlsx(paste0(params$input_dir, "AnimalData_OscarYanes.xlsx")) -->
+<!-- #  -->
+<!-- # # mice_num <- mice_dt[,c("BW(g)", "WATep(g)", "Liver(g)")] -->
+<!-- # mice_num <- mice_dt -->
+<!-- # mice_s <- as.data.frame(mice_num) -->
+<!-- #  -->
+<!-- # dict_vect <- c("Ctrl" = "CNT", "Ctrl ext" = "CNT", "HFD" = "HFD", "INT2" = "INT", "HFD excl." = "HFE") -->
+<!-- # mice_s$group <- factor(dict_vect[mice_dt$Group], levels = c("CNT", "HFD", "INT", "HFE")) -->
+<!-- #  -->
+<!-- # dict_vect_g <- c("CNT" = "C", "HFD" = "H", "INT" = "I", "HFE" = "E") -->
+<!-- #  -->
+<!-- # mice_s$samplename <- paste0(make.names(mice_dt$ID), dict_vect_g[mice_s$group]) -->
+<!-- #  -->
+<!-- #  -->
+<!-- # mice_s$samplename[!mice_s$samplename %in% multi_omics$samplename] -->
+<!-- # multi_omics$samplename[!multi_omics$samplename %in% mice_s$samplename] -->
+<!-- #  -->
+<!-- # mice_s$samplename[mice_s$samplename == "X686I"] <- "X687I" -->
+<!-- #  -->
+<!-- # mice_s <- dplyr::left_join(as.data.frame(colData(multi_omics)), mice_s, by = "samplename") -->
+<!-- # mice_s -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # d3plot <- plot_ly(x = mice_s$`BW(g)`, y = mice_s$`WATep(g)`, z = mice_s$`Liver(g)`, -->
+<!-- #                     color = as.factor(mice_s$Sacrifice)) -->
+<!-- # d3plot <- d3plot %>% add_markers() -->
+<!-- # d3plot <- d3plot %>% layout(scene = list( -->
+<!-- #     xaxis = list(title = "BW (g)"), -->
+<!-- #     yaxis = list(title = "WATep (g)"), -->
+<!-- #     zaxis = list(title = "Liver (g)"))) -->
+<!-- # d3plot -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # factor_dt <- readRDS(paste0(params$output_dir, "/MOFA_Results/any_sig_005_mofa_int_all_meta/factor_data.rds")) -->
+<!-- #  -->
+<!-- # mice_sub <- mice_s[mice_s$group.x != "HFE",] -->
+<!-- #  -->
+<!-- # all(names(factor_dt$group1[,3]) == mice_sub$samplename) -->
+<!-- #  -->
+<!-- # cor(mice_sub$`BW(g)`, factor_dt$group1[,3]) -->
+<!-- # cor(mice_sub$`WATep(g)`, factor_dt$group1[,3]) -->
+<!-- # cor(mice_sub$`Liver(g)`, factor_dt$group1[,3]) -->
+<!-- #  -->
+<!-- #  -->
+<!-- # ctr_sub <- mice_sub[mice_sub$group.x == "CNT",] -->
+<!-- # ctr_fact <- factor_dt$group1[mice_sub$group.x == "CNT",] -->
+<!-- #  -->
+<!-- # cor(ctr_sub$`BW(g)`, ctr_fact[,3]) -->
+<!-- # cor(ctr_sub$`WATep(g)`, ctr_fact[,3]) -->
+<!-- # cor(ctr_sub$`Liver(g)`, ctr_fact[,3]) -->
+<!-- #  -->
+<!-- # plot(ctr_sub$`BW(g)`, ctr_fact[,3]) -->
+<!-- # plot(ctr_sub$`WATep(g)`, ctr_fact[,3]) -->
+<!-- # plot(ctr_sub$`Liver(g)`, ctr_fact[,3]) -->
+<!-- #  -->
+<!-- #  -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- #  -->
+<!-- # ## GFCV -->
+<!-- #  -->
+<!-- # ## Loaded matrices -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # library(MOFA2) -->
+<!-- # multi_omics_raw <- readRDS("./Merged_Multi_Omics_gfcv.rds") -->
+<!-- # multi_omics <- readRDS("./Multivariate_Merged_Multi_Omics_gfcv.rds") -->
+<!-- # names(experiments(multi_omics)) -->
+<!-- #  -->
+<!-- # filter_list <- c("16S") -->
+<!-- #  -->
+<!-- # selected_omics <- lapply(filter_list, function(dt_name){ -->
+<!-- #     omic_dt_names <- grep(dt_name, names(experiments(multi_omics))) -->
+<!-- #     omic_exp_list <- experiments(multi_omics[,,omic_dt_names]) -->
+<!-- #      -->
+<!-- #     sig_vars_num <- sapply(omic_exp_list, function(omic_exp){ -->
+<!-- #         var_dt <- rowData(omic_exp) -->
+<!-- #         p_val_dt <- var_dt[,grep("adj.p.value", colnames(var_dt))] -->
+<!-- #         sig_vars <- apply(p_val_dt, 1, function(p_vals){ -->
+<!-- #             any(p_vals <= 0.05, na.rm = TRUE) -->
+<!-- #         }) -->
+<!-- #         sum(unlist(sig_vars)) -->
+<!-- #     }) -->
+<!-- #     sig_vars_num -->
+<!-- # }) -->
+<!-- # names(selected_omics) <- filter_list -->
+<!-- #  -->
+<!-- # a <- do.call(cbind, selected_omics) -->
+<!-- #  -->
+<!-- # selected_omics <- lapply(filter_list, function(dt_name){ -->
+<!-- #     omic_dt_names <- grep(dt_name, names(experiments(multi_omics))) -->
+<!-- #     omic_exp_list <- experiments(multi_omics[,,omic_dt_names]) -->
+<!-- #      -->
+<!-- #     sig_vars_num <- sapply(omic_exp_list, function(omic_exp){ -->
+<!-- #         nrow(omic_exp) -->
+<!-- #     }) -->
+<!-- #     sig_vars_num -->
+<!-- # }) -->
+<!-- # names(selected_omics) <- filter_list -->
+<!-- #  -->
+<!-- # b <- do.call(cbind, selected_omics) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ## Preparing the omics matrices  -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # multi_omics_names <- names(experiments(multi_omics)) -->
+<!-- #  -->
+<!-- # multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S", multi_omics_names)] -->
+<!-- # # multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("genus", multi_omics_names)]) -->
+<!-- # multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("specie", multi_omics_names)]) -->
+<!-- # multi_omics_selected -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # filtered_exps <- lapply(multi_omics_selected, function(multi_omics_names){ -->
+<!-- #     multi_omics_exp <- experiments(multi_omics)[[multi_omics_names]] -->
+<!-- #  -->
+<!-- #     if(grepl("RNASeq", multi_omics_names)){ -->
+<!-- #         var_cd <- apply(assay(multi_omics_exp), 1, function(var_dt){ -->
+<!-- #             sd(var_dt, na.rm = TRUE)/mean(var_dt, na.rm = TRUE) -->
+<!-- #         }) -->
+<!-- #         multi_omics_exp <- multi_omics_exp[names(var_cd)[var_cd >= quantile(var_cd, 0)],] -->
+<!-- #     } -->
+<!-- #     multi_omics_exp -->
+<!-- # }) -->
+<!-- # names(filtered_exps) <- multi_omics_selected -->
+<!-- # experiments(multi_omics) <- ExperimentList(filtered_exps) -->
+<!-- # ``` -->
+<!-- # ```{r} -->
+<!-- # multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = multi_omics) -->
+<!-- # plot_data_overview(multi_omics_mofa) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # multi_omics_mofa <- create_mofa_from_MultiAssayExperiment(mae = multi_omics[,,multi_omics_selected]) -->
+<!-- # plot_data_overview(multi_omics_mofa) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ## Parameters -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # data_opts <- get_default_data_options(multi_omics_mofa) -->
+<!-- # head(data_opts) -->
+<!-- #  -->
+<!-- # model_opts <- get_default_model_options(multi_omics_mofa) -->
+<!-- # head(model_opts) -->
+<!-- # model_opts$num_factors <- 8 -->
+<!-- #  -->
+<!-- # train_opts <- get_default_training_options(multi_omics_mofa) -->
+<!-- # head(train_opts) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ## Model and training -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # multi_omics_mofa <- prepare_mofa( -->
+<!-- #   object = multi_omics_mofa, -->
+<!-- #   data_options = data_opts, -->
+<!-- #   model_options = model_opts, -->
+<!-- #   training_options = train_opts -->
+<!-- # ) -->
+<!-- #  -->
+<!-- # outfile <- file.path(getwd(),"model.hdf5") -->
+<!-- # multi_omics_mofa <- run_mofa(multi_omics_mofa, outfile, use_basilisk = TRUE) -->
+<!-- #  -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ## Downstream Analysis -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # # file_path <- "./model.hdf5" -->
+<!-- # # model <- load_model(file_path) -->
+<!-- # colData(multi_omics)$sample <- colData(multi_omics)$samplename -->
+<!-- #  -->
+<!-- # samples_metadata(multi_omics_mofa) <- left_join(samples_metadata(multi_omics_mofa), as.data.frame(colData(multi_omics)), by = "sample") -->
+<!-- #  -->
+<!-- # plot_variance_explained(multi_omics_mofa) + theme(axis.text.x = element_text(angle = 90)) -->
+<!-- #  -->
+<!-- # p <- plot_factor(multi_omics_mofa, group_by = "group.y", factors = 1:5,  -->
+<!-- #                  color_by = "group.y",  -->
+<!-- #                  add_violin = TRUE) -->
+<!-- #  -->
+<!-- # p <- p +  -->
+<!-- #   scale_color_manual(values=c("CVM"="black", "CVF"="red", "GFM"="blue", "GFF"="green")) + -->
+<!-- #   scale_fill_manual(values=c("CVM"="black", "CVF"="red", "GFM"="blue", "GFF"="green")) -->
+<!-- # print(p) -->
+<!-- # ``` -->
 
 ## Appendix
 

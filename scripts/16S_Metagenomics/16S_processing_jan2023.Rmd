@@ -161,7 +161,8 @@ organ_exp <- lapply(names(organ_dt_list), function(organ_name){
                             colData = hierarchy_metadata,
                             rowData = hierarchycal_tree)
         rowData(hierarchy)$old_names <- rownames(hierarchy)
-    
+        rowData(hierarchy)$readable_name <- paste(organ_name, rownames(hierarchy))
+
         
         hierarchy <- mia::agglomerateByRank(x = hierarchy, rank = hierarchy_ranks[max_rank])
         hierarchy <- mia::addTaxonomyTree(hierarchy)

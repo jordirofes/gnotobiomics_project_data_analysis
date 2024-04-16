@@ -160,6 +160,8 @@ shotgun_data <- lapply(names(shotgun_data_list), function(organ_name){
                                                        as_relative = TRUE)
         
         rowData(summ_exp)$specie_names <- rownames(summ_exp)
+        rowData(summ_exp)$readable_name <- str_replace(paste(organ_name, rownames(summ_exp)), 
+                                                        "^\\w{1}", toupper)
         
         # x <- summ_exp
         # tree <- taxonomyTree(x)

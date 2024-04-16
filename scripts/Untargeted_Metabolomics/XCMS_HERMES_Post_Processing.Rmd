@@ -278,8 +278,8 @@ colnames(xcms_p_dc_filt) <- xcms_p_dc_filt$samplename
 rowData(xcms_p_dc_filt) <- cbind(rowData(xcms_p_dc_filt), 
                                 do.call(cbind, data_table))
 
-# saveRDS(xcms_p_dc_filt,
-#         paste0(params$output_results, "xcms_hermes_exp_gfcv.rds"))
+saveRDS(xcms_p_dc_filt,
+        paste0(params$output_results, "xcms_hermes_exp_gfcv.rds"))
 ```
 
 ### LIMA model analysis
@@ -425,8 +425,11 @@ colnames(mummichog_test) <- c("mz", "rtime", "p-value", "t-score")
 
 mummichog_test$custom_id <- rownames(mummichog_test)
 
+mummichog_path <- "../../outputs/Untargeted_Metabolomics/Mummichog_results/"
+if(!dir.exists(mummichog_path)){dir.create(mummichog_path)}
+
 write.table(x = mummichog_test,
-            file = "../../outputs/Untargeted_Metabolomics/Mummichog_results/mummichog_file.txt",
+            file = paste0(mummichog_path, "mummichog_file.txt"),
             sep = "\t", row.names = FALSE, quote = FALSE)
 
 reticulate::py_config()

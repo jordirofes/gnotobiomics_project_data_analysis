@@ -38,6 +38,7 @@ for(id in column_ids){
     
     hermes_output_path <- paste0(output_path, "filteredSoiLists.rds") 
     ## HERMES Analysis
+    
     if(!file.exists(hermes_output_path)){
         param_list <- list(ms1_dir = hermes_files, 
                             qc_names =  "QC", blank_names = "Blank",
@@ -81,7 +82,7 @@ for(id in column_ids){
     untargeted_lima_output <- paste0(output_path, "xcms_hermes_exp_lima.rds")
     untargeted_gfcv_output <- paste0(output_path, "xcms_hermes_exp_gfcv.rds")
     
-    if(!file.exists(untargeted_gfcv_output)){
+    if(!file.exists(untargeted_lima_output)){
         param_list <- list(
             metadata_file = metadata_path,
             xcms_hermes_file = xcms_hermes_output_path,
@@ -92,14 +93,17 @@ for(id in column_ids){
             param_list$qc_name <- "HP_QC"
             param_list$blank_name  <- "HP_Blank"
             param_list$data_type <- "Hilic_Positive"
+            param_list$mummichog_ionization <- "positive"
         }, "Hilic_Negative" = {
             param_list$qc_name <- "HN_QC"
             param_list$blank_name <- "HN_Blank"
             param_list$data_type <- "Hilic_Negative"
+            param_list$mummichog_ionization <- "negative"
         }, "RP_Positive" = {
             param_list$qc_name <- "RP_QC"
             param_list$blank_name <- "RP_Blank"
             param_list$data_type <- "RP_Positive"
+            param_list$mummichog_ionization <- "positive"
         })
         
         rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", 
@@ -204,7 +208,7 @@ rowData(lima_exp)$metabo_analyst_cp <- sapply(cp_list, function(x){
         return(NA)
     }
 })
-rowData(lima_exp)$metabo_analyst_compoun_names <- name_list
+rowData(lima_exp)$metaboanalyst_compound_names <- name_list
 
 saveRDS(lima_exp, paste0(params$output_dir, "Untargeted_Metabolomics_exp_lima.rds"))
 # rmarkdown::render(input = "./Hermes_Analysis.Rmd",

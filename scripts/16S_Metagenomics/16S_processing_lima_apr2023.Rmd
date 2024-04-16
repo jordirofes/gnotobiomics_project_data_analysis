@@ -23,7 +23,10 @@ library(mia)
 library(TreeSummarizedExperiment)
 library(DESeq2)
 library(plotly)
-source("../Utility_Functions/utilities.R")
+library(miaViz)
+library(scater)
+library(patchwork)
+source("../../scripts/Utility_Functions/utilities.R")
 ```
 
 ```{r, include=FALSE, eval=TRUE}
@@ -45,11 +48,10 @@ organ_dir <- list.dirs(params$input_dir, full.names = TRUE, recursive = FALSE)
 organ_dir
 
 organ_dt_list <- lapply(organ_dir[1], function(organ_dt){
-    meta_files <- list.files(organ_dt, pattern = "\\.txt$|\\.csv$", full.names = TRUE)
+    meta_files <- list.files(organ_dt, pattern = "\\.txt$|\\.csv$", full.names = TRUE, recursive = FALSE)
     
     meta_files_proc <- lapply(meta_files, function(meta_file_path){
         meta_f <- read.table(file = meta_file_path, sep = ",", row.names = 1, header = TRUE)
-        
         meta_f <- subset(meta_f, grepl("LIMA", x = project))
         meta_f <- dplyr::select(meta_f, where(is.numeric))
         rownames(meta_f) <- make.names(rownames(meta_f))
@@ -62,7 +64,40 @@ organ_dt_list <- lapply(organ_dir[1], function(organ_dt){
 
     meta_files_proc
 })
-names(organ_dt_list) <- basename(organ_dir[1])
+
+name_vect <- colnames(organ_dt_list[[1]]$Phylum)
+names(name_vect) <- substr(name_vect, start = 2, stop = 4)
+
+# found_names <- sapply(strsplit(rownames(meta_f), "-"), function(x){x[2]})
+
+# found_names[!found_names %in% names(name_vect)]
+# names(name_vect)[!names(name_vect) %in% found_names]
+# length(found_names)
+
+lima_colon_dt <- lapply(organ_dir[2], function(organ_dt){
+    
+    meta_files <- list.files(grep("P190100", list.dirs(organ_dt), value = TRUE), full.names = TRUE)
+
+    meta_files_proc <- lapply(meta_files, function(meta_file_path){
+        meta_f <- read.table(file = meta_file_path, sep = ",", row.names = 1, header = TRUE)
+        rownames(meta_f) <- sapply(strsplit(rownames(meta_f), "-"), function(x){x[2]})
+        
+        meta_f <- subset(meta_f, rownames(meta_f) != "667")
+        meta_f <- dplyr::select(meta_f, where(is.numeric))
+        
+        rownames(meta_f) <- name_vect[rownames(meta_f)]
+        meta_f <- meta_f %>% select_if(colSums(.) != 0 & !grepl("Unassigned", colnames(.)))
+        as.data.frame(t(meta_f))
+    })
+    names(meta_files_proc) <- gsub(pattern = "\\.txt$|\\.csv$", "", basename(meta_files))
+    names(meta_files_proc) <- names_dict[names(meta_files_proc)]
+
+    meta_files_proc
+})
+
+organ_dt_list <- c(organ_dt_list, lima_colon_dt)
+
+names(organ_dt_list) <- basename(organ_dir)
 
 organ_dt_list <- lapply(organ_dt_list, function(organ_dt){
     if(all(sapply(organ_dt, ncol) == 0)){
@@ -77,17 +112,17 @@ organ_dt_list <- organ_dt_list[!sapply(organ_dt_list, is.null)]
 ```
 
 ```{r}
-metadata_list <- data.frame("samplename" = colnames(organ_dt_list$cecum$Phylum))
-metadata_list$group <- substr(x = metadata_list$samplename, start = 5, stop = 5)
-metadata_list$group <- factor(metadata_list$group, 
-                              levels = c("C", "H", "I", "E"), 
-                              labels = c("CNT", "HFD", "INT", "HFE"))
-
-metadata_list$sample_id <- substr(x = metadata_list$samplename, start = 1, stop = 3)
-metadata_list
-
-metadata_list <- list(cecum = metadata_list)
-
+metadata_list <- lapply(organ_dt_list, function(organ_dt){
+    metadata_list <- data.frame("samplename" = colnames(organ_dt$Phylum))
+    metadata_list$group <- substr(x = metadata_list$samplename, start = 5, stop = 5)
+    metadata_list$group <- factor(metadata_list$group, 
+                                  levels = c("C", "H", "I", "E"), 
+                                  labels = c("CNT", "HFD", "INT", "HFE"))
+    
+    metadata_list$sample_id <- substr(x = metadata_list$samplename, start = 1, stop = 3)
+    metadata_list
+    
+})
 # saveRDS(metadata_list, "16S_lima_metadata_list.rds")
 ```
 
@@ -122,16 +157,16 @@ organ_exp <- lapply(names(organ_dt_list), function(organ_name){
                     found_dt <- gsub("\\[|\\]", "", found_dt)
 
                     if(found_dt == "" || grepl("uncultured|unknown|unidentified|metagenome", found_dt, ignore.case = TRUE)){
-                        # hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
-                        #                                     hierarchy_found[h_id_num - 1], 
+                        # hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]),
+                        #                                     hierarchy_found[h_id_num - 1],
                         #                                     paste("Unknown", hierarchy_found[h_id_num - 1]))
                         hierarchy_found[h_id_num] <- NA
                     } else{
                         hierarchy_found[h_id_num] <- found_dt
                     }
                 } else{
-                    # hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]), 
-                    #                                         hierarchy_found[h_id_num - 1], 
+                    # hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]),
+                    #                                         hierarchy_found[h_id_num - 1],
                     #                                         paste("Unknown", hierarchy_found[h_id_num - 1]))
                     hierarchy_found[h_id_num] <- NA
 
@@ -146,12 +181,15 @@ organ_exp <- lapply(names(organ_dt_list), function(organ_name){
                             colData = hierarchy_metadata,
                             rowData = hierarchycal_tree)
         rowData(hierarchy)$old_names <- rownames(hierarchy)
-    
-        
+
         hierarchy <- mia::agglomerateByRank(x = hierarchy, rank = hierarchy_ranks[max_rank])
         hierarchy <- mia::addTaxonomyTree(hierarchy)
         
         rowData(hierarchy)$specie_names <- rownames(hierarchy)
+        rowData(hierarchy)$readable_name <- str_replace(paste("16S", organ_name, rownames(hierarchy)), 
+                                                        "^\\w{1}", toupper)
+
+        
         hierarchy
     })
     # names(organ) <- sapply(strsplit(names(organ), "_"), function(x){x[[3]]})
@@ -197,44 +235,48 @@ lapply(names(organ_exp), function(organ_name){
 ```
 
 
-##### Alpha diversities (Shannon Index)
+## Scores plot
 
-```{r}
-lapply(names(organ_exp), function(organ_names){
-    organ <- organ_exp[[organ_names]]
-    lapply(names(organ), function(hierarchy_names){
+```{r, fig.width=8, fig.height=6}
+
+pdf(paste0(params$output_dir, "scores_plot_raw_t.pdf"))
+print(lapply(names(organ_exp), function(organ_name){
+    organ <- organ_exp[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", 
+                                    method = "relabundance")
+        hierarchy <- hierarchy[grepl(hierarchy_name, rownames(hierarchy)),]
+        hierarchy <- estimateDiversity(x = hierarchy, 
+                                       index = c("shannon", 
+                                                "log_modulo_skewness"))
         
-        group_var <- colData(organ[[hierarchy_names]])[["group"]]
-        hierarchy <- organ[[hierarchy_names]]
-        alpha_div <- vegan::diversity(x = assay(hierarchy), index = "shannon", MARGIN = 2)
+        rownames(hierarchy) <- gsub(paste0(hierarchy_name, ":"), "", rownames(hierarchy))
+                    
+        hierarchy <- estimateFaith(x = hierarchy)
+        hierarchy <- estimateRichness(x = hierarchy, index = "observed")
+        hierarchy <- estimateEvenness(x = hierarchy, index = "simpson")
+        hierarchy <- estimateDominance(x = hierarchy, index = "relative")
+        hierarchy <- estimateDivergence(x = hierarchy, reference = "median", 
+                                        FUN = vegan::vegdist)
         
-        boxplot(alpha_div ~ group_var, main = paste("16S", organ_names, hierarchy_names, sep = "_"), 
-                xlab = "Group", ylab = "Shannon Index")
+        plots <- lapply(c("observed", "shannon", "simpson", "relative", 
+                            "faith", "log_modulo_skewness", "divergence"),
+                        plotColData, object = hierarchy, 
+                        x = "group", colour_by = "group")
+        
+        plots <- lapply(plots, "+", 
+                        theme(axis.text.x = element_blank(),
+                              axis.title.x = element_blank(),
+                              axis.ticks.x = element_blank()))
+        
+        ((plots[[1]] | plots[[2]] | plots[[3]]) / 
+                (plots[[4]] | plots[[5]] | plots[[6]] | plots[[7]])) +
+            plot_layout(guides = "collect") + 
+            plot_annotation(paste(organ_name, hierarchy_name, "Scores"))
     })
-})
-```
-
-
-
-##### Alpha diversities after aggregation (Shannon Index)
-
-```{r}
-agglomerated_dt <- lapply(names(organ_exp), function(organ_names){
-    
-    hierarchy_sp <- organ_exp[[organ_names]]$Species
-    agglomerated_dt <- mia::agglomerateByRank(x = hierarchy_sp, rank = "Phylum")
-    alpha_div <- vegan::diversity(x = assay(agglomerated_dt), index = "shannon", MARGIN = 2)
-    group_var <- agglomerated_dt$group
-    
-    boxplot(alpha_div ~ group_var, main = paste("16S Aggregated", organ_names, "phylum", sep = "_"), 
-            xlab = "Group", ylab = "Shannon Index")
-    agglomerated_dt
-})
-names(agglomerated_dt) <- names(organ_exp)
-
-n1 <- rownames(agglomerated_dt$cecum)
-n2 <- gsub("Phylum:", "", rownames(organ_exp$cecum$phylum))
-n2[!n2 %in% n1]
+}))
+dev.off()
 ```
 
 
@@ -300,43 +342,49 @@ lapply(names(organ_dt_list_fil), function(organ_name){
 ```
 
 
-##### Alpha diversities (Shannon Index)
+## Scores plot
 
-```{r}
-lapply(names(organ_dt_list_fil), function(organ_names){
-    organ <- organ_dt_list_fil[[organ_names]]
-    lapply(names(organ), function(hierarchy_names){
-        hierarchy <- organ[[hierarchy_names]]
-        group_var <- hierarchy$group
-    
-        alpha_div <- vegan::diversity(x = assay(hierarchy), index = "shannon", MARGIN = 2)
+```{r, fig.width=8, fig.height=6}
+
+pdf(paste0(params$output_dir, "scores_plot_08_t.pdf"))
+print(lapply(names(organ_dt_list_fil), function(organ_name){
+    organ <- organ_dt_list_fil[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples",
+                                    method = "relabundance")
+        hierarchy <- hierarchy[grepl(hierarchy_name, rownames(hierarchy)),]
+        # hierarchy <- hierarchy[!grepl("Unknown", rownames(hierarchy)),]
+
+        hierarchy <- estimateDiversity(x = hierarchy, 
+                                       index = c("shannon", 
+                                                "log_modulo_skewness"))
+        hierarchy <- estimateFaith(x = hierarchy)
+        hierarchy <- estimateRichness(x = hierarchy, index = "observed")
+        hierarchy <- estimateEvenness(x = hierarchy, index = "simpson")
+        hierarchy <- estimateDominance(x = hierarchy, index = "relative")
+        hierarchy <- estimateDivergence(x = hierarchy, reference = "median", 
+                                        FUN = vegan::vegdist)
         
-        boxplot(alpha_div ~ group_var, main = paste(organ_names, hierarchy_names, sep = "_"), 
-                xlab = "Group", ylab = "Shannon Index")
+        plots <- lapply(c("observed", "shannon", "simpson", "relative", 
+                            "faith", "log_modulo_skewness", "divergence"),
+                        plotColData, object = hierarchy, 
+                        x = "group", colour_by = "group")
+        
+        plots <- lapply(plots, "+", 
+                        theme(axis.text.x = element_blank(),
+                              axis.title.x = element_blank(),
+                              axis.ticks.x = element_blank()))
+        
+        ((plots[[1]] | plots[[2]] | plots[[3]]) / 
+                (plots[[4]] | plots[[5]] | plots[[6]] | plots[[7]])) +
+            plot_layout(guides = "collect") + 
+            plot_annotation(paste(organ_name, hierarchy_name, "Scores"))
     })
-})
+}))
+dev.off()
 ```
 
-##### Alpha diversities after aggregation (Shannon Index)
-
-```{r}
-agglomerated_dt <- lapply(names(organ_dt_list_fil), function(organ_names){
-    
-    hierarchy_sp <- organ_dt_list_fil[[organ_names]]$Species
-    agglomerated_dt <- mia::agglomerateByRank(x = hierarchy_sp, rank = "Phylum")
-    alpha_div <- vegan::diversity(x = assay(agglomerated_dt), index = "shannon", MARGIN = 2)
-    group_var <- agglomerated_dt$group
-    
-    boxplot(alpha_div ~ group_var, main = paste("Aggregated", organ_names, "phylum", sep = "_"), 
-            xlab = "Group", ylab = "Shannon Index")
-    agglomerated_dt
-})
-names(agglomerated_dt) <- names(organ_dt_list_fil)
-
-n1 <- rownames(agglomerated_dt$cecum)
-n2 <- gsub("Phylum:", "", rownames(agglomerated_dt$cecum$phylum))
-n2[!n2 %in% n1]
-```
 
 ### Statistical analysis
 

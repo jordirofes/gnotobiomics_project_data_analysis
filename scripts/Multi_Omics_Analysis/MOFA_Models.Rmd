@@ -69,6 +69,8 @@ multi_omics_mofa <- prepare_mofa(
         model_options = model_opts, training_options = train_opts
 )
 
+untrained_mofa <- multi_omics_mofa
+
 for(id in seq_len(params$ntries)){
     multi_omics_mofa@training_options$seed <- params$random_seed + id
     
@@ -78,6 +80,128 @@ for(id in seq_len(params$ntries)){
 multi_omics_mofa <- select_model(model_list)
 rm(model_list)
 ```
+
+```{r, fig.width=12, fig.height=8}
+# real_weights <- get_weights(multi_omics_mofa, abs = TRUE, as.data.frame = FALSE)
+# 
+# real_weights$factor_view <- factor(paste(real_weights$factor, real_weights$view))
+# 
+# real_weights$value_order <- NA
+# 
+# for(level_id in levels(real_weights$factor_view)){
+#     matched_ids <- real_weights$factor_view == level_id
+#     real_weights$value_order[matched_ids] <- order(order(real_weights$value[matched_ids], decreasing = TRUE))
+# }
+# 
+# 
+# ggplot(real_weights) + geom_point(aes(x = value_order, y = value, 
+#                                     group = view, color = view)) + 
+#     facet_grid(cols = vars(factor))
+# 
+# ggplot(real_weights) + geom_point(aes(x = order(order(value, decreasing = TRUE)), 
+#                                     y = value, group = view, color = view)) + 
+#     facet_grid(cols = vars(factor))
+
+# weight_factor_1_untargeted <- get_weights(multi_omics_mofa, views = "Untargeted_Metabolomics", 
+#                                           factors = 1, abs = TRUE, as.data.frame = TRUE)
+# weight_factor_1_untargeted$order_value <- order(weight_factor_1_untargeted$value, decreasing = TRUE)
+# 
+# ggplot(weight_factor_1_untargeted) + geom_point(aes(x = order(order(value, decreasing = TRUE)), y = value))
+```
+
+```{r}
+# library(ggplot2)
+# real_weights <- get_weights(multi_omics_mofa, factors = 1,
+#                             abs = TRUE, as.data.frame = TRUE)
+# quantile(real_weights$value, c(0.75))
+# table(real_weights$view[real_weights$value >= quantile(real_weights$value, 0.75)])
+# 
+# real_weights <- get_weights(multi_omics_mofa, factors = 2,
+#                             abs = TRUE, as.data.frame = TRUE)
+# quantile(real_weights$value, c(0.75))
+# table(real_weights$view[real_weights$value >= quantile(real_weights$value, 0.75)])
+# 
+# 
+# ggplot(real_weights, aes(x = factor, y = value, color = feature, group = feature)) + geom_point() + theme(legend.text = element_blank()) + geom_line()
+```
+
+```{r}
+# real_weight_full <- get_weights(multi_omics_mofa,
+#                             abs = TRUE, as.data.frame = TRUE)
+# sum(real_weight_full$value > 0.06247982)
+# table(real_weight_full$factor[real_weight_full$value > 0.06247982])
+# table(real_weight_full$factor[real_weight_full$value < 0.06247982])
+# 
+# real_weight_full <- get_weights(multi_omics_mofa,
+#                             abs = TRUE, as.data.frame = FALSE)
+# real_weight_full <- lapply(names(real_weight_full), function(omic_id){
+#     omic_weights <- as.data.frame(real_weight_full[[omic_id]])
+#     omic_weights$view <- omic_id
+#     omic_weights$feature <- gsub(paste0("_", omic_id), "", 
+#                                  rownames(omic_weights))
+#     return(omic_weights)
+# })
+# real_weight_full <- do.call(rbind, real_weight_full)
+# 
+# feature_max_factor <- apply(real_weight_full, 1, which.max)
+# names(feature_max_factor) <- rownames(real_weight_full)
+# 
+# quantile(real_weight_full$value, c(0.95))
+```
+
+<!-- # ```{r} -->
+<!-- # n_rand <- 10 -->
+<!-- # set.seed(1234) -->
+<!-- # random_mofa_list <- lapply(seq_len(n_rand), function(x){ -->
+<!-- #     set.seed(123*x) -->
+<!-- #     untrained_mofa@data <- lapply(untrained_mofa@data, function(omic_dt){ -->
+<!-- #         test <- t(replicate(n = nrow(omic_dt$group1), expr = { -->
+<!-- #             rnorm(n = ncol(omic_dt$group1), mean = 0, sd = 1) -->
+<!-- #         })) -->
+<!-- #         rownames(test) <- rownames(omic_dt$group1) -->
+<!-- #         colnames(test) <- colnames(omic_dt$group1) -->
+<!-- #          -->
+<!-- #         omic_dt$group1 <- test -->
+<!-- #         return(omic_dt) -->
+<!-- #         # for(row_id in seq_len(nrow(omic_dt$group1))){ -->
+<!-- #         #     omic_dt$group1[row_id,] <-     -->
+<!-- #         # } -->
+<!-- #     }) -->
+<!-- #     run_mofa(untrained_mofa, outfile = NULL, use_basilisk = TRUE) -->
+<!-- # }) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # weight_list <- lapply(random_mofa_list, get_weights) -->
+<!-- # quantile_list <- lapply(names(experiments(params$multi_omics_exp)), function(omic_name){ -->
+<!-- #     omic_weights <- lapply(weight_list, function(x){x[[omic_name]]}) -->
+<!-- #     hist_dt <- do.call(rbind, omic_weights) -->
+<!-- #     lapply(as.data.frame(hist_dt), function(x){ -->
+<!-- #         quantile(x, c(0.025, 0.975)) -->
+<!-- #     }) -->
+<!-- # }) -->
+<!-- # names(quantile_list) <- names(experiments(params$multi_omics_exp)) -->
+<!-- # quantile_list -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # full_weights <- lapply(random_mofa_list, get_weights, as.data.frame = TRUE)  -->
+<!-- # full_weights <- do.call(rbind, full_weights) -->
+<!-- # quantile(abs(full_weights$value[full_weights$factor == "Factor2"]), c(0.95)) -->
+<!-- #  -->
+<!-- # ``` -->
+<!-- # ```{r} -->
+<!-- # omic_dt <- get_data(multi_omics_mofa) -->
+<!-- # omic_dt <- lapply(omic_dt, function(x){x$group1}) -->
+<!-- # omic_dt <- do.call(rbind, omic_dt) -->
+<!-- # pheatmap::pheatmap(omic_dt[names(feature_max_factor)[feature_max_factor == 3],], show_rownames = FALSE) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- #  -->
+<!-- # pheatmap::pheatmap(omic_dt[real_weights$feature[real_weights$value >= 0.6],], show_rownames = FALSE) -->
+<!-- # ``` -->
+
 
 ### Downstream Analysis
 
@@ -207,7 +331,7 @@ for(id in seq_len(params$num_factors)){
     }
     # dev.off()
 }
-saveRDS(multi_assay_list, paste0(output_dir, "multi_omics_filtered.rds"))
+# saveRDS(multi_assay_list, paste0(output_dir, "multi_omics_filtered.rds"))
 ```
 
 ## Appendix
