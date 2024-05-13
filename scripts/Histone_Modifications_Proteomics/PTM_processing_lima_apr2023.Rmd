@@ -47,35 +47,89 @@ lapply(ptm_data, function(x){
 ```
 
 ```{r}
-names_comp <- apply(t(combn(levels(ptm_metadata$group), m = 2))[,2:1], 1, paste, collapse = "-")
-comp_mat <- as.data.frame(matrix(NA, ncol = 4, nrow = length(names_comp)))
-rownames(comp_mat) <- names_comp
-colnames(comp_mat) <- c("difference", "lower", "upper", "pvalue")
+# names_comp <- apply(t(combn(levels(ptm_metadata$group), m = 2))[,2:1], 1, paste, collapse = "-")
+# comp_mat <- as.data.frame(matrix(NA, ncol = 4, nrow = length(names_comp)))
+# rownames(comp_mat) <- names_comp
+# colnames(comp_mat) <- c("difference", "lower", "upper", "pvalue")
+# 
+# tukey_results <- lapply(ptm_data, function(dt_var){
+#     anova_res <- aov(dt_var ~ 0 + group, ptm_metadata)
+#     anova_sum <- summary(anova_res)[[1]]["group","Pr(>F)"]
+#     if(anova_sum <= 0.05){
+#         return(TukeyHSD(anova_res, which = "group")[[1]])
+#     } else{
+#         return(comp_mat)
+#     }
+# })
+# 
+# comp_results_list <- lapply(names_comp, function(name_comp){
+#     comp_results <- lapply(tukey_results, function(dt_var){
+#         if(name_comp %in% rownames(dt_var)){
+#             return(dt_var[name_comp,])
+#         } else{
+#             return(rep(NA, 4))
+#         }
+#     })
+#     comp_results <- as.data.frame(do.call(rbind, comp_results))
+#     names(comp_results) <-  c("difference", "lower", "upper", "p.value")
+#     comp_results$adj.p.value <- p.adjust(comp_results$p.value, method = "fdr")
+#     comp_results
+# })
+# names(comp_results_list) <- names_comp
 
-tukey_results <- lapply(ptm_data, function(dt_var){
-    anova_res <- aov(dt_var ~ 0 + group, ptm_metadata)
-    anova_sum <- summary(anova_res)[[1]]["group","Pr(>F)"]
-    if(anova_sum <= 0.05){
-        return(TukeyHSD(anova_res, which = "group")[[1]])
+######
+
+comp_names <- apply(t(combn(levels(ptm_metadata$group), m = 2))[,2:1], 1, 
+                    paste, collapse = "-")
+comp_matrix <- matrix(NA, nrow = length(comp_names), ncol = 2)
+rownames(comp_matrix) <- comp_names
+
+tukey_results <- apply(ptm_data, 2, function(dt_var){
+    anova_results <- kruskal.test(dt_var, g = ptm_metadata$group)
+    anova_results <- data.frame("statistic" = anova_results$statistic,
+                                "parameter" = anova_results$parameter,
+                                "p.value" = anova_results$p.value)
+
+    # anova_results2 <- aov(dt_var ~ 0 + group, data = lima_metadata)
+    # comp_results <- list("Group_Test" = summary(anova_results)[[1]]["group",])
+    comp_results <- list("Group_Test" = anova_results)
+    #plot(anova_results)
+    if(comp_results$Group_Test$p.value <= 0.05){
+        comp_results$Pairwise_Tests <- DescTools::ConoverTest(dt_var, ptm_metadata$group)[[1]]
+        # comp_results$Pairwise_Tests <- TukeyHSD(anova_results, which = c("group"))$group
+        return(comp_results)
     } else{
-        return(comp_mat)
+        comp_results$Pairwise_Tests <- comp_matrix
+        return(comp_results)
     }
+
 })
 
-comp_results_list <- lapply(names_comp, function(name_comp){
-    comp_results <- lapply(tukey_results, function(dt_var){
-        if(name_comp %in% rownames(dt_var)){
-            return(dt_var[name_comp,])
-        } else{
-            return(rep(NA, 4))
-        }
-    })
-    comp_results <- as.data.frame(do.call(rbind, comp_results))
-    names(comp_results) <-  c("difference", "lower", "upper", "p.value")
-    comp_results$adj.p.value <- p.adjust(comp_results$p.value, method = "fdr")
-    comp_results
+anova_test_results <- lapply(tukey_results, function(ctrs){
+    ctrs$Group_Test
 })
-names(comp_results_list) <- names_comp
+anova_test_results <- do.call(rbind, anova_test_results)
+# colnames(anova_test_results)[5] <- c("pvalue")
+anova_test_results$adj.p.value <- p.adjust(anova_test_results$p.value)
+
+contrasts_results <- lapply(comp_names, function(ctrs_row){
+    ctrs_result_list <- lapply(tukey_results, function(ctrs){
+        ctrs <- ctrs$Pairwise_Tests
+        if(!(ctrs_row %in% rownames(ctrs))){return(rep(NA, 2))}
+        ctrs[ctrs_row,]   
+    })
+    do.call(rbind, ctrs_result_list)
+})
+names(contrasts_results) <- comp_names
+
+contrasts_results <- lapply(contrasts_results, function(ctrs){
+    ctrs <- as.data.frame(ctrs)
+    colnames(ctrs) <- c("difference", "pvalue")
+    ctrs$adj.p.value <- p.adjust(ctrs[,"pvalue"], method = "fdr")
+    ctrs
+})
+
+contrasts_results$Group_Test <-  anova_test_results
 
 # saveRDS(comp_results_list, "./ptm_results.rds")
 ```
@@ -85,7 +139,8 @@ rownames(ptm_data) <- make.names(rownames(ptm_data))
 
 ptm_metadata <- data.frame("samplename" = make.names(ptm_metadata$Replicate_Name),
                            "group" = ptm_metadata$group)
-ptm_results <- do.call(cbind, comp_results_list)
+ptm_results <- do.call(cbind, contrasts_results)
+
 ptm_results$readable_name <- gsub("_|\\.", "-", gsub("\\.[^_]+$|\\.$", "", rownames(ptm_results)))
 
 ptm_exp <- SummarizedExperiment(assays = as.data.frame(t(ptm_data)), 

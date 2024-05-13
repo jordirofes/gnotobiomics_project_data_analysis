@@ -170,13 +170,17 @@ lima_exp_list <- lapply(omic_list, function(omic_id){
 lima_exp_list <- unlist(unlist(unlist(lima_exp_list, recursive = FALSE), 
                                 recursive = FALSE), recursive = FALSE)
 
+colData(lima_exp_list$WGB_DNA_Methylation)$samplename <- lima_exp_list$WGB_DNA_Methylation$sample_name
+
 lima_exp_list <- lapply(lima_exp_list, function(omic_se){
     if(any(colnames(omic_se) == "X686I")){
         colnames(omic_se)[colnames(omic_se) == "X686I"] <- "X687I"
+        omic_se$samplename[omic_se$samplename == "X686I"] <- "X687I"
     }
     
     if(any(colnames(omic_se) == "X652C")){
         colnames(omic_se)[colnames(omic_se) == "X652C"] <- "X642C"
+        omic_se$samplename[omic_se$samplename == "X652C"] <- "X642C"
     }
     omic_se
 })

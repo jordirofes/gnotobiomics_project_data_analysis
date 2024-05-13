@@ -20,6 +20,7 @@ source("../Utility_Functions/utilities.R")
 library(ggplot2)
 library(plotly)
 library(mia)
+library(stringr)
 ```
 
 
@@ -122,10 +123,31 @@ stat_res <- lapply(names(organ_dt_list_proc), function(organ_name){
             comp_vec <- c("group", strsplit(comp_name, "-")[[1]])
             results(hierarchy_deseq, contrast = comp_vec, pAdjustMethod = "fdr")
         })
+        
+        # clr_transform <- transformAssay(x = SummarizedExperiment(assays = list("counts" = hierarchy), 
+        #                                                          colData = hierarchy_meta), assay.type = "counts", method = "rclr")
+        # clr_transform
+        # 
+        # results <- lapply(as.data.frame(t(assays(clr_transform)[["rclr"]])), function(var_dt){
+        #     if(length(var_dt) != length(clr_transform$group)){browser()}
+        #     
+        #     kru_res <- kruskal.test(var_dt ~ clr_transform$group)
+        #     if(kru_res$p.value <= 0.05){
+        #         conover_res <- conover.test::conover.test(x = var_dt, g = clr_transform$group)
+        #     
+        #         return(data.frame("adj.p.values" = conover_res$P.adjusted, 
+        #                             "comp" = conover_res$comparisons))
+        #     } else{
+        #         return(data.frame("adj.p.values" = NA, 
+        #                             "comp" = conover_res$comparisons))
+        #     }
+        # })
+                
         # hierarchy_ancombc2 <- SummarizedExperiment(assays = hierarchy, 
         #                                            colData = hierarchy_meta)
         # ancom_res <- ancombc2(data = hierarchy_ancombc2, fix_formula = "~ group + 0", p_adj_method = "fdr", group = "group")
-        # 
+        #
+        
         names(results_list) <- names_comp
         results_list <- do.call(cbind, results_list)
         colnames(results_list) <- gsub("log2FoldChange", "log2FC", colnames(results_list))

@@ -53,7 +53,9 @@ library(DT)
 library(knitr)
 library(igraph)
 library(RCy3)
+library(grDevices)
 library(ggplot2)
+library(RColorBrewer)
 library(data.table)
 ```
 
@@ -111,7 +113,6 @@ multi_omic_filtered_list <- lapply(params$filter_variable_2_correlate,
 if(!all(is.na(params$rowData_variable_name_list)) && 
     all(names(params$rowData_variable_name_list) %in% names(multi_omic_dt))){
     variable_dictionary <- lapply(names(params$rowData_variable_name_list), function(dataset_name){
-        
         dataset_var <- rowData(multi_omic_dt[[dataset_name]])[params$rowData_variable_name_list[[dataset_name]]]
         dataset_vector <- unlist(dataset_var[[1]])
         names(dataset_vector) <- rownames(dataset_var)
@@ -161,7 +162,7 @@ omic_variable_correlation_list <- lapply(multi_omic_filtered_list, function(mult
                             filter_self_correlations = TRUE, 
                             cor_threshold = 0, 
                             p_adj_method = params$p_adj_test, 
-                            p_adj_threshold = 0, 
+                            p_adj_threshold = 1, 
                             method = params$corr_method, 
                             test_significance = params$correlation_test)
                         subset(ac_t, !is.na(cor))

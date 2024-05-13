@@ -579,3 +579,220 @@ go_similarity_matrix <- function(go_list1, go_list2, semData, measure){
     colnames(sim_mat) <- go_list2
     return(sim_mat)
 }
+
+
+network_heatmap_fun <- function(plot_dt, labels_dt, omic_color_dict, 
+                                x_colors, plot_title){
+    p <- ggplot(plot_dt, aes(x = sample_name, fill = value, 
+                                 y = var_id)) + 
+            geom_tile() + 
+            theme_minimal() + scale_fill_viridis_c() + 
+            theme(axis.text.x = element_text(angle = 90, 
+                                             colour = x_colors),
+                  axis.text.y = element_text(size = 5),
+                    legend.position = "right", 
+                    legend.justification = "top", 
+                    legend.title = element_blank(), 
+                    plot.title = element_text(hjust = 0.5),
+                    legend.spacing.y = unit(0.1, "cm")) + 
+            ggtitle(plot_title) + 
+            xlab(NULL) + ylab(NULL) + 
+            ggnewscale::new_scale_fill() + 
+            geom_tile(inherit.aes = FALSE, 
+                      aes(x = -1, y = var_id, 
+                     fill = omic_name), data = labels_dt) +
+            scale_fill_manual(values = omic_color_dict)    
+}
+
+network_lineplot_fun <- function(plot_dt, labels_dt, omic_color_dict, x_colors, 
+                                legend_colors, plot_title){
+    p <- ggplot(plot_dt, aes(x = sample_name, y = value, color = omic_name,
+                             group = var_id, shape = var_id)) +
+        geom_point() + geom_smooth(aes(color = omic_name, fill = omic_name),
+                                   se = FALSE, span = 0.5, alpha = 0.1) +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 90, colour = x_colors),
+                legend.position = "right",
+                legend.justification = "top",
+                legend.title = element_blank(),
+                plot.title = element_text(hjust = 0.5),
+                legend.spacing.y = unit(0.1, "cm")) +
+        ggtitle(plot_title) +
+        xlab(NULL) + ylab("Normalized Values") +
+        scale_color_manual(values = omic_color_dict)  +
+        guides(shape = guide_legend(label.theme = element_text(size = 7.5),
+                                    order = 2,  byrow = TRUE,
+                                    override.aes = list(
+                                        color = legend_colors
+                                    ),
+                                    keyheight = 0.05),
+               col = guide_legend(order = 1), fill = "none") +
+        scale_shape_manual(values = rep(16, length(unique(plot_dt$var_id))))
+    return(p)
+}
+
+plot_nw_term <- function(omic_dt, feature_ids, term_ids, group_var = "group", 
+                        sample_var = "samplename", feature_ids_dict = NULL, 
+                        omic_names_dict = NULL, omic_color_dict, 
+                        group_color_dict = NULL,
+                        var_order_col = "Factor_2", plot_title, 
+                        plot_type = c("Heatmap", "Lineplot")){
+    
+    # Preparing some dictionary data
+    feature_ids <- c(feature_ids, term_ids)
+    if(!is.null(params$omic_names_dict)){
+        names(omic_color_dict) <- omic_names_dict[as.character(names(omic_color_dict))]
+    }
+    
+    group_var_dict <- colData(omic_dt)[[group_var]]
+    names(group_var_dict) <- colData(omic_dt)[[sample_var]]
+    
+    # Preparing melted plot data for ggplot
+    plot_dt <- lapply(names(experiments(omic_dt)), function(omic_id){
+        omic_filt <- omic_dt[[omic_id]]
+        found <- paste0(omic_id, ".", rownames(omic_filt)) %in% feature_ids
+        if(any(found)){
+            return(omic_filt[found,])
+        } else{
+            return(NA)
+        }
+    })
+    names(plot_dt) <- names(experiments(omic_dt))
+    plot_dt <- plot_dt[!is.na(plot_dt)]
+    
+    # Melt data to plot and add omic name and group variable
+    plot_dt <- lapply(names(plot_dt), function(omic_exp_name){
+        omic_exp <- plot_dt[[omic_exp_name]]
+        melted_dt <- melt(as.matrix(assay(omic_exp)))
+        
+        colnames(melted_dt)[1:2] <- c("var_id", "sample_name")
+        
+        melted_dt$factor_weight <- rowData(omic_exp)[melted_dt$var_id, var_order_col]
+        melted_dt$factor_weight_pos <- ifelse(melted_dt$factor_weight >= 0,
+                                      "Positive", "Negative")
+        
+        # melted_dt$var_id <- factor(gsub(paste0(omic_exp_name, "."), "", melted_dt$var_id))
+        melted_dt$var_id <- factor(paste(omic_exp_name, 
+                                        melted_dt$var_id, sep = "."))
+        melted_dt$omic_name <- factor(omic_exp_name)
+        
+        melted_dt$group <- factor(group_var_dict[as.character(melted_dt$sample_name)])
+        
+        if(!is.null(omic_names_dict)){
+            melted_dt$omic_name <- factor(omic_names_dict[as.character(melted_dt$omic_name)])
+        }
+        if(!is.null(feature_ids_dict)){
+            melted_dt$var_id <- factor(feature_ids_dict[[omic_exp_name]][as.character(melted_dt$var_id)])
+        }
+        
+        melted_dt
+    })
+    
+    plot_dt <- do.call(rbind, plot_dt)
+    
+    # plot_dt$var_id <- factor(abbreviate(as.character(plot_dt$var_id), 75, ))
+
+    plot_dt$var_id <- factor(plot_dt$var_id, levels = levels(plot_dt$var_id), 
+                             labels = base::make.unique(str_trunc(levels(plot_dt$var_id), 75)))
+    
+    plot_dt$var_id <- factor(str_wrap(plot_dt$var_id, width = 40))
+    
+    
+    # Sample factor re-ordering and colors
+    sample_levels <- levels(plot_dt$sample_name)
+    reordered_sample_levels <- sample_levels[order(group_var_dict[as.character(sample_levels)])]
+    
+    plot_dt$sample_name <- reorder(plot_dt$sample_name, 
+                                    new.order = reordered_sample_levels)
+    
+    x_colors <- group_color_dict[as.character(group_var_dict[levels(plot_dt$sample_name)])]
+    
+    # Variable re-ordering and colors
+    labels_dt <- distinct(plot_dt[,c("var_id", "omic_name", "factor_weight")])
+    # labels_dt <- labels_dt[order(labels_dt$omic_name),]
+    
+    var_omic_dict <- labels_dt$omic_name
+    names(var_omic_dict) <- labels_dt$var_id
+    
+    var_levels <- levels(plot_dt$var_id)
+    
+    # reordered_var_levels <- var_levels[order(var_omic_dict[as.character(var_levels)])]
+    reordered_var_levels <- labels_dt$var_id[order(labels_dt$factor_weight, 
+                                                    decreasing = TRUE)]
+    
+    
+    plot_dt$var_id <- reorder(plot_dt$var_id, 
+                            new.order = reordered_var_levels)
+    
+    legend_colors <- omic_color_dict[as.character(sapply(levels(plot_dt$var_id), function(x){
+        labels_dt$omic_name[as.character(labels_dt$var_id) == x]
+    }))]
+
+    names(legend_colors) <- levels(plot_dt$var_id)
+    labels_dt$omic_colors <- legend_colors[labels_dt$var_id]
+    
+    legend_colors
+    
+    # Plotting
+    plot_type <- match.arg(plot_type)
+    
+    switch(plot_type, 
+        "Heatmap" = {
+        p <- network_heatmap_fun(plot_dt = plot_dt, labels_dt = labels_dt, 
+                                omic_color_dict = omic_color_dict,
+                                x_colors = x_colors, plot_title = plot_title)
+    }, "Lineplot" = {
+        p <- network_lineplot_fun(plot_dt = plot_dt, labels_dt = labels_dt, 
+                            legend_colors = legend_colors, 
+                            omic_color_dict = omic_color_dict,
+                            x_colors = x_colors, plot_title = plot_title)
+    })
+    
+    
+    return(p)
+}
+
+
+setReadable_custom <- function(enrich_res, featureDict){
+    if(!is(enrich_res, "enrichResult") || nrow(enrich_res@result) == 0){return(enrich_res)}
+    geneID_list <- strsplit(enrich_res@result$geneID, "/")
+    enrich_res@result$geneID <- sapply(geneID_list, function(pathway_ids){
+
+        found <- names(featureDict)[sapply(featureDict, function(ids_dict){any(ids_dict %in% pathway_ids)})]
+        
+        paste(unique(unlist(found)), collapse = "/")
+    })
+    enrich_res
+}
+
+enrich_multi_omic_clusters <- function(graph, feature_dict, 
+                                       membership_attribute, universe, 
+                                       min_n = 25){
+
+    membership_vector <- vertex_attr(graph, membership_attribute)
+    clu_vertex <- lapply(unique(membership_vector), function(cl_id){
+        names(V(graph))[membership_vector == cl_id]
+    })
+    names(clu_vertex) <- unique(membership_vector)
+    clu_vertex <- clu_vertex[lengths(clu_vertex) >= min_n]
+    rna_seq_tag <- "RNA_Sequencing\\."
+    dna_seq_tag <- "WGB_DNA_Methylation\\."
+
+    general_tag <- paste0(rna_seq_tag, "|", dna_seq_tag)
+    
+    enrich_res <- lapply(clu_vertex, function(clu_ids){
+        merged_ids <- grep(general_tag, clu_ids, value = TRUE)
+        
+        merged_ids <- feature_dict[merged_ids]
+        enrich_go <- clusterProfiler::enrichGO(
+            gene = merged_ids, OrgDb = org.Mm.eg.db,
+            keyType = "ENTREZID", ont = "BP",
+            pvalueCutoff = 0.05, pAdjustMethod = "fdr",
+            universe = universe)
+        enrich_go <- clusterProfiler::simplify(enrich_go)
+        
+        enrich_go <- setReadable_custom(enrich_go, featureDict = merged_ids)
+        enrich_go
+    })
+    enrich_res
+}

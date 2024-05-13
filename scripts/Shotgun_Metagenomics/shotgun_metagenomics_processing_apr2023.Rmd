@@ -23,6 +23,7 @@ library(miaViz)
 library(scater)
 library(patchwork)
 library(TreeSummarizedExperiment)
+library(stringr)
 source("../../scripts/Utility_Functions/utilities.R")
 ```
 

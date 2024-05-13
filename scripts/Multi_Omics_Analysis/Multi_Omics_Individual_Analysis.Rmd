@@ -109,6 +109,22 @@ multi_omics_raw <- readRDS(paste0(params$input_dir, "Multi_Omics_Analysis_exp_li
 multi_omics_ma <- readRDS(paste0(params$input_dir, "Multi_Omics_Analysis_MA_exp_lima.rds"))
 data_list <- list("Raw_Results" = multi_omics_raw[,colData(multi_omics_raw)$samplename[colData(multi_omics_raw)$group != "HFE"]], 
                   "Multivariate_Normalized" = multi_omics_ma[,colData(multi_omics_ma)$samplename[colData(multi_omics_ma)$group != "HFE"]])
+
+multi_omic_any_sig <- lapply(data_list, function(multi_omics_dt){
+    keep_rows_list <- lapply(experiments(multi_omics_dt), function(omic_dt){
+        omic_rowdata <- rowData(omic_dt)
+        keep_vars <- rowSums(as.matrix(omic_rowdata[,grep("adj.p.value", 
+                                            colnames(omic_rowdata))]) <= 0.05, 
+                na.rm = TRUE) != 0
+        
+        
+        rownames(omic_rowdata)[keep_vars]
+    })
+    multi_omics_dt[keep_rows_list,,]
+})
+
+data_list <- multi_omic_any_sig
+names(data_list) <- paste0(names(data_list), "Any Sig")
 ```
 
     
@@ -136,7 +152,7 @@ for(data_mae_name in names(data_list)){
             param_list$stratificationVar <- "group"
             
             if(fun_name == "Heatmap_Results"){
-                param_list$cdQuantile <- ifelse(nrow(param_list$dt_list) >= 4000, 0.75, 0)        
+                param_list$cdQuantile <- ifelse(nrow(param_list$dt_list) >= 4000, 0, 0)        
                 param_list$show_colnames <- ifelse(nrow(param_list$dt_list) > 100, FALSE, TRUE)
             }
             if(experiment_name %in% c("DNA_Methylation_unsupervised.liver", "DNA_Methylation.liver")){
