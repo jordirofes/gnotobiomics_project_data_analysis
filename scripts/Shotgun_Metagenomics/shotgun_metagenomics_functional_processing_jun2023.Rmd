@@ -20,6 +20,7 @@ source("../Utility_Functions/utilities.R")
 library(ggplot2)
 library(plotly)
 library(mia)
+library(SummarizedExperiment)
 library(stringr)
 ```
 

@@ -7,6 +7,7 @@ params:
     metadata_file: "../../inputs/Untargeted_Metabolomics/RP_Positive/LC_MS_metadata.csv"
     xcms_hermes_file: "../../outputs/Untargeted_Metabolomics/Hermes_Results/RP_Positive/summarized_hermes_xcms.rds"
     hermes_file: "../../outputs/Untargeted_Metabolomics/Hermes_Results/RP_Positive/filteredSoiLists.rds"
+    hermes_filter: FALSE
     qc_name: "RP_QC"
     blank_name: "RP_Blank"
     output_results: "../../outputs/Untargeted_Metabolomics/Hermes_Results/RP_Positive/"
@@ -33,6 +34,7 @@ library(plotly)
 library(mixOmics)
 library(vsn)
 library(dplyr)
+library(stringr)
 
 pca_plot <- function(pca_data, pc_x, pc_y, group_var, ellipse_var, allElipse =TRUE, interactive = TRUE, level = 0.95){
     pc_var <- pca_data$sdev^2
@@ -134,6 +136,9 @@ pca_gr_dt <- gf_lima_meta[(gf_lima_meta$groups_m != params$blank_name) & (gf_lim
 # write.csv(pca_gr_dt, file = paste0(params$output_results, "filtered_metadata.csv"), row.names = FALSE)
 
 dt_pca <- assay(pmp::mv_imputation(xcms_p_dc_filt, method = "knn", k = 10))
+mode(dt_pca) <- "integer"
+dt_pca <- pmp::mv_imputation(dt_pca, method = "knn", k = 10)
+
 dt_pca <- DESeq2::DESeqDataSetFromMatrix(round(dt_pca), colData = pca_gr_dt, design = ~ batch + sex_m + gfcv)
 
 dt_pca <- estimateSizeFactors(dt_pca)
@@ -150,6 +155,8 @@ pca_plot(pca_dt, 1, 2, group_var = as.factor(pca_gr_dt$batch), level = 0.95, all
 ```{r}
 dt_pca <- assay(pmp::mv_imputation(xcms_p_dc_filt, method = "knn"))
 
+mode(dt_pca) <- "integer"
+dt_pca <- pmp::mv_imputation(dt_pca, method = "knn", k = 10)
 dt_pca <- DESeq2::DESeqDataSetFromMatrix(round(dt_pca), colData = pca_gr_dt, design = ~ batch + sex_m + gfcv)
 
 dt_pca <- estimateSizeFactors(dt_pca)
@@ -235,7 +242,10 @@ contrasts_results <- lapply(contrasts_results, function(ctrs){
 })
 
 feature_data <- as.data.frame(rowData(xcms_p_dc_filt))
+```
 
+
+```{r, eval = params$hermes_filter}
 hermes_dt <- readRDS(params$hermes_file)
 hermes_ions <- hermes_dt@metadata@ExpParam@ionF[[2]]
 
@@ -252,7 +262,10 @@ feature_data$soi <- sapply(feature_data$soi, function(x){
     paste(x, collapse = ",")})
 feature_data$formula <- sapply(feature_data$formula, function(x){
     paste(x, collapse = "/")})
+```
 
+
+```{r}
 contrasts_results <-  c(list("GFCV_sex_Interaction" = interaction_results, 
                             "GF_CV" = gf_cv_results), contrasts_results)
 
@@ -291,6 +304,9 @@ pca_gr_dt <- gf_lima_meta[(gf_lima_meta$groups_m != params$blank_name) & (gf_lim
 
 meanSdPlot(x = assay(xcms_p_dc_filt), ranks = FALSE)
 dt_pca <- assay(pmp::mv_imputation(xcms_p_dc_filt, method = "knn", k = 10))
+mode(dt_pca) <- "integer"
+dt_pca <- pmp::mv_imputation(dt_pca, method = "knn", k = 10)
+
 dt_pca <- DESeq2::DESeqDataSetFromMatrix(round(dt_pca), colData = pca_gr_dt, 
                                         design = ~ groups_m)
 
@@ -384,13 +400,29 @@ contrasts_results$Group_Test <-  anova_test_results
 contrasts_results <- do.call(cbind, contrasts_results)
 
 feature_data <- as.data.frame(rowData(xcms_p_dc_filt))
+```
 
+
+```{r, eval=params$hermes_filter}
 hermes_dt <- readRDS(params$hermes_file)
 hermes_ions <- hermes_dt@metadata@ExpParam@ionF[[2]]
 
+feature_data$neutral_formula <- sapply(feature_data$formula, function(form){
+    found_formulas <- hermes_ions$f[hermes_ions$ion %in% form]
+    if(length(found_formulas) == 0){return(NA)}
+    paste0(found_formulas, collapse = "/")
+})
+
+feature_data$adduct_annotation <- sapply(feature_data$formula, function(form){
+    found_an <- hermes_ions$an[hermes_ions$ion %in% form]
+    if(length(found_an) == 0){return(NA)}
+    paste0(found_an, collapse = "/")
+})
+    
 feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
     found_formulas <- hermes_ions$f[hermes_ions$ion %in% form]
     found_mets <- hermes_dt@metadata@ExpParam@DB$Name[hermes_dt@metadata@ExpParam@DB$MolecularFormula %in% found_formulas]
+    if(length(found_mets) == 0){return(NA)}
     if(length(found_mets) > 5){
         found_mets <- found_mets[1:5]
     }
@@ -400,6 +432,10 @@ feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
 feature_data$soi <- sapply(feature_data$soi, function(x){paste(x, collapse = ",")})
 feature_data$formula <- sapply(feature_data$formula, function(x){paste(x, collapse = "/")})
 
+```
+
+
+```{r}
 feature_data <- cbind(feature_data, contrasts_results)
 
 assay(xcms_p_dc_filt) <- as.data.frame(assay(xcms_p_dc_filt))
@@ -447,11 +483,14 @@ unlink(mummichog_folder, recursive = T)
 
 
 ```{r}
-# emp_compounds <- readLines(paste0(new_folder, "/tables/ListOfEmpiricalCompounds.tsv"))
-# emp_compounds <- strsplit(emp_compounds, split = "\t")
-# emp_compounds <- do.call(rbind, emp_compounds)
-# colnames(emp_compounds) <- emp_compounds[1,]
-# emp_compounds <- as.data.frame(emp_compounds[-1,])
+emp_compounds <- readLines(paste0(new_folder, "/tables/ListOfEmpiricalCompounds.tsv"))
+emp_compounds <- strsplit(emp_compounds, split = "\t")
+emp_compounds <- lapply(emp_compounds, function(x){
+    data.table::data.table(t(x))
+})
+emp_compounds <- as.data.frame(data.table::rbindlist(emp_compounds, fill = TRUE))
+colnames(emp_compounds) <- emp_compounds[1,]
+emp_compounds <- as.data.frame(emp_compounds[-1,])
 
 emp_compounds2 <- readLines(paste0(new_folder, "/tables/userInput_to_EmpiricalCompounds.tsv"))
 emp_compounds2 <- strsplit(emp_compounds2, split = "\t")
@@ -459,6 +498,27 @@ emp_compounds2 <- do.call(rbind, emp_compounds2)
 colnames(emp_compounds2) <- emp_compounds2[1,]
 emp_compounds2 <- as.data.frame(emp_compounds2[-1,])
 
+adduct_h <- ifelse(params$mummichog_ionization == "positive", "M+H[1+]", "M-H[-]")
+
+keep_rows_test <- c()
+for(id in seq_len(nrow(emp_compounds))){
+    ec_dt <- emp_compounds[id, ]
+    ion_list <- strsplit(ec_dt$str_row_ion, ";")[[1]]
+    row_list <- strsplit(ec_dt$massfeature_rows, ";")[[1]]
+    if(length(ion_list) > 1){
+        
+        if(any(grepl(adduct_h, ion_list))){
+            keep_rows_test <- c(keep_rows_test, row_list[m_h])
+        }
+        
+        emp_cp_info <- emp_compounds2[(emp_compounds2$input_row %in% row_list) & 
+                                    !(emp_compounds2$input_row %in% keep_rows_test),]
+        keep_rows_test <- c(keep_rows_test, emp_cp_info$input_row[which.max(emp_cp_info$statistic)])
+            
+    } else{
+        keep_rows_test <- c(keep_rows_test, row_list)
+    }
+}
 
 pathway_enrich <- readLines(paste0(new_folder, "/tables/mcg_pathwayanalysis_myResults_Test_Full.tsv"))
 pathway_enrich <- strsplit(pathway_enrich, split = "\t")
@@ -493,6 +553,42 @@ merged_res <- lapply(rownames(rowData(xcms_p_dc_filt)), function(x){
 merged_res <- do.call(rbind, merged_res)
 
 rowData(xcms_p_dc_filt) <- cbind(rowData(xcms_p_dc_filt), merged_res)
+
+mz_rd <- as.data.frame(rowData(xcms_p_dc_filt))
+
+hermes_f <- unique(mz_rd$neutral_formula[!is.na(mz_rd$neutral_formula)])
+hermes_p_ad <- ifelse(params$mummichog_ionization == "positive", 
+                        "M+H", "M-H")
+
+keep_adducts <- sapply(hermes_f, function(f_id){
+    f_dt <- mz_rd[mz_rd$neutral_formula %in% f_id,]
+    
+    test <- IRanges::findOverlaps(query = IRanges(start = f_dt$rtmin, 
+                                          end = f_dt$rtmax), 
+                                  type = "any", 
+                                  drop.redundant = TRUE, 
+                                  drop.self = TRUE)
+    
+    if(length(test) == 0){return(rownames(f_dt))} else{
+        test_gr <- graph_from_data_frame(as.data.frame(test), 
+                                         directed = FALSE)
+        group_m <- components(test_gr)$membership
+        keep_group <- sapply(unique(group_m), function(group_id){
+            feature_ids <- names(group_m)[group_m == group_id]
+            group_dt <- f_dt[as.numeric(feature_ids),]
+            
+            found_h <- grepl(hermes_p_ad, 
+                            group_dt$adduct_annotation)
+            if(sum(found_h) == 1){
+                return(rownames(group_dt[found_h,]))
+            }
+            return(rownames(group_dt)[which.max(group_dt$Group_Test.statistic)[1]])
+        })
+        return(keep_group)
+    }
+})
+
+xcms_p_dc_filt <- xcms_p_dc_filt[(mz_rd$isotope == "M0" & (rownames(mz_rd) %in% unlist(keep_adducts))) | (mz_rd$input_row %in% keep_rows_test),]
 
 saveRDS(xcms_p_dc_filt,
         paste0(params$output_results, "xcms_hermes_exp_lima.rds"))

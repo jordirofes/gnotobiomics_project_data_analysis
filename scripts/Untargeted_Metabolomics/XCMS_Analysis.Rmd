@@ -4,9 +4,9 @@ author: "Jordi Rofes Herrera"
 date: "27/1/2022"
 output: html_document
 params:
-    file_dir: "../../inputs/Untargeted_Metabolomics/Hilic_Positive/"
-    metadata_file: "../../inputs/Untargeted_Metabolomics/Hilic_Positive/LC_MS_metadata.csv"
-    output_dir: "../../outputs/Untargeted_Metabolomics/Hermes_Results/Hilic_Positive/"
+    file_dir: "../../inputs/Untargeted_Metabolomics/RP_Positive/"
+    metadata_file: "../../inputs/Untargeted_Metabolomics/RP_Positive/LC_MS_metadata.csv"
+    output_dir: "../../outputs/Untargeted_Metabolomics/Hermes_Results/RP_Positive/"
 ---
 
 ```{r setup, include=FALSE}
@@ -135,7 +135,7 @@ library(xcms)
 ms_data <- readRDS(paste0(params$output_dir, "xcmsnexp_filled.rds"))
 hermes_dt <- readRDS(paste0(params$output_dir,"filteredSoiLists.rds"))
 ms_data <- qHermes::annotateFeaturesFromList(XCMSnExp = ms_data, RHermesExp = hermes_dt, 
-                                             SOI_id = 4, filter = TRUE)
+                                             SOI_id = 4, filter = FALSE)
 xcms_dt <- quantify(ms_data, value = "into")
 saveRDS(xcms_dt, file =  paste0(params$output_dir, "summarized_hermes_xcms.rds"))
 ```

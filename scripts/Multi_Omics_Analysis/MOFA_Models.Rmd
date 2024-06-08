@@ -7,8 +7,8 @@ params:
     output_dir: "../../outputs/Multi_Omics_Analysis/MOFA_Results/"
     multi_omics_exp: !r multi_omics[,colData(multi_omics)$group != "HFE",multi_omics_selected]
     group_var: "group"
-    num_factors: 3
-    results_name: "test_int"
+    num_factors: 2
+    results_name: !r mofa_dir_name
     color_vec: !r c("CNT"="black", "HFD"="red", "INT"="blue")
     random_seed: 1234
     convergence_mode: "slow"
@@ -54,6 +54,7 @@ head(model_opts)
 
 train_opts <- get_default_training_options(multi_omics_mofa)
 train_opts$convergence_mode <- params$convergence_mode
+train_opts$maxiter <- 5000
 head(train_opts)
 ```
 
@@ -187,7 +188,13 @@ mofa_group_var <- colData(params$multi_omics_exp)[[params$group_var]]
 
 rownames(samples_metadata(multi_omics_mofa)) <- samples_metadata(multi_omics_mofa)$sample
 
-plot_variance_explained(multi_omics_mofa) + theme(axis.text.x = element_text(size = 8, angle = 90))
+
+p <- plot_variance_explained(multi_omics_mofa) + theme(axis.text.x = element_text(size = 8, angle = 90))
+print(p)
+
+pdf(paste0(output_dir, "mofa_explained_var.pdf"))
+print(p)
+dev.off()
 
 p <- plot_factor(multi_omics_mofa, group_by = mofa_group_var, 
                 factors = seq_len(params$num_factors), 
@@ -197,17 +204,25 @@ p <- p +
   scale_color_manual(values= params$color_vec) +
   scale_fill_manual(values= params$color_vec)
 print(p)
+
+pdf(paste0(output_dir, "mofa_factors_violin.pdf"))
+print(p)
+dev.off()
 ```
 
 ```{r, fig.height=12, fig.width=12}
-plot_factors(multi_omics_mofa, 
+p <- plot_factors(multi_omics_mofa, 
   factors = seq_len(params$num_factors), 
   color_by = as.character(mofa_group_var), 
-  legend = FALSE
-)
+  legend = FALSE, 
+) + scale_color_manual(values = params$color_vec)
+print(p)
+pdf(paste0(output_dir, "mofa_factors_scatter.pdf"))
+print(p)
+dev.off()
 ```
 
-```{r}
+```{r, eval=params$num_factors >= 3}
 pca_dt <- MOFA2::get_factors(object = multi_omics_mofa, factors = seq_len(params$num_factors))
 
 MOFA2::get_variance_explained(object = multi_omics_mofa, factors = seq_len(params$num_factors))
@@ -289,13 +304,35 @@ highest_weights <- weight_dt$feature[weight_dt$value >= quantile(weight_dt$value
 
 ```{r}
 exp_dt <- get_data(object = multi_omics_mofa)
-weight_dt <- get_weights(object = multi_omics_mofa)
 score_dt <- get_factors(object = multi_omics_mofa)
 ```
 
 ```{r}
-thr <- 0.7
+# weight_dt <- get_weights(object = multi_omics_mofa, scale = TRUE, abs = TRUE)
+# thr <- 0.5
+# 
+# omic_res <- lapply(names(exp_dt), function(omic_name){
+#     omic_weights <- as.data.frame(weight_dt[[omic_name]])
+#     lapply(omic_weights, function(x){rownames(omic_weights)[x >= thr]})
+# })
+# names(omic_res) <- names(exp_dt)
+# 
+# omic_res <- omic_res[sapply(omic_res, length) != 0]
+# 
+# omic_res <- lapply(seq_along(omic_res[[1]]), function(factor_id){
+#     lapply(omic_res, function(omic_dt){
+#         if(!length(omic_dt)){return(NULL)}
+#         omic_dt[[factor_id]]
+#     })    
+# })
+
+```
+
+```{r}
+thr <- 0.8
 thr_score <- 0
+
+weight_dt <- get_weights(object = multi_omics_mofa)
 
 omic_res <- lapply(names(exp_dt), function(omic_name){
     omic_weights <- weight_dt[[omic_name]]
@@ -303,11 +340,11 @@ omic_res <- lapply(names(exp_dt), function(omic_name){
     omic_weight_props <- abs(omic_weights)
     
     omic_weight_props <- omic_weight_props/rowSums(omic_weight_props)
-    
     factor_selected <- apply(omic_weight_props, 2, function(x){
         names(x)[x >= thr]
-    })
+    }, simplify = FALSE)
     score_list <- lapply(seq_along(factor_selected), function(x){
+        
         f <- factor_selected[[x]]
         # predicted <- (as.matrix(weight_dt[[omic_name]][,x]) %*% t(score_dt[[1]][,x]))[f,, drop = FALSE]
         predicted <- MOFA2::predict(multi_omics_mofa, views = omic_name, 
@@ -333,14 +370,14 @@ omic_res <- lapply(names(exp_dt), function(omic_name){
 })
 names(omic_res) <- names(exp_dt)
 
+omic_res <- omic_res[sapply(omic_res, length) != 0]
+
 omic_res <- lapply(seq_along(omic_res[[1]]), function(factor_id){
     lapply(omic_res, function(omic_dt){
+        if(!length(omic_dt)){return(NULL)}
         omic_dt[[factor_id]]
     })    
 })
-
-
-
 # test_props <- abs(weight_dt[["Untargeted_Metabolomics"]][,1:3]) / rowSums(abs(weight_dt[["Untargeted_Metabolomics"]][,1:3]))
 # 
 # max_factor <- apply(test_props[,1:3], 2, function(x){

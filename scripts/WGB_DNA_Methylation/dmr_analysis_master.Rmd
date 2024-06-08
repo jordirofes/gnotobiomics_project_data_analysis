@@ -581,7 +581,8 @@ xfun::Rscript_call(rmarkdown::render,
 ```
 
 ```{r}
-results_path <- paste0(dss_output, "dna_met_exp_", results_name,".", 
+file.exists(results_path)
+                                                                results_path <- paste0(dss_output, "dna_met_exp_", results_name,".", 
                         group_var, ".", merge_method, ".rds")
 file.copy(from = results_path, 
           to = paste0(params$output_dir, "WGB_DNA_Methylation_exp_lima.rds"))

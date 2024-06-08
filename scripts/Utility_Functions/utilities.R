@@ -1,5 +1,5 @@
 
-plot_pc <- function(plot_dt, group_var, x_lab, y_lab, loading_dt = NA, 
+plot_pc <- function(plot_dt, group_var, x_lab, y_lab, loading_dt = NA, color_vect, 
                     allElipse = TRUE, ellipse_var = NA, interactive = TRUE, level = 0.95){
     pc_plot <- ggplot(plot_dt) + 
         geom_point(aes(x = .data[[colnames(plot_dt)[1]]], 
@@ -10,8 +10,17 @@ plot_pc <- function(plot_dt, group_var, x_lab, y_lab, loading_dt = NA,
               legend.title = element_blank(),
               plot.margin = unit(c(0.5,0.5,0.5,0.5),"cm"),
               plot.title = element_text(hjust = 0.5),
-              axis.text.x = element_text(vjust = 0.5, hjust = 1)) + geom_hline(yintercept = 0) + 
-        geom_vline(xintercept = 0)
+              axis.text.x = element_text(vjust = 0.5, hjust = 1)) + 
+        geom_hline(yintercept = 0) + geom_vline(xintercept = 0)
+        
+    if(!missing(color_vect)){
+        if(!is.numeric(group_var)){
+            pc_plot <- pc_plot + scale_color_manual(values = color_vect)
+        } else{
+            pc_plot <- pc_plot + scale_color_continuous("viridis")
+        }    
+    }
+    
     if(allElipse){
         pc_plot <- pc_plot + stat_ellipse(aes(x = .data[[colnames(plot_dt)[1]]], 
                                         y = .data[[colnames(plot_dt)[2]]]),
@@ -48,9 +57,15 @@ plot_pc <- function(plot_dt, group_var, x_lab, y_lab, loading_dt = NA,
 }
 
 pca_plot <- function(pca_data, pc_x = 1, pc_y = 2, group_var, ellipse_var = NA, 
-                     allElipse = TRUE, interactive = TRUE, level = 0.95){
+                     allElipse = TRUE, interactive = TRUE, level = 0.95, color_vect){
     pc_var <- pca_data$sdev^2
     pc_var_abs <- pc_var/sum(pc_var)*100
+    
+    if(missing(color_vect) & length(unique(group_var)) < 9){
+        color_vect <- RColorBrewer::brewer.pal(length(unique(group_var)), name = "Set1")    
+    } else{
+        color_vect <- RCy3::paletteColorRandom(value.count = length(unique(group_var)))
+    }
     
     x_lab <- paste0("PC", pc_x, " (", round(pc_var_abs[pc_x]), "%)")
     y_lab <- paste0("PC", pc_y, " (",round(pc_var_abs[pc_y]), "%)")
@@ -64,8 +79,8 @@ pca_plot <- function(pca_data, pc_x = 1, pc_y = 2, group_var, ellipse_var = NA,
                                                             decreasing = TRUE)]
     loading_dt <- loading_dt[loading_names[1:c(min(length(loading_names), 10))],]
     
-    return(plot_pc(plot_dt, group_var, x_lab, y_lab, loading_dt, allElipse, 
-                     ellipse_var, interactive, level))
+    return(plot_pc(plot_dt, group_var, x_lab, y_lab, loading_dt, color_vect, 
+                   allElipse, ellipse_var, interactive, level))
 }
 
 
@@ -93,7 +108,7 @@ quantile_breaks <- function(dt, length_out){
 
 heatMapFun <- function(dt_list, metadata, stratificationVar, cdQuantile = 0, 
                        plot_name = NULL, show_colnames, 
-                       clustering_distance_rows, ...){
+                       clustering_distance_rows, color_list = NA, ...){
     group_var <- metadata[stratificationVar]
     dt_merged <- t(dt_list)
     if(any(is.na(dt_merged))){
@@ -123,12 +138,12 @@ heatMapFun <- function(dt_list, metadata, stratificationVar, cdQuantile = 0,
                        show_colnames = show_colnames, fontsize = 5, 
                        fontsize_col = 6, fontsize_row = 6, show_rownames = FALSE, 
                        clustering_method = "average", cluster_rows = TRUE, 
-                       cluster_cols = TRUE, clustering_distance_rows = clustering_distance_rows, 
+                       cluster_cols = TRUE, 
+                       clustering_distance_rows = clustering_distance_rows, 
                        main = plot_name, 
-                       breaks = dt_quantiles)
+                       breaks = dt_quantiles, annotation_colors = color_list)
     cat("\n")
 }
-
 
 pcaFun <- function(dt_list, metadata, stratificationVar){
     patient_metadata_full_num <-  do.call(cbind, dt_list)
@@ -507,13 +522,29 @@ dmr_annotation_plot <- function(omic_dt,
 
 ### Utilities for multivariate normalization
 count_vst_deseq2 <- function(omic_dt, round_dt = TRUE, multiplier = 1, ...){
+    omic_dt_temp <- as.matrix(assay(omic_dt))
+    if(round_dt){
+        mode(omic_dt_temp) <- "integer"
+    }
+    if(any(is.na(omic_dt_temp))){
+        omic_dt_temp <- impute.knn(omic_dt_temp, k = 10)$data
+        mode(omic_dt_temp) <- "integer"
+    }
+    
+    omic_dt_temp <- omic_dt_temp * multiplier
+    deseq_dt <- DESeqDataSetFromMatrix(omic_dt_temp, colData = colData(omic_dt), design =  ~ group + 0)
+    assay(omic_dt) <- as.data.frame(assay(varianceStabilizingTransformation(deseq_dt, blind = FALSE)))
+    omic_dt
+}
+
+count_rlog_deseq2 <- function(omic_dt, round_dt = TRUE, multiplier = 1, ...){
     omic_dt_temp <- assay(omic_dt)
     if(round_dt){
         omic_dt_temp <- round(omic_dt_temp)
     }
     omic_dt_temp <- omic_dt_temp * multiplier
-    deseq_dt <- DESeqDataSetFromMatrix(omic_dt_temp, colData = colData(omic_dt), design =  ~ group)
-    assay(omic_dt) <- as.data.frame(assay(vst(deseq_dt, blind = FALSE)))
+    deseq_dt <- DESeqDataSetFromMatrix(omic_dt_temp, colData = colData(omic_dt), design =  ~ group + 0)
+    assay(omic_dt) <- as.data.frame(assay(rlog(deseq_dt, blind = FALSE)))
     omic_dt
 }
 

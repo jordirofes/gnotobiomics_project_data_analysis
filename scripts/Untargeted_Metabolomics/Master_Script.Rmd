@@ -149,19 +149,12 @@ write.table(mummichog_input, row.names = FALSE,
             file = "./mummichog_dt.txt", sep = ",")
 
 mSet <- InitDataObjects("mass_all", "mummichog", FALSE)
-
 mSet <- UpdateInstrumentParameters(mSet, 10.0, "mixed", "yes", 0.05)
-
 mSet <- Read.PeakListData(mSet, "mummichog_dt.txt")
-
 mSet <- SetRTincluded(mSet, "seconds")
-
 mSet <- SanityCheckMummichogData(mSet)
-
 mSet <- SetPeakEnrichMethod(mSet, "mum", "v2")
-
 mSet <- SetMummichogPval(mSet, cutoff = 0.05)
-
 mSet <- PerformPSEA(mSet, "mmu_kegg", "current", 3 , 100)
 
 mSet<-PlotPeaks2Paths(mSet, "peaks_to_paths_0_", "png", 72, width=NA)
@@ -210,7 +203,32 @@ rowData(lima_exp)$metabo_analyst_cp <- sapply(cp_list, function(x){
 })
 rowData(lima_exp)$metaboanalyst_compound_names <- name_list
 
+# lima_rd <- as.data.frame(rowData(lima_exp))
+
+# compound_ids <- unique(lima_rd$compounds[!is.na(lima_rd$compounds)])
+# keep_ids <- sapply(compound_ids, function(x){
+#     compound_list <- lima_rd[lima_rd$compounds == x,]
+#     if(nrow(compound_list) == 1){
+#         return(rownames(compound_list))
+#     } else{
+#         rownames(compound_list)[which.max(compound_list$Group_Test.statistic)]
+#     }
+# })
+# 
+# compound_ids2 <- unique(lima_rd$PutativeMetabolites[!is.na(lima_rd$PutativeMetabolites)])
+# keep_ids2 <- sapply(compound_ids2, function(x){
+#     compound_list <- lima_rd[lima_rd$PutativeMetabolites == x,]
+#     if(nrow(compound_list) == 1){
+#         return(rownames(compound_list))
+#     } else{
+#         rownames(compound_list)[which.max(compound_list$Group_Test.statistic)]
+#     }
+# })
+# 
+# lima_exp <- lima_exp[union(keep_ids, keep_ids2)]
+
 saveRDS(lima_exp, paste0(params$output_dir, "Untargeted_Metabolomics_exp_lima.rds"))
+
 # rmarkdown::render(input = "./Hermes_Analysis.Rmd",
 #                   output_file = paste0(hp_output_path, "Hermes_Report.html"), 
 #                   clean = TRUE, params = list(

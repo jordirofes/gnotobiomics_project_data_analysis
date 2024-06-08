@@ -58,7 +58,7 @@ data_boxplots <- function(omic_dt, omic_name, output_dir,
 }
 
 data_pca <- function(dt_list, metadata, stratificationVar, pc_x = 1, pc_y = 2, 
-                     scale. = FALSE, center = FALSE, plot_name, ...){
+                     scale. = FALSE, center = FALSE, plot_name, color_vect, ...){
     group_var <- metadata[[stratificationVar]]
     if(any(is.na(dt_list))){
         dt_list <- t(impute::impute.knn(as.matrix(dt_list))$data)    
@@ -69,7 +69,8 @@ data_pca <- function(dt_list, metadata, stratificationVar, pc_x = 1, pc_y = 2,
     pca_dt <- prcomp(dt_list, center = center, scale. = scale.)
     
     pca_plot(pca_dt, pc_x = pc_x, pc_y = pc_y, group_var = group_var, 
-            ellipse_var = group_var, interactive = FALSE) + ggtitle(plot_name)
+            ellipse_var = group_var, interactive = FALSE, color_vect = color_vect) + 
+        ggtitle(plot_name)
 }
 ```
 
@@ -113,10 +114,9 @@ data_list <- list("Raw_Results" = multi_omics_raw[,colData(multi_omics_raw)$samp
 multi_omic_any_sig <- lapply(data_list, function(multi_omics_dt){
     keep_rows_list <- lapply(experiments(multi_omics_dt), function(omic_dt){
         omic_rowdata <- rowData(omic_dt)
-        keep_vars <- rowSums(as.matrix(omic_rowdata[,grep("adj.p.value", 
-                                            colnames(omic_rowdata))]) <= 0.05, 
-                na.rm = TRUE) != 0
-        
+        p_val_dt <- as.matrix(omic_rowdata[,grep("adj.p.value", colnames(omic_rowdata))])
+        p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+        keep_vars <- rowSums(p_val_dt <= 0.05, na.rm = TRUE) != 0
         
         rownames(omic_rowdata)[keep_vars]
     })
@@ -127,11 +127,17 @@ data_list <- multi_omic_any_sig
 names(data_list) <- paste0(names(data_list), "Any Sig")
 ```
 
-    
+```{r}
+group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(multi_omic_any_sig$Multivariate_Normalized$group))), 
+                                                 name = "Set2")
+names(group_color_dict) <- levels(droplevels(multi_omic_any_sig$Multivariate_Normalized$group))
+group_color_dict
+```
+
+
 ## PCA and Heatmap Outputs
 
 ```{r}
-
 all_omics_functions <- list("PCA_Results" = data_pca, 
                             "Heatmap_Results" = heatMapFun)
 
@@ -148,12 +154,22 @@ for(data_mae_name in names(data_list)){
         for(experiment_name in names(experiment_list)){
             param_list$plot_name <- experiment_name
             param_list$dt_list <- assay(experiment_list[[experiment_name]])
+            
+            if(nrow(param_list$dt_list) < 2){next}
+            
             param_list$metadata <- colData(experiment_list[[experiment_name]])
             param_list$stratificationVar <- "group"
+            param_list$colo
             
             if(fun_name == "Heatmap_Results"){
                 param_list$cdQuantile <- ifelse(nrow(param_list$dt_list) >= 4000, 0, 0)        
                 param_list$show_colnames <- ifelse(nrow(param_list$dt_list) > 100, FALSE, TRUE)
+                
+                param_list$color_list <- list("group" = group_color_dict)
+                
+            }
+            if(fun_name == "PCA_Results"){
+                param_list$color_vect <- group_color_dict
             }
             if(experiment_name %in% c("DNA_Methylation_unsupervised.liver", "DNA_Methylation.liver")){
                 param_list$cdQuantile <- 0
@@ -174,6 +190,187 @@ for(data_mae_name in names(data_list)){
 }
 
 rm(param_list)
+```
+
+
+```{r}
+rna_seq_test <- multi_omic_any_sig$Raw_Results@ExperimentList$RNA_Sequencing
+
+plot_dt <- scale(t(as.matrix(assay(rna_seq_test))))
+
+rna_seq_test_n <- scale_assay(count_vst_deseq2(rna_seq_test))
+
+pheatmap::pheatmap(t(as.matrix(assay(rna_seq_test_n))), show_colnames = FALSE, 
+                   clustering_method = "ward.D2")
+
+pheatmap::pheatmap(t(as.matrix(assay(rna_seq_test_n))), show_colnames = FALSE, 
+                   clustering_method = "median")
+
+pheatmap::pheatmap(t(as.matrix(assay(rna_seq_test_n))), show_colnames = FALSE, 
+                   clustering_method = "average")
+
+pheatmap::pheatmap(t(as.matrix(assay(rna_seq_test_n))), show_colnames = FALSE, 
+                   clustering_method = "centroid")
+
+```
+
+
+## Other plots
+
+### DNA Methylation density
+
+```{r}
+wgb_dt <- multi_omic_any_sig$Multivariate_Normalized[["WGB_DNA_Methylation"]]
+
+plot_dt <- assay(wgb_dt)
+
+plot_dt <- t(apply(plot_dt, 1, function(x){tapply(x, INDEX = droplevels(wgb_dt$group), FUN = median)}))
+plot_dt <- reshape2::melt(plot_dt)
+# plot_dt$group <- colData(wgb_dt)[plot_dt$variable, "group"]
+
+library(ggplot2)
+```
+
+```{r, fig.height=6, fig.width=4}
+pdf(paste0(output_dir, "median_zscore_dmr_group_methylation.pdf"))
+ggplot(plot_dt) + geom_histogram(aes(x = value, fill = Var2)) + 
+    theme_minimal() + xlab("Median DMR group methylation (Z score)") + ylab(NULL) + 
+    theme(legend.position = "none") + facet_grid(vars(Var2)) + 
+    scale_fill_manual(values = group_color_dict)
+dev.off()
+```
+
+```{r}
+wgb_dt <- multi_omic_any_sig$Multivariate_Normalized[["WGB_DNA_Methylation"]]
+
+plot_dt <- assay(wgb_dt)
+
+plot_dt <- t(apply(plot_dt, 1, function(x){tapply(x, INDEX = droplevels(wgb_dt$group), FUN = mean)}))
+plot_dt <- reshape2::melt(plot_dt)
+# plot_dt$group <- colData(wgb_dt)[plot_dt$variable, "group"]
+```
+
+```{r, fig.height=6, fig.width=4}
+pdf(paste0(output_dir, "mean_zscore_dmr_group_methylation.pdf"))
+ggplot(plot_dt) + geom_histogram(aes(x = value, fill = Var2)) + 
+    theme_minimal() + xlab("Mean DMR group methylation (Z score)") + ylab(NULL) + 
+    theme(legend.position = "none") + facet_grid(vars(Var2)) + 
+    scale_fill_manual(values = group_color_dict)
+dev.off()
+```
+
+### RNA Sequencing density
+
+```{r}
+rna_dt <- multi_omic_any_sig$Multivariate_Normalized[["RNA_Sequencing"]]
+
+plot_dt <- assay(rna_dt)
+
+plot_dt <- t(apply(plot_dt, 1, function(x){tapply(x, INDEX = droplevels(rna_dt$group), FUN = median)}))
+plot_dt <- reshape2::melt(plot_dt)
+# plot_dt$group <- colData(wgb_dt)[plot_dt$variable, "group"]
+
+library(ggplot2)
+```
+
+```{r, fig.height=6, fig.width=4}
+pdf(paste0(output_dir, "median_zscore_group_rna_seq.pdf"))
+ggplot(plot_dt) + geom_histogram(aes(x = value, fill = Var2)) + 
+    theme_minimal() + xlab("Median RNA seq group expression (Z score)") + ylab(NULL) + 
+    theme(legend.position = "none") + facet_grid(vars(Var2)) + 
+    scale_fill_manual(values = group_color_dict)
+dev.off()
+```
+
+```{r}
+rna_dt <- multi_omic_any_sig$Multivariate_Normalized[["RNA_Sequencing"]]
+
+plot_dt <- assay(rna_dt)
+
+plot_dt <- t(apply(plot_dt, 1, function(x){tapply(x, INDEX = droplevels(rna_dt$group), FUN = mean)}))
+plot_dt <- reshape2::melt(plot_dt)
+# plot_dt$group <- colData(wgb_dt)[plot_dt$variable, "group"]
+```
+
+```{r, fig.height=6, fig.width=4}
+pdf(paste0(output_dir, "mean_zscore_group_rna_seq.pdf"))
+ggplot(plot_dt) + geom_histogram(aes(x = value, fill = Var2)) + 
+    theme_minimal() + xlab("Mean RNA seq group expression (Z score)") + ylab(NULL) + 
+    theme(legend.position = "none") + facet_grid(vars(Var2)) + 
+    scale_fill_manual(values = group_color_dict)
+dev.off()
+```
+
+### Untargeted Metabolomics density
+
+```{r}
+met_dt <- multi_omic_any_sig$Multivariate_Normalized[["Untargeted_Metabolomics"]]
+
+plot_dt <- assay(met_dt)
+
+plot_dt <- t(apply(plot_dt, 1, function(x){tapply(x, INDEX = droplevels(met_dt$group), FUN = median)}))
+plot_dt <- reshape2::melt(plot_dt)
+# plot_dt$group <- colData(wgb_dt)[plot_dt$variable, "group"]
+
+library(ggplot2)
+```
+
+```{r, fig.height=6, fig.width=4}
+pdf(paste0(output_dir, "median_zscore_dmr_group_metabolites.pdf"))
+ggplot(plot_dt) + geom_histogram(aes(x = value, fill = Var2)) + 
+    theme_minimal() + xlab("Median DMR group metabolites (Z score)") + ylab(NULL) + 
+    theme(legend.position = "none") + facet_grid(vars(Var2)) + 
+    scale_fill_manual(values = group_color_dict)
+dev.off()
+```
+
+```{r}
+met_dt <- multi_omic_any_sig$Multivariate_Normalized[["Untargeted_Metabolomics"]]
+
+plot_dt <- assay(met_dt)
+
+plot_dt <- t(apply(plot_dt, 1, function(x){tapply(x, INDEX = droplevels(met_dt$group), FUN = mean)}))
+plot_dt <- reshape2::melt(plot_dt)
+# plot_dt$group <- colData(wgb_dt)[plot_dt$variable, "group"]
+```
+
+```{r, fig.height=6, fig.width=4}
+pdf(paste0(output_dir, "mean_zscore_dmr_group_metabolites.pdf"))
+ggplot(plot_dt) + geom_histogram(aes(x = value, fill = Var2)) + 
+    theme_minimal() + xlab("Mean DMR group metabolites (Z score)") + ylab(NULL) + 
+    theme(legend.position = "none") + facet_grid(vars(Var2)) + 
+    scale_fill_manual(values = group_color_dict)
+dev.off()
+```
+
+
+
+## Pre-Analysis
+
+```{r}
+mice_dt <- openxlsx::read.xlsx("../../inputs/AnimalData_OscarYanes.xlsx")
+# mice_num <- mice_dt[,c("BW(g)", "WATep(g)", "Liver(g)")]
+mice_num <- mice_dt
+mice_s <- as.data.frame(mice_num)
+dict_vect <- c("Ctrl" = "CNT", "Ctrl ext" = "CNT", "HFD" = "HFD", 
+                "INT2" = "INT", "HFD excl." = "HFE")
+mice_s$group <- factor(dict_vect[mice_dt$Group], levels = c("CNT", "HFD", "INT", "HFE"))
+dict_vect_g <- c("CNT" = "C", "HFD" = "H", "INT" = "I", "HFE" = "E")
+mice_s$samplename <- paste0(make.names(mice_dt$ID), dict_vect_g[mice_s$group])
+
+mice_s$samplename[!mice_s$samplename %in% multi_omic_any_sig$Multivariate_Normalized$samplename]
+
+multi_omic_any_sig$samplename[!multi_omic_any_sig$Multivariate_Normalized$samplename %in% mice_s$samplename]
+
+mice_s$samplename[mice_s$samplename == "X686I"] <- "X687I"
+
+mice_s <- dplyr::left_join(as.data.frame(colData(multi_omic_any_sig$Multivariate_Normalized)), mice_s, by = "samplename")
+mice_s
+
+# write.table(mice_s, "../../outputs/Multi_Omics_Analysis/mouse_info.csv")
+
+rna_seq_dt <- assay(multi_omic_any_sig$Multivariate_Normalized@ExperimentList$RNA_Sequencing)
+test_cor <- cor(t(rna_seq_dt), mice_s[,c("WATep(g)", "Liver(g)", "BW(g)")])
 ```
 
 ## Component List

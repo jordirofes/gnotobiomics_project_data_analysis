@@ -28,6 +28,7 @@ library(DOSE)
 library(igraph)
 library(dplyr)
 library(RCy3)
+library(grDevices)
 library(ggplot2)
 library(reshape2)
 library(stringr)
@@ -152,7 +153,6 @@ for(score_id in names(nw_graphs_dt)){
 ```{r}
 library(MultiAssayExperiment)
 library(RCy3)
-
 ```
 
 ```{r}
@@ -221,7 +221,6 @@ if(!file.exists(cyt_session_path) | !file.exists(term_network_path)){
             
             set.seed(1234)
             clu_colors <- RCy3::paletteColorRandom(value.count = length(unique(clu_dt)))
-            
             
             # RCy3::setNodeColorMapping(table.column = "cluster_ids",
             #                           table.column.values = unique(clu_dt),
@@ -420,5 +419,65 @@ lapply(names(term_network_list), function(score_id){
         dev.off()
     })
 })
+```
+
+```{r}
+omic_names <- c("DMRs", "Genes", "Metabolites")
+
+merged_feature_ids_dict <- Reduce(c, params$feature_ids_dict)
+
+term_ids_count <- openxlsx::createWorkbook()
+
+lapply(names(term_network_list), function(score_id){
+    score_nw <- term_network_list[[score_id]]
+    
+    lapply(names(score_nw), function(factor_id){
+        factor_nw <- score_nw[[factor_id]]
+        
+        lapply(names(factor_nw), function(clu_id){
+            
+            clu_nw <- factor_nw[[clu_id]]
+            sheet_name <- paste(score_id, factor_id, clu_id, sep = ".")
+            openxlsx::addWorksheet(wb = term_ids_count,
+                                    sheetName = sheet_name)
+            
+            matched_ids <- lapply(names(clu_nw), function(term_id){
+                term_nw <- clu_nw[[term_id]]
+                
+                feature_ids <- names(V(term_nw))
+                term_ids <- lapply(omic_names, function(x){
+                    found <- vertex_attr(term_nw, name = x, index = feature_ids)
+                    strsplit(found[!is.na(found) & found != ""], ";")
+                })
+                term_ids <- unlist(term_ids, use.names = FALSE)
+                
+                return(c(feature_ids, term_ids))
+            })
+            names(matched_ids) <- names(clu_nw)
+            
+            id_vect <- unlist(matched_ids)
+            id_vect <- id_vect[!grepl("enrich_term", id_vect)]
+            count_table <- table(id_vect)
+            
+            associated_terms <- sapply(names(count_table), function(x){
+                paste(names(matched_ids[sapply(matched_ids, 
+                                               function(y){x %in% y})]), collapse = ";")
+            })
+            
+            term_id_counts_res <- data.frame(
+                "Feature_ID" = names(count_table), 
+                "Readable_Name" = merged_feature_ids_dict[names(count_table)],
+                "Count" = as.numeric(count_table), 
+                "Associated Terms" = associated_terms)
+            term_id_counts_res <- term_id_counts_res[order(term_id_counts_res$Count, decreasing = TRUE),]
+            
+            openxlsx::writeData(wb = term_ids_count, sheet = sheet_name,
+                                x = term_id_counts_res)
+        })
+    })
+})
+openxlsx::saveWorkbook(term_ids_count, 
+                        file = paste0(params$output_dir, "feature_count_terms.xlsx"), 
+                        overwrite = TRUE)
 ```
 

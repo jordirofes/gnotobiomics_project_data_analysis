@@ -190,13 +190,14 @@ dim(myLIMAcountsTPM_80)
 # Filtering TPM>0.1 after the 80% filter
 
 dim(myLIMAcountsTPM_80)
-myLIMAcountsTPM_80 <- myLIMAcountsTPM_80 %>% dplyr::mutate(aver = rowSums(.)/ncol(myLIMAcountsTPM_80))
+myLIMAcountsTPM_80 <- myLIMAcountsTPM_80 %>% 
+    dplyr::mutate(aver = rowSums(.)/ncol(myLIMAcountsTPM_80))
 
 myLIMAcountsTPM_80ord <- dplyr::arrange(myLIMAcountsTPM_80, aver)
 
 dim(myLIMAcountsTPM_80ord)
   
-myLIMAcountsTPM_80ord_f <- dplyr::filter(myLIMAcountsTPM_80ord, aver > 0.1)
+myLIMAcountsTPM_80ord_f <- dplyr::filter(myLIMAcountsTPM_80ord, aver > 1)
 
 dim(myLIMAcountsTPM_80ord_f) # same results, the order does not matter
 
@@ -244,6 +245,12 @@ myLIMAcounts80 <- dplyr::select(myLIMAcounts80, -ensembl_gene_id)
 
 rna_seq_exp <- SummarizedExperiment(assays = myLIMAcounts80, 
                                     colData = myLIMAfactors)
+
+rna_bp <- boxplot(colSums(assay(rna_seq_exp)))
+
+rna_seq_exp <- rna_seq_exp[,!(colnames(rna_seq_exp) %in% names(rna_bp$out))]
+# rna_seq_exp <- SummarizedExperiment(assays = t(myLIMAcounts), 
+#                                     colData = myLIMAfactors)
 
 # saveRDS(rna_seq_exp, paste0(params$output_dir, "rna_seq_lima_proc.rds"))
 # dim(myLIMAcounts80)
@@ -301,7 +308,7 @@ pca_plot(pca_data = vst_pca, pc_x = 1, pc_y = 2,
 pcvar <- round(vst_pca$sdev^2/sum(vst_pca$sdev^2)*100, 2)
 
 d3plot <- plot_ly(x = vst_pca$x[,1], y = vst_pca$x[,2], z = vst_pca$x[,3],
-                    color = myLIMAfactors$groups_m)
+                    color = f80_lima_DESeq$groups_m)
 d3plot <- d3plot %>% add_markers()
 d3plot <- d3plot %>% layout(scene = list(
     xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
@@ -331,7 +338,7 @@ ctrs_vec <- lapply(seq_len(nrow(ctrs_vec)), function(ctrs){
 })
 
 lima_DESeq_results <- lapply(ctrs_vec, function(ctrs){
-    results(lima_DESeq, contrast = ctrs, pAdjustMethod = "fdr")
+    results(lima_DESeq, contrast = ctrs, pAdjustMethod = "fdr", )
 })
 
 sapply(lima_DESeq_results, summary)

@@ -6,24 +6,25 @@ output:
     toc_float: true
 date: "2023-10-17"
 params:
-  methrix_path: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/merged_methrix.rds"
+  methrix_path: !r paste0(output_dir, "merged_methrix.rds")
   chromosome_filter: !r NULL
-  outlier_samples: !r  c("X670E", "X594C")
+  outlier_samples: !r outlier_samples
   
   
-  granges_path: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/dmrseq.group.non_smoothed_global/dmrseq_results_non_smoothed_global.group.rds"
+  granges_path: !r paste0(dss_output, "dss_dmr_results_", 
+                            results_name, ".", group_var, ".rds")
   
-  output_dir: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/"
+  output_dir: !r dss_output
   threads: 1
   
   random_seed: 1234
   group_var: "group"
   
   adj.p.value_thr: 0.1
-  merge_granges: FALSE
+  merge_granges: TRUE
   filter_significant_before_merging: TRUE
 
-  merge_method: "disjoint"
+  merge_method: "reduced"
   
   unique_gene_region_annotation_filter: FALSE 
   results_name: "non_smoothed_global"
@@ -75,13 +76,12 @@ if(!is.null(params$chromosome_filter)){
 ```{r}
 granges_results <- readRDS(params$granges_path)
 
-
 if(params$merge_granges){
   unmerged_granges <- granges_results
   
   if(params$filter_significant_before_merging){
     granges_results <- lapply(granges_results, function(ctrs_res){
-      p_val_cols <- mcols(ctrs_res)[grepl("\\.adj\\.p\\.value|qval", 
+      p_val_cols <- mcols(ctrs_res)[grepl("adj\\.p\\.value$|qval", 
                                     colnames(mcols(ctrs_res)))]
       ctrs_res[rowSums(as.matrix(p_val_cols) <= params$adj.p.value_thr, na.rm = TRUE) >= 1]
     })

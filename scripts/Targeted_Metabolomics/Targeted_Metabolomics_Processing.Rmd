@@ -21,6 +21,7 @@ library(DESeq2)
 library(ggplot2)
 library(plotly)
 library(dplyr)
+library(stringr)
 library(sva)
 source("../Utility_Functions/utilities.R")
 ```
@@ -44,15 +45,17 @@ raw_file_list <- lapply(raw_file_list, function(file_path){
     sheet_names <- getSheetNames(file_path)
     
     met_data <- grep(pattern = "met$", x = sheet_names)
+    
     mg_data <- grep(pattern = "mg", x = sheet_names)
     inj_order <- grep(pattern = "^inj_ord", x = sheet_names)
     
     sheet_name_list <- list("Metabolite_Data" = met_data, "Metabolite_Metadata" = inj_order, "Tissue_mg" = mg_data)
-    
     sheet_data_list <- lapply(sheet_name_list, function(sheet_name){
         if(!length(sheet_name)){return(NULL)}
         read.xlsx(xlsxFile = file_path, sheet = sheet_name)
     })
+    sheet_data_list$Metabolite_Data[sheet_data_list$Metabolite_Data == 1] <- NA
+    
     if(!is.null(sheet_data_list$Tissue_mg)){
         metadata_col <- sapply(sheet_data_list$Tissue_mg, function(coln){any(coln %in% sheet_data_list$Metabolite_Metadata$samplename)})
         colnames(sheet_data_list$Tissue_mg)[metadata_col][1] <- "samplename"
@@ -149,7 +152,7 @@ raw_file_list$colon$Metabolite_Metadata[change_rows,] <- raw_file_list$colon$Met
 ```{r}
 pca_dt_list <- lapply(raw_file_list, function(organ_data){
     met_data <- organ_data$Metabolite_Data
-    met_data <- limma::normalizeMedianValues(met_data)
+    # met_data <- limma::normalizeMedianValues(met_data)
     met_data <- impute::impute.knn(t(met_data))$data
     
     dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = organ_data$Metabolite_Metadata, design = ~ group)
@@ -163,6 +166,20 @@ pca_dt_list <- lapply(raw_file_list, function(organ_data){
 mapply(function(pca_dt, group_dt){
     print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = group_dt$Metabolite_Metadata$samplename))
 }, pca_dt = pca_dt_list, group_dt = raw_file_list)
+
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = group_dt$Metabolite_Metadata$group))
+}, pca_dt = pca_dt_list, group_dt = raw_file_list)
+```
+
+```{r}
+lapply(raw_file_list, function(organ_dt){
+    sum_dt <- sapply(organ_dt$Metabolite_Data, function(x){
+        sum(log2(as.numeric(x)), na.rm = T)
+    })
+    boxplot(sum_dt)
+})
 ```
 
 
@@ -175,16 +192,16 @@ batch_corrected_file_list <- lapply(raw_file_list, function(organ_data){
     
     correct_vars <- apply(organ_data$Metabolite_Data[,qc_samples], 1, function(x){sd(x, na.rm = TRUE)/mean(x, na.rm = TRUE)}) > 0.1
     
-    organ_data$Metabolite_Data[correct_vars,] <- QCRSC(organ_data$Metabolite_Data[correct_vars,], 
-            order = organ_data$Metabolite_Metadata$inj_ord, 
-            batch = rep(1, length(organ_data$Metabolite_Metadata$inj_ord)), 
-            classes = organ_data$Metabolite_Metadata$group, qc_label = "QC")
+    # organ_data$Metabolite_Data[correct_vars,] <- QCRSC(organ_data$Metabolite_Data[correct_vars,],
+    #         order = organ_data$Metabolite_Metadata$inj_ord,
+    #         batch = rep(1, length(organ_data$Metabolite_Metadata$inj_ord)),
+    #         classes = organ_data$Metabolite_Metadata$group, qc_label = "QC")
     # organ_data$Metabolite_Data <- limma::normalizeMedianValues(organ_data$Metabolite_Data)
 
-    # organ_data$Metabolite_Data <- QCRSC(organ_data$Metabolite_Data, 
-    #         order = organ_data$Metabolite_Metadata$inj_ord, 
-    #         batch = rep(1, length(organ_data$Metabolite_Metadata$inj_ord)), 
-    #         classes = organ_data$Metabolite_Metadata$group, qc_label = "QC")
+    organ_data$Metabolite_Data <- QCRSC(organ_data$Metabolite_Data,
+            order = organ_data$Metabolite_Metadata$inj_ord,
+            batch = rep(1, length(organ_data$Metabolite_Metadata$inj_ord)),
+            classes = organ_data$Metabolite_Metadata$group, qc_label = "QC")
     organ_data
 })
 ```
@@ -207,6 +224,19 @@ pca_dt_list <- lapply(batch_corrected_file_list, function(organ_data){
 mapply(function(pca_dt, group_dt){
     print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = group_dt$Metabolite_Metadata$group))
 }, pca_dt = pca_dt_list, group_dt = raw_file_list)
+
+
+mapply(function(pca_dt, group_dt){
+    if(!is.null(group_dt$Tissue_mg)){
+        group_var <- dplyr::left_join(group_dt$Metabolite_Metadata,
+                                        group_dt$Tissue_mg)$mg_index
+    } else{
+        group_var <- group_dt$Metabolite_Metadata$group
+    }
+    
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = group_var))
+}, pca_dt = pca_dt_list, group_dt = raw_file_list)
+
 
 mapply(function(pca_dt, group_dt){
     print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = paste(group_dt$Metabolite_Metadata$group, group_dt$Metabolite_Metadata$sex)))
@@ -240,6 +270,10 @@ pca_dt_list <- lapply(noqc_file_list, function(organ_data){
 mapply(function(pca_dt, group_dt){
     print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = group_dt$Metabolite_Metadata$mg))
 }, pca_dt = pca_dt_list, group_dt = noqc_file_list)
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = group_dt$Metabolite_Metadata$group))
+}, pca_dt = pca_dt_list, group_dt = noqc_file_list)
 ```
 
 ### mg tissue index correction
@@ -247,6 +281,7 @@ mapply(function(pca_dt, group_dt){
 ```{r}
 tissue_noqc_file_list <- lapply(noqc_file_list, function(organ_dt){
     if(is.null(organ_dt$Tissue_mg)){return(organ_dt)}
+    
     sample_index <- organ_dt$Metabolite_Metadata$mg/mean(organ_dt$Metabolite_Metadata$mg)
     organ_dt$Metabolite_Data <- as.data.frame(t(t(organ_dt$Metabolite_Data)/sample_index))
     organ_dt
@@ -471,9 +506,8 @@ lima_data_list <- lapply(summarized_data, function(organ_dt){
 pca_dt_list <- lapply(lima_data_list, function(organ_data){
     met_data <- assay(organ_data)
     if(ncol(met_data) == 0){return(NULL)}
-    met_data <- impute::impute.knn(t(met_data))$data
-    
-    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = colData(organ_data), design = ~ group)
+    met_data <- impute::impute.knn(as.matrix(met_data))$data
+    dt_pca <- DESeqDataSetFromMatrix(round(met_data), colData = colData(organ_data), design = ~ group)
     
     dt_pca <- estimateSizeFactors(dt_pca)
     dt_pca <- estimateDispersions(dt_pca)
@@ -485,6 +519,44 @@ mapply(function(pca_dt, group_dt){
     if(is.null(pca_dt)){return(NULL)}
     print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = colData(group_dt)$group, ellipse_var = colData(group_dt)$group))
 }, pca_dt = pca_dt_list, group_dt = lima_data_list)
+```
+
+
+#### Outliers & sample filtering
+
+```{r}
+res <- lapply(lima_data_list, function(organ_dt){
+    if(ncol(organ_dt) == 0){return(NULL)}
+    res_mat <- apply(assay(organ_dt), 1, function(x){
+        # na_vals <- tapply(x, colData(organ_dt)$group, FUN = function(y){
+        #     sum(is.na(y))/length(y)
+        # })
+        (sum(is.na(x))/length(x)) <= 0.8
+        # any(na_vals < 0.8)
+        # na_vals
+    })
+
+    any(!res_mat)
+})
+
+sum_dt <- lapply(lima_data_list, function(organ_dt){
+    if(ncol(organ_dt) == 0){return(NULL)}
+    dt <- colSums(log2(assay(organ_dt)), na.rm = T)
+    dt
+})
+```
+
+```{r}
+animal_dt <- openxlsx::read.xlsx("../../inputs/AnimalData_OscarYanes.xlsx")
+
+sum_dt <- lapply(lima_data_list, function(organ_dt){
+    if(ncol(organ_dt) == 0){return(NULL)}
+    
+    dplyr::left_join(colData(organ_dt), animal_dt, )
+    
+    dt <- colSums(log2(assay(organ_dt)), na.rm = T)
+    dt
+})
 ```
 
 #### Anova Results

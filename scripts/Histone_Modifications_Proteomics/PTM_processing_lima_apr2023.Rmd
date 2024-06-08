@@ -34,15 +34,15 @@ ptm_metadata$group <- factor(ptm_metadata$group, levels = c("C", "H", "I", "E"),
 ```
 
 ```{r}
-lapply(ptm_data, function(x){boxplot(x ~ ptm_metadata$group)})
-
-lapply(ptm_data, LeveneTest, group = ptm_metadata$group)
-lapply(ptm_data, function(x){
-    tapply(x, INDEX = ptm_metadata$group, FUN = function(y){
-        qqnorm(y)
-        qqline(y)
-    })
-})
+# lapply(ptm_data, function(x){boxplot(x ~ ptm_metadata$group)})
+# 
+# lapply(ptm_data, LeveneTest, group = ptm_metadata$group)
+# lapply(ptm_data, function(x){
+#     tapply(x, INDEX = ptm_metadata$group, FUN = function(y){
+#         qqnorm(y)
+#         qqline(y)
+#     })
+# })
 
 ```
 

@@ -200,6 +200,7 @@ organ_exp <- lapply(names(organ_dt_list), function(organ_name){
 })
 names(organ_exp) <- names(organ_dt_list)
 ```
+
 #### Before filter {.tabset}
 
 ##### PCA 
@@ -236,7 +237,7 @@ lapply(names(organ_exp), function(organ_name){
 ```
 
 
-## Scores plot
+##### Scores plot
 
 ```{r, fig.width=8, fig.height=6}
 
@@ -279,8 +280,6 @@ print(lapply(names(organ_exp), function(organ_name){
 }))
 dev.off()
 ```
-
-
 
 #### After filter of non abundant species {.tabset}
 
@@ -343,7 +342,7 @@ lapply(names(organ_dt_list_fil), function(organ_name){
 ```
 
 
-## Scores plot
+##### Scores plot
 
 ```{r, fig.width=8, fig.height=6}
 
@@ -387,7 +386,7 @@ dev.off()
 ```
 
 
-### Statistical analysis
+## Statistical analysis
 
 ```{r}
 x16s_exp <- lapply(names(organ_dt_list_fil), function(organ_name){

@@ -16,6 +16,9 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(openxlsx)
 library(stringr)
+library(DescTools)
+library(SummarizedExperiment)
+
 input_path <- paste0(params$input_dir, "metallomics_raw.xlsx")
 
 sheet_names <- openxlsx::getSheetNames(input_path)[1:2]
@@ -117,7 +120,9 @@ lima_data_list <- lapply(metallomics_dt, function(organ){
     rownames(lima_dt) <- lima_dt$samplename
     
     metallomics_metadata <- lima_dt[,1:5]
-    metallomics_metadata$group <- factor(metallomics_metadata$group, levels = c("CTN", "HFD", "INT", "HFE"))
+    metallomics_metadata$group <- factor(metallomics_metadata$group, 
+                                         levels = c("CTN", "HFD", "INT", "HFE"), 
+                                          labels = c("CNT", "HFD", "INT", "HFE"))
     
     list("Metallomics_Data" = lima_dt[,6:ncol(lima_dt)], "Metallomics_Metadata" = metallomics_metadata)
 })
@@ -258,9 +263,6 @@ metal_exp_list <- lapply(names(lima_data_list), function(organ_name){
     # rownames(organ_data) <- paste0(organ_name, ".", rownames(organ_data))
     colnames(organ_data) <- make.names(colnames(organ_data))
     organ_metadata <- organ_list[["Metallomics_Metadata"]]
-    organ_metadata$group <- factor(organ_metadata$group, 
-                                   levels = c("CTN", "HFD", "INT", "HFE"), 
-                                   labels = c("CNT", "HFD", "INT", "HFE"))
     organ_metadata$samplename <- make.names(organ_metadata$samplename)
     rownames(organ_metadata) <- organ_metadata$samplename
     merged_rowdata$readable_name <- str_replace(paste(organ_name, rownames(merged_rowdata)), 

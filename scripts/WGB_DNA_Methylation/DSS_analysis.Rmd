@@ -3,8 +3,8 @@ title: "DSS_analysis"
 output: html_document
 date: "2023-12-06"
 params: 
-  methrix_path: "../../outputs/WGB_DNA_Methylation/GFCV/merged_methrix.rds"
-  output_dir: "../../outputs/WGB_DNA_Methylation/GFCV/DSS.group.non_smoothed/"
+  methrix_path: "../../outputs/WGB_DNA_Methylation/LIMA/merged_methrix.rds"
+  output_dir: "../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed/"
   
   dmrseq_results_path: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/dmrseq_results.group.non_smoothed/dmrseq_results_non_smoothed.group.rds"
   
@@ -269,7 +269,7 @@ if(!file.exists(dss_dmr_path)){
   })
   called_dmrs_granges <- lapply(names(called_dmrs_granges), function(res_id){
     res <- called_dmrs_granges[[res_id]]
-    mcols(res)[[paste0(res_id, ".adj.p.value")]] <- 0.05 
+    mcols(res)[["adj.p.value"]] <- 0.05 
     res
   })
   names(called_dmrs_granges) <- names(called_dmrs)
