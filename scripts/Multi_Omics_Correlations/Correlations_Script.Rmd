@@ -13,7 +13,7 @@ params:
     sample_levels_2_correlate: !r c("CNT", "HFD", "INT")
     
     filter_variable_2_correlate: !r list("All" = NA)
-    omic_list_2_correlate: !r network_omics
+    omic_list_pairs: !r network_omics
     rowData_variable_name_list: !r variables_dicts
     
     add_variables: TRUE
@@ -139,7 +139,18 @@ if(file.exists(corr_nw_path)){
 ```{r, eval=compute_corr_nw}
 ## Correlations
 omic_variable_correlation_list <- lapply(multi_omic_filtered_list, function(multi_omic_filtered){
-    omic_cor_list <- lapply(params$omic_list_2_correlate, function(omic_names){
+    omic_cor_list <- lapply(params$omic_list_pairs, function(omic_pairs){
+        
+        if(length(omic_pairs) == 1 && omic_pairs == "all"){
+            omic_names <- names(multi_omic_filtered)
+            omic_combn <- combn(omic_names, m = 2)
+        } else if(is(omic_pairs, "character")){
+            omic_names <- omic_pairs
+            omic_combn <- combn(omic_names, m = 2)
+        } else{
+            omic_names <- unique(unlist(omic_pairs))
+            omic_combn <- omic_pairs
+        }
         
         keep_omic <- sapply(omic_names, function(omic_name){nrow(assay(multi_omic_filtered[,,omic_name])) != 0})
         omic_names <- omic_names[keep_omic]
@@ -178,7 +189,7 @@ omic_variable_correlation_list <- lapply(multi_omic_filtered_list, function(mult
                             })
         corr_output_list$Omic_Node_Dict <- do.call(c, corr_output_list$Omic_Node_Dict)
         
-        omic_combn <- combn(omic_names, m = 2)
+        
         
         corr_output_list$Multi_Omic_Correlations <- lapply(as.data.frame(omic_combn), function(omic_name_pairs){
             intersect_samples <- Reduce(intersect, 

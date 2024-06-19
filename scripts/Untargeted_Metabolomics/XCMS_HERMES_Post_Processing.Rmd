@@ -35,7 +35,7 @@ library(mixOmics)
 library(vsn)
 library(dplyr)
 library(stringr)
-
+library(igraph)
 pca_plot <- function(pca_data, pc_x, pc_y, group_var, ellipse_var, allElipse =TRUE, interactive = TRUE, level = 0.95){
     pc_var <- pca_data$sdev^2
     pc_var_abs <- pc_var/sum(pc_var)*100
@@ -255,7 +255,7 @@ feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
     if(length(found_mets) > 5){
         found_mets <- found_mets[1:5]
     }
-    return(paste(found_mets, collapse = "#"))
+    return(paste(found_mets, collapse = ";"))
 }, USE.NAMES = FALSE)
 
 feature_data$soi <- sapply(feature_data$soi, function(x){
@@ -423,11 +423,32 @@ feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
     found_formulas <- hermes_ions$f[hermes_ions$ion %in% form]
     found_mets <- hermes_dt@metadata@ExpParam@DB$Name[hermes_dt@metadata@ExpParam@DB$MolecularFormula %in% found_formulas]
     if(length(found_mets) == 0){return(NA)}
-    if(length(found_mets) > 5){
-        found_mets <- found_mets[1:5]
-    }
-    return(paste(found_mets, collapse = "#"))
+    # if(length(found_mets) > 5){
+    #     found_mets <- found_mets[1:5]
+    # }
+    return(paste(found_mets, collapse = ";"))
 }, USE.NAMES = FALSE)
+
+feature_data$kegg_id <- sapply(feature_data$formula, function(form){
+    found_formulas <- hermes_ions$f[hermes_ions$ion %in% form]
+    found_mets <- hermes_dt@metadata@ExpParam@DB$Kegg[hermes_dt@metadata@ExpParam@DB$MolecularFormula %in% found_formulas]
+    if(length(found_mets) == 0){return(NA)}
+    # if(length(found_mets) > 5){
+    #     found_mets <- found_mets[1:5]
+    # }
+    return(paste(found_mets, collapse = ";"))
+}, USE.NAMES = FALSE)
+
+feature_data$hmdb_id <- sapply(feature_data$formula, function(form){
+    found_formulas <- hermes_ions$f[hermes_ions$ion %in% form]
+    found_mets <- hermes_dt@metadata@ExpParam@DB$HMDB_ID[hermes_dt@metadata@ExpParam@DB$MolecularFormula %in% found_formulas]
+    if(length(found_mets) == 0){return(NA)}
+    # if(length(found_mets) > 5){
+    #     found_mets <- found_mets[1:5]
+    # }
+    return(paste(found_mets, collapse = ";"))
+}, USE.NAMES = FALSE)
+
 
 feature_data$soi <- sapply(feature_data$soi, function(x){paste(x, collapse = ",")})
 feature_data$formula <- sapply(feature_data$formula, function(x){paste(x, collapse = "/")})

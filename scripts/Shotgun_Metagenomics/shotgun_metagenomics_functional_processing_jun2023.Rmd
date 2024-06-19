@@ -99,6 +99,43 @@ names(organ_dt_list_proc) <- names(organ_dt)
 # saveRDS(object = list("shotgun_data" = organ_dt_list_proc, "shotgun_metadata" = metadata_list), "./shotgun_functional_data_list.rds")
 ```
 
+```{r}
+# Combining duplicate rows
+organ_dt_list_proc <- lapply(names(organ_dt_list_proc), function(organ_name){
+    organ <- organ_dt_list_proc[[organ_name]]
+    organ_metadata <- metadata_list[[organ_name]]
+    
+    organ_filt <- lapply(names(organ), function(hierarchy_name){
+        hierarchy_metadata <- organ_metadata[[hierarchy_name]]
+        hierarchy <- organ[[hierarchy_name]]
+        
+        hierarchy_d <- hierarchy[!duplicated(hierarchy),]
+        dup_dt <- apply(hierarchy_d, 1, function(dt_var_d){
+            found_d <- apply(hierarchy, 1, function(dt_var){
+                all(dt_var == dt_var_d)
+            })
+            paste(rownames(hierarchy)[found_d], collapse = ";")
+        })
+        rownames(hierarchy_d) <- dup_dt
+        hierarchy_d
+    })
+    names(organ_filt) <- names(organ)
+    organ_filt
+})
+names(organ_dt_list_proc) <- names(organ_dt)
+```
+
+
+## Stats
+
+```{r}
+lapply(organ_dt_list_proc, function(organ_dt){
+    lapply(organ_dt, function(funct_dt){
+        boxplot(colSums(funct_dt))$out
+    })
+})
+```
+
 ## Statistical Analysis
 
 ```{r}
@@ -125,6 +162,7 @@ stat_res <- lapply(names(organ_dt_list_proc), function(organ_name){
             results(hierarchy_deseq, contrast = comp_vec, pAdjustMethod = "fdr")
         })
         
+        print(lapply(results_list, summary))
         # clr_transform <- transformAssay(x = SummarizedExperiment(assays = list("counts" = hierarchy), 
         #                                                          colData = hierarchy_meta), assay.type = "counts", method = "rclr")
         # clr_transform
@@ -143,12 +181,15 @@ stat_res <- lapply(names(organ_dt_list_proc), function(organ_name){
         #                             "comp" = conover_res$comparisons))
         #     }
         # })
-                
-        # hierarchy_ancombc2 <- SummarizedExperiment(assays = hierarchy, 
+        # library(ANCOMBC)
+        # 
+        # hierarchy_ancombc2 <- TreeSummarizedExperiment(assays = list("counts" = hierarchy),
         #                                            colData = hierarchy_meta)
-        # ancom_res <- ancombc2(data = hierarchy_ancombc2, fix_formula = "~ group + 0", p_adj_method = "fdr", group = "group")
-        #
-        
+        # gr_res <- ancombc(data = hierarchy_ancombc2, p_adj_method = "fdr", 
+        #                    group = "group", assay_name = "counts")
+        # ancom_res <- ancom(data = hierarchy_ancombc2, main_var = "group" 
+        #                     p_adj_method = "fdr")
+
         names(results_list) <- names_comp
         results_list <- do.call(cbind, results_list)
         colnames(results_list) <- gsub("log2FoldChange", "log2FC", colnames(results_list))
@@ -290,13 +331,19 @@ stat_res <- lapply(stat_res, function(organ){
     organ_res <- lapply(names(organ), function(dt_name){
         switch(dt_name, "EC" = {
             dt <- organ[[dt_name]]
-            ids <- gsub("EC:", "", rownames(dt))
+            
             rowData(dt)$Old_Name <- rownames(dt)
+            ids <- rownames(dt)
             ids_tr <- sapply(ids, function(id){
-                found_id <- which(ec_dt_list$ID == id)[1]
+
+                id_vect <- strsplit(id, ";")[[1]]
+                id_vect <- gsub("EC:", "", id_vect)
+                
+                found_id <- which(ec_dt_list$ID == id_vect)
+                
                 found_de <- ec_dt_list$Description[found_id]
-                if(length(found_id) & found_de != "" & !is.na(found_de)){
-                    return(found_de)    
+                if(length(found_id) & all(found_de != "") & !any(is.na(found_de))){
+                    return(paste(found_de[!is.na(found_de)], collapse = ";"))  
                 } else{
                     return(id)
                 }
@@ -313,10 +360,12 @@ stat_res <- lapply(stat_res, function(organ){
             rowData(dt)$Old_Name <- rownames(dt)
             
             ids_tr <- sapply(ids, function(id){
-                found_id <- which(cog_dt$COG_ID == id)[1]
+                id_vect <- strsplit(id, ";")[[1]]
+                
+                found_id <- which(cog_dt$COG_ID == id_vect)
                 found_de <- cog_dt$COG_Name[found_id]
-                if(length(found_id) & found_de != "" & !is.na(found_de)){
-                    return(found_de)    
+                if(length(found_id) & any(found_de != "") & !all(is.na(found_de))){
+                    return(paste(found_de[!is.na(found_de)], collapse = ";"))  
                 } else{
                     return(id)
                 }
@@ -334,10 +383,11 @@ stat_res <- lapply(stat_res, function(organ){
             rowData(dt)$Old_Name <- rownames(dt)
             
             ids_tr <- sapply(ids, function(id){
-                found_id <- which(annotation_dt$ID == id)[1]
+                id_vect <- strsplit(id, ";")[[1]]
+                found_id <- which(annotation_dt$ID == id)
                 found_de <- annotation_dt$Description[found_id]
-                if(length(found_id) & found_de != "" & !is.na(found_de)){
-                    return(found_de)    
+                if(length(found_id) & any(found_de != "") & !all(is.na(found_de))){
+                    return(paste(found_de[!is.na(found_de)], collapse = ";"))    
                 } else{
                     return(id)
                 }
@@ -382,7 +432,8 @@ saveRDS(stat_res, paste0(params$output_dir, "Shotgun_Metagenomics_Functional_exp
 lapply(names(stat_res), function(organ_name){
     organ <- stat_res[[organ_name]]
     lapply(names(organ), function(hierarchy_name){
-        hierarchy <- organ[[hierarchy_name]]
+        hierarchy <- organ[[hierarchy_name]][,colData(organ[[hierarchy_name]])$group != "HFE"]
+        hierarchy <- hierarchy[rowSums(assay(hierarchy)) != 0,]
         raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = assay(hierarchy),
                                       colData = colData(hierarchy),
                                       design= ~ 0 + group)
@@ -406,6 +457,66 @@ lapply(names(stat_res), function(organ_name){
     })
 })
 ```
+
+
+```{r}
+a <- lapply(names(stat_res), function(organ_name){
+    organ <- stat_res[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]][,colData(organ[[hierarchy_name]])$group != "HFE"]
+        hierarchy <- hierarchy[rowSums(assay(hierarchy)) != 0,]
+        raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = assay(hierarchy),
+                                      colData = colData(hierarchy),
+                                      design= ~ 0 + group)
+        vst_dt <- t(assay(varianceStabilizingTransformation(raw_lima_DESeq, blind = FALSE)))
+        pheatmap::pheatmap(scale(vst_dt), show_colnames = FALSE, annotation_row = as.data.frame(colData(hierarchy))["group"])
+        # pcvar <- round(vst_pca$sdev^2/sum(vst_pca$sdev^2)*100, 2)
+        # 
+        # d3plot <- plot_ly(x = vst_pca$x[,1], y = vst_pca$x[,2], z = vst_pca$x[,3], color = myGFCVfactors$group)
+        # d3plot <- d3plot %>% add_markers()
+        # d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
+        #                      yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
+        #                      zaxis = list(title = paste0('PC3', "(", pcvar[3], "%)"))))
+        # d3plot
+    })
+})
+
+```
+
+
+```{r}
+a <- lapply(names(stat_res), function(organ_name){
+    organ <- stat_res[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]][,colData(organ[[hierarchy_name]])$group != "HFE"]
+        hierarchy <- hierarchy[rowSums(assay(hierarchy)) != 0,]
+        raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = assay(hierarchy),
+                                      colData = colData(hierarchy),
+                                      design= ~ 0 + group)
+        vst_dt <- t(assay(varianceStabilizingTransformation(raw_lima_DESeq, blind = FALSE)))
+        pheatmap::pheatmap(scale(vst_dt), show_colnames = FALSE, annotation_row = as.data.frame(colData(hierarchy))["group"])
+        # pcvar <- round(vst_pca$sdev^2/sum(vst_pca$sdev^2)*100, 2)
+        # 
+        # d3plot <- plot_ly(x = vst_pca$x[,1], y = vst_pca$x[,2], z = vst_pca$x[,3], color = myGFCVfactors$group)
+        # d3plot <- d3plot %>% add_markers()
+        # d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
+        #                      yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
+        #                      zaxis = list(title = paste0('PC3', "(", pcvar[3], "%)"))))
+        # d3plot
+    })
+    
+})
+```
+
+```{r}
+a <- lapply(names(stat_res), function(organ_name){
+    organ <- stat_res[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        colSums(assay(organ[[hierarchy_name]]))
+    })
+})
+```
+
 
 ### PCA clr
 
@@ -458,3 +569,4 @@ lapply(names(stat_res), function(organ_names){
     })
 })
 ```
+

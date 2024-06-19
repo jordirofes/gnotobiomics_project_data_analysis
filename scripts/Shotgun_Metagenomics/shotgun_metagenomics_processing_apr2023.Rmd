@@ -155,10 +155,10 @@ shotgun_data <- lapply(names(shotgun_data_list), function(organ_name){
         summ_exp <- mia::addTaxonomyTree(summ_exp)
         
         rowData(summ_exp)$prevalence <- getPrevalence(summ_exp, 
-                                                       detection = 1/100, 
-                                                       sort = FALSE,
-                                                       assay.type = "counts", 
-                                                       as_relative = TRUE)
+                                                    detection = 1/100, 
+                                                    sort = FALSE,
+                                                    assay.type = "counts", 
+                                                    as_relative = TRUE)
         
         rowData(summ_exp)$specie_names <- rownames(summ_exp)
         rowData(summ_exp)$readable_name <- str_replace(paste(organ_name, rownames(summ_exp)), 

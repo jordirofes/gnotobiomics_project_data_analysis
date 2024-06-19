@@ -329,7 +329,7 @@ score_dt <- get_factors(object = multi_omics_mofa)
 ```
 
 ```{r}
-thr <- 0.8
+thr <- 0.5
 thr_score <- 0
 
 weight_dt <- get_weights(object = multi_omics_mofa)

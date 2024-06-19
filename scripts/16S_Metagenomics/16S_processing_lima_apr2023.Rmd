@@ -186,6 +186,12 @@ organ_exp <- lapply(names(organ_dt_list), function(organ_name){
         hierarchy <- mia::agglomerateByRank(x = hierarchy, rank = hierarchy_ranks[max_rank])
         hierarchy <- mia::addTaxonomyTree(hierarchy)
         
+        rowData(hierarchy)$prevalence <- getPrevalence(hierarchy, 
+                                                    detection = 1/100, 
+                                                    sort = FALSE,
+                                                    assay.type = "counts", 
+                                                    as_relative = TRUE)
+        
         rowData(hierarchy)$specie_names <- rownames(hierarchy)
         rowData(hierarchy)$readable_name <- str_replace(paste("16S", organ_name, rownames(hierarchy)), 
                                                         "^\\w{1}", toupper)
@@ -204,6 +210,26 @@ names(organ_exp) <- names(organ_dt_list)
 #### Before filter {.tabset}
 
 ##### PCA 
+
+```{r, message=FALSE}
+lapply(names(organ_exp), function(organ_name){
+    organ <- organ_exp[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+    
+        hierarchy <- mia::transformAssay(x = hierarchy, method = "clr", pseudocount = 1)
+        pca_dt <- prcomp(as.matrix(t(assay(hierarchy, "clr"))), scale. = TRUE)
+
+        p1 <- pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, 
+                group_var = colData(hierarchy)$group, 
+                ellipse_var = colData(hierarchy)$group, allElipse = TRUE, interactive = FALSE)
+        print(p1)
+        
+        return(NULL)
+    })
+})
+```
+
 
 ```{r, message=FALSE}
 lapply(names(organ_exp), function(organ_name){
@@ -318,25 +344,85 @@ lapply(names(organ_dt_list_fil), function(organ_name){
     organ <- organ_dt_list_fil[[organ_name]]
     lapply(names(organ), function(hierarchy_name){
         hierarchy <- organ[[hierarchy_name]]
-        raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = assay(hierarchy),
-                                      colData = colData(hierarchy),
-                                      design= ~ 0 + group)
-        vst_dt <- t(assay(varianceStabilizingTransformation(raw_lima_DESeq, blind = FALSE)))
-        vst_pca <- prcomp(vst_dt, scale. = FALSE)
-        
-        p1 <- pca_plot(pca_data = vst_pca, pc_x = 1, pc_y = 2, 
-                group_var = hierarchy$group, 
-                ellipse_var = hierarchy$group, allElipse = TRUE, interactive = FALSE)
+    
+        hierarchy <- mia::transformAssay(x = hierarchy, method = "clr", pseudocount = 1)
+        pca_dt <- prcomp(as.matrix(t(assay(hierarchy, "clr"))), scale. = TRUE)
+
+        p1 <- pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, 
+                group_var = colData(hierarchy)$group, 
+                ellipse_var = colData(hierarchy)$group, allElipse = TRUE, interactive = FALSE)
         print(p1)
-        # pcvar <- round(vst_pca$sdev^2/sum(vst_pca$sdev^2)*100, 2)
-        # 
-        # d3plot <- plot_ly(x = vst_pca$x[,1], y = vst_pca$x[,2], z = vst_pca$x[,3], color = myGFCVfactors$group)
-        # d3plot <- d3plot %>% add_markers()
-        # d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
-        #                      yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
-        #                      zaxis = list(title = paste0('PC3', "(", pcvar[3], "%)"))))
-        # d3plot
+        
         return(NULL)
+    })
+})
+```
+
+```{r}
+# Rare taxa pca
+lapply(names(organ_dt_list_fil), function(organ_name){
+    organ <- organ_dt_list_fil[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+    
+        hierarchy <- hierarchy[getRareFeatures(hierarchy),]
+        
+        hierarchy <- mia::transformAssay(x = hierarchy, method = "clr", pseudocount = 1)
+        if(nrow(hierarchy) <= 1){return(NULL)}
+        
+        pca_dt <- prcomp(as.matrix(t(assay(hierarchy, "clr"))), scale. = TRUE)
+        
+        p1 <- pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, 
+                group_var = colData(hierarchy)$group, 
+                ellipse_var = colData(hierarchy)$group, allElipse = TRUE, interactive = FALSE)
+        print(p1 + ggtitle(paste(organ_name, hierarchy_name, "rare taxa")))
+        
+        return(NULL)
+    })
+})
+# Abundant taxa pca
+lapply(names(organ_dt_list_fil), function(organ_name){
+    organ <- organ_dt_list_fil[[organ_name]]
+    lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        
+        hierarchy <- hierarchy[getPrevalentFeatures(hierarchy),]
+        
+        hierarchy <- mia::transformAssay(x = hierarchy, method = "clr", pseudocount = 1)
+        pca_dt <- prcomp(as.matrix(t(assay(hierarchy, "clr"))), scale. = TRUE)
+
+        p1 <- pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2,  
+                group_var = colData(hierarchy)$group, 
+                ellipse_var = colData(hierarchy)$group, allElipse = TRUE, interactive = FALSE)
+        print(p1 + ggtitle(paste(organ_name, hierarchy_name, "prevalent taxa")))
+        
+        return(NULL)
+    })
+})
+```
+
+##### Abundance plots
+
+```{r}
+lapply(organ_exp, function(organ_dt){
+    lapply(names(organ_dt), function(hierarchy_names){
+        hierarchy_dt <- organ_dt[[hierarchy_names]]
+    
+        hierarchy_dt <- transformAssay(hierarchy_dt, assay.type = "counts", method = "relabundance")
+    
+        # Getting top taxa on a Phylum level
+        top_taxa <- getTopFeatures(hierarchy_dt,top = 5, assay.type = "relabundance")
+        
+        # Renaming the "Phylum" rank to keep only top taxa and the rest to "Other"
+        cat_renamed <- lapply(rownames(hierarchy_dt),
+                           function(x){if (x %in% top_taxa) {x} else {"Other"}})
+        rowData(hierarchy_dt)[[hierarchy_names]] <- as.character(cat_renamed)
+        
+        # Visualizing the composition barplot, with samples order by "Bacteroidetes"
+        plotAbundance(hierarchy_dt, assay.type="relabundance", rank = hierarchy_names,
+                      order_rank_by="abund", 
+                      order_sample_by = "group", add_x_text = TRUE) + 
+            theme(axis.text.x = element_text(angle = 90))
     })
 })
 ```
@@ -397,6 +483,18 @@ x16s_exp <- lapply(names(organ_dt_list_fil), function(organ_name){
         hierarchy_meta <- colData(hierarchy)
         
         names_comp <- apply(t(combn(levels(hierarchy_meta$group), m = 2))[,2:1, drop = FALSE], 1, paste, collapse = "-")
+        # library(ANCOMBC)
+        # ancombc2_out <- ancombc2(data = hierarchy,
+        #                  assay.type = "counts",
+        #                  fix_formula = "group",
+        #                  p_adj_method = "fdr", 
+        #                  prv_cut = 0,
+        #                  group = "group",
+        #                  struc_zero = TRUE,
+        #                  neg_lb = TRUE,
+        #                  # multi group comparison is deactivated automatically
+        #                  global = FALSE, 
+        #                  pairwise = TRUE)
         
         hierarchy_deseq <- DESeqDataSetFromMatrix(countData = as.data.frame(assay(hierarchy)),
                                                   colData = hierarchy_meta, design = ~ group + 0)

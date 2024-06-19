@@ -314,15 +314,19 @@ summarized_data <- lapply(names(tissue_noqc_file_list), function(organ_name){
     organ_data <- tissue_noqc_file_list[[organ_name]]
     # rownames(organ_data$Metabolite_Data) <- paste0(organ_name, "_", rownames(organ_data$Metabolite_Data))
     organ_data$Metabolite_Metadata$group <- as.factor(organ_data$Metabolite_Metadata$group)
+    colnames(organ_data$Metabolite_Data) <- make.names(colnames(organ_data$Metabolite_Data))
+    organ_data$Metabolite_Metadata$samplename <- make.names(organ_data$Metabolite_Metadata$samplename)
     
     SummarizedExperiment(assays = organ_data$Metabolite_Data, colData = organ_data$Metabolite_Metadata)
 })
 names(summarized_data) <- names(tissue_noqc_file_list)
 
-rownames(tissue_noqc_file_list$liver$scfa_data) <- tissue_noqc_file_list$liver$scfa_data$samplename
+rownames(tissue_noqc_file_list$liver$scfa_data) <- make.names(tissue_noqc_file_list$liver$scfa_data$samplename)
+
 tissue_noqc_file_list$liver$scfa_data$samplename <- NULL
 tissue_noqc_file_list$liver$scfa_data <- as.data.frame(t(tissue_noqc_file_list$liver$scfa_data))
 tissue_noqc_file_list$liver$scfa_data
+tissue_noqc_file_list$liver$Metabolite_Metadata$samplename <- make.names(tissue_noqc_file_list$liver$Metabolite_Metadata$samplename)
 
 rownames(tissue_noqc_file_list$liver$scfa_data) <- paste0("liver_scfa_", rownames(tissue_noqc_file_list$liver$scfa_data))
 
@@ -500,33 +504,122 @@ lima_data_list <- lapply(summarized_data, function(organ_dt){
 })
 ```
 
+### Adding mice data
+
+```{r}
+mice_dt <- readRDS("../../inputs/Mice_Data/processed_mice_dt.rds")
+
+lima_data_list <- lapply(lima_data_list, function(organ_dt){
+    colData(organ_dt)$samplename <- make.names(colData(organ_dt)$samplename)
+    colData(organ_dt) <- DataFrame(dplyr::left_join(as.data.frame(colData(organ_dt)), 
+                                        mice_dt, 
+                                        by = c("samplename")), 
+                                    row.names = colData(organ_dt)$samplename)
+    colData(organ_dt)$group <- colData(organ_dt)$group.x
+    organ_dt
+})
+```
+
 #### Explorative PCA
 
 ```{r}
-pca_dt_list <- lapply(lima_data_list, function(organ_data){
+pca_dt_list <- lapply(names(lima_data_list), function(organ_name){
+    organ_data <- lima_data_list[[organ_name]]
+    
     met_data <- assay(organ_data)
     if(ncol(met_data) == 0){return(NULL)}
-    met_data <- impute::impute.knn(as.matrix(met_data))$data
-    dt_pca <- DESeqDataSetFromMatrix(round(met_data), colData = colData(organ_data), design = ~ group)
+    if(organ_name == "liver_scfa"){met_data <- met_data*1000}
     
+    dt_pca <- impute::impute.knn(as.matrix(met_data))$data
+    # dt_pca <- log(dt_pca + 1)
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(dt_pca), colData = colData(organ_data), 
+                                     design = ~ group)
+
     dt_pca <- estimateSizeFactors(dt_pca)
     dt_pca <- estimateDispersions(dt_pca)
     dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
-    prcomp(t(dt_pca))
+    prcomp(t(dt_pca), scale = TRUE)
 })
 
 mapply(function(pca_dt, group_dt){
     if(is.null(pca_dt)){return(NULL)}
-    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = colData(group_dt)$group, ellipse_var = colData(group_dt)$group))
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, 
+                   group_var = colData(group_dt)$group, 
+                   ellipse_var = colData(group_dt)$group))
 }, pca_dt = pca_dt_list, group_dt = lima_data_list)
+
+
+mapply(function(pca_dt, group_dt){
+    if(is.null(pca_dt)){return(NULL)}
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2,
+                   group_var = colData(group_dt)$samplename,
+                   ellipse_var = colData(group_dt)$samplename))
+}, pca_dt = pca_dt_list, group_dt = lima_data_list)
+
+mapply(function(pca_dt, group_dt){
+    if(is.null(pca_dt)){return(NULL)}
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, 
+                   group_var = colData(group_dt)$WATep.g., 
+                   ellipse_var = colData(group_dt)$WATep.g.))
+}, pca_dt = pca_dt_list, group_dt = lima_data_list)
+
+int_vars <- c("Sacrifice", "BW.g.", "Liver.g.", "WATep.g.")
+
+# mapply(function(pca_dt, group_dt){
+#     if(is.null(pca_dt)){return(NULL)}
+#     cor(x = pca_dt$x[,1:2], as.data.frame(colData(group_dt)[,int_vars]))
+# }, pca_dt = pca_dt_list, group_dt = lima_data_list)
+
+
+mapply(function(pca_dt, group_dt){
+    if(is.null(pca_dt)){return(NULL)}
+    cor(x = t(assay(group_dt)), as.data.frame(colData(group_dt)[,int_vars]), na.rm = T)
+}, pca_dt = pca_dt_list, group_dt = lima_data_list)
+```
+
+```{r}
+sum_dt <- lapply(lima_data_list, function(organ_data){
+    if(is.null(organ_data) || ncol(organ_data) == 0){return(NULL)}
+    dt_pca <- impute::impute.knn(as.matrix(assay(organ_data)))$data
+    # dt_pca <- log(dt_pca)
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(dt_pca), colData = colData(organ_data), design = ~ group)
+
+    dt_pca <- estimateSizeFactors(dt_pca)
+    dt_pca <- estimateDispersions(dt_pca)
+    dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
+    
+    # dt <- colSums(log2(assay(organ_dt)), na.rm = T)
+    boxplot(colSums(dt_pca))
+})
+```
+
+
+```{r, fig.width=8, fig.height=8}
+p <- lapply(lima_data_list, function(organ_dt){
+    if(ncol(organ_dt) == 0){return(NULL)}
+    
+    heatMapFun(dt_list = t(t(assay(organ_dt))), metadata = colData(organ_dt), 
+               stratificationVar = "group",  clustering_method = "ward",
+               clustering_distance_rows = "euclidean", show_colnames = TRUE, show_rownames = TRUE,
+               plot_name = "Test", use_cat = FALSE)
+})
 ```
 
 
 #### Outliers & sample filtering
 
 ```{r}
-res <- lapply(lima_data_list, function(organ_dt){
-    if(ncol(organ_dt) == 0){return(NULL)}
+lima_data_list_out <- lima_data_list
+
+lima_data_list_out$serum <- lima_data_list_out$serum[,!(lima_data_list_out$serum$samplename %in% 
+                                                            c("X676I", "X664I"))]
+lima_data_list_out$cecum <- lima_data_list_out$cecum[,!(lima_data_list_out$cecum$samplename %in% 
+                                                            c("X619H"))]
+
+lima_data_list_out <- lapply(lima_data_list_out, function(organ_dt){
+    if(is.null(organ_dt) || ncol(organ_dt) == 0){return(NULL)}
     res_mat <- apply(assay(organ_dt), 1, function(x){
         # na_vals <- tapply(x, colData(organ_dt)$group, FUN = function(y){
         #     sum(is.na(y))/length(y)
@@ -536,28 +629,79 @@ res <- lapply(lima_data_list, function(organ_dt){
         # na_vals
     })
 
-    any(!res_mat)
+    organ_dt[res_mat,]
 })
 
-sum_dt <- lapply(lima_data_list, function(organ_dt){
-    if(ncol(organ_dt) == 0){return(NULL)}
-    dt <- colSums(log2(assay(organ_dt)), na.rm = T)
-    dt
+
+sum_dt <- lapply(lima_data_list_out, function(organ_data){
+    if(is.null(organ_data) || ncol(organ_data) == 0){return(NULL)}
+    dt_pca <- impute::impute.knn(as.matrix(assay(organ_data)))$data
+    # dt_pca <- log(dt_pca)
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(dt_pca), colData = colData(organ_data), design = ~ group)
+
+    dt_pca <- estimateSizeFactors(dt_pca)
+    dt_pca <- estimateDispersions(dt_pca)
+    dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
+    
+    # dt <- colSums(log2(assay(organ_dt)), na.rm = T)
+    boxplot(colSums(dt_pca))
 })
+
 ```
 
 ```{r}
-animal_dt <- openxlsx::read.xlsx("../../inputs/AnimalData_OscarYanes.xlsx")
+pca_dt_list <- lapply(names(lima_data_list_out), function(organ_name){
+    organ_data <- lima_data_list_out[[organ_name]]
+    
+    if(is.null(organ_data) || ncol(organ_data) == 0){return(NULL)}
+    
+    met_data <- assay(organ_data)
+    if(organ_name == "liver_scfa"){met_data <- met_data*1000}
+    dt_pca <- impute::impute.knn(as.matrix(met_data))$data
+    # dt_pca <- log(dt_pca)
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(dt_pca), colData = colData(organ_data), design = ~ group)
 
-sum_dt <- lapply(lima_data_list, function(organ_dt){
-    if(ncol(organ_dt) == 0){return(NULL)}
-    
-    dplyr::left_join(colData(organ_dt), animal_dt, )
-    
-    dt <- colSums(log2(assay(organ_dt)), na.rm = T)
-    dt
+    dt_pca <- estimateSizeFactors(dt_pca)
+    dt_pca <- estimateDispersions(dt_pca)
+    dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
+    prcomp(t(dt_pca), scale = TRUE)
+})
+
+mapply(function(pca_dt, group_dt){
+    if(is.null(pca_dt)){return(NULL)}
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, 
+                   group_var = colData(group_dt)$group, 
+                   ellipse_var = colData(group_dt)$group))
+}, pca_dt = pca_dt_list, group_dt = lima_data_list_out)
+
+
+mapply(function(pca_dt, group_dt){
+    if(is.null(pca_dt)){return(NULL)}
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, 
+                   group_var = colData(group_dt)$samplename, 
+                   ellipse_var = colData(group_dt)$samplename))
+}, pca_dt = pca_dt_list, group_dt = lima_data_list_out)
+
+int_vars <- c("Sacrifice", "BW.g.", "Liver.g.", "WATep.g.")
+
+mapply(function(pca_dt, group_dt){
+    if(is.null(pca_dt)){return(NULL)}
+    cor(x = pca_dt$x[,1:2], as.data.frame(colData(group_dt)[,int_vars]))
+}, pca_dt = pca_dt_list, group_dt = lima_data_list_out)
+```
+
+```{r, fig.width=8, fig.height=8}
+p <- lapply(lima_data_list_out, function(organ_dt){
+    if(is.null(organ_dt) || ncol(organ_dt) == 0){return(NULL)}
+    heatMapFun(dt_list = t(scale(t(assay(organ_dt)))), metadata = colData(organ_dt), 
+               stratificationVar = "group",  clustering_method = "ward",
+               clustering_distance_rows = "euclidean", show_colnames = TRUE, show_rownames = TRUE,
+               plot_name = "Test", use_cat = FALSE)
 })
 ```
+
 
 #### Anova Results
 
@@ -614,14 +758,14 @@ sum_dt <- lapply(lima_data_list, function(organ_dt){
 ```
 
 ```{r}
-comp_names <- apply(t(combn(levels(lima_data_list$cecum$group), m = 2))[,2:1], 1, 
+comp_names <- apply(t(combn(levels(lima_data_list_out$cecum$group), m = 2))[,2:1], 1, 
                     paste, collapse = "-")
 comp_matrix <- matrix(NA, nrow = length(comp_names), ncol = 2)
 rownames(comp_matrix) <- comp_names
 
-results_list <- lapply(names(lima_data_list), function(organ_name){
-    organ_list <- lima_data_list[[organ_name]]
-    if(ncol(organ_list) == 0){return(NULL)}
+results_list <- lapply(names(lima_data_list_out), function(organ_name){
+    organ_list <- lima_data_list_out[[organ_name]]
+    if(is.null(organ_list) || ncol(organ_list) == 0){return(NULL)}
     tukey_results <- apply(assay(organ_list), 1, function(dt_var){
         anova_results <- kruskal.test(dt_var, g = organ_list$group)
         anova_results <- data.frame("statistic" = anova_results$statistic,
@@ -672,39 +816,44 @@ results_list <- lapply(names(lima_data_list), function(organ_name){
     do.call(cbind, contrasts_results)
 })
 
-names(results_list) <- names(lima_data_list)
+names(results_list) <- names(lima_data_list_out)
 ```
 
 
 #### Saving Results
 
 ```{r}
-lima_data_list <- lapply(lima_data_list, function(organ){
+lima_data_list_out$colon <- NULL
+assay(lima_data_list_out$liver_scfa) <- assay(lima_data_list_out$liver_scfa)*1000
+
+lima_data_list_out <- lapply(lima_data_list_out, function(organ){
     colnames(organ) <- make.names(colnames(organ))
     organ$samplename <- make.names(organ$samplename)
     organ
 })
-lima_data_list[sapply(lima_data_list, function(x){
+
+lima_data_list_out[sapply(lima_data_list_out, function(x){
     ncol(x) == 0
 })] <- NULL
-lima_data_list$liver <- combineRows(lima_data_list$liver, 
-                                         lima_data_list$liver_scfa, 
+
+lima_data_list_out$liver <- combineRows(lima_data_list_out$liver, 
+                                         lima_data_list_out$liver_scfa, 
                                          delayed = FALSE)
-lima_data_list$liver_scfa <- NULL
+lima_data_list_out$liver_scfa <- NULL
 
 results_list$liver <- rbind(results_list$liver, results_list$liver_scfa)
 
-results_list[c("colon", "liver_scfa")] <- NULL
+results_list[c("liver_scfa")] <- NULL
 
-targ_meta_data <- lapply(names(lima_data_list), function(organ_name){
-    organ <- lima_data_list[[organ_name]]
+targ_meta_data <- lapply(names(lima_data_list_out), function(organ_name){
+    organ <- lima_data_list_out[[organ_name]]
     organ_results <- results_list[[organ_name]]
     rowData(organ) <- organ_results
     rowData(organ)$readable_name <- str_replace(paste(organ_name, rownames(organ)), 
                                         "^\\w{1}", toupper)
     organ
 })
-names(targ_meta_data) <- names(lima_data_list)
+names(targ_meta_data) <- names(lima_data_list_out)
 
 saveRDS(targ_meta_data, paste0(params$output_dir, "Targeted_Metabolomics_exp_lima.rds"))
 ```

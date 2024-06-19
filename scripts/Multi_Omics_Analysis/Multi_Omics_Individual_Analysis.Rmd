@@ -109,7 +109,7 @@ if(!dir.exists(output_dir)){dir.create(output_dir)}
 multi_omics_raw <- readRDS(paste0(params$input_dir, "Multi_Omics_Analysis_exp_lima.rds"))
 multi_omics_ma <- readRDS(paste0(params$input_dir, "Multi_Omics_Analysis_MA_exp_lima.rds"))
 data_list <- list("Raw_Results" = multi_omics_raw[,colData(multi_omics_raw)$samplename[colData(multi_omics_raw)$group != "HFE"]], 
-                  "Multivariate_Normalized" = multi_omics_ma[,colData(multi_omics_ma)$samplename[colData(multi_omics_ma)$group != "HFE"]])
+                  "Multivariate_Normalized" = multi_omics_ma[,])
 
 multi_omic_any_sig <- lapply(data_list, function(multi_omics_dt){
     keep_rows_list <- lapply(experiments(multi_omics_dt), function(omic_dt){
@@ -118,6 +118,9 @@ multi_omic_any_sig <- lapply(data_list, function(multi_omics_dt){
         p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
         keep_vars <- rowSums(p_val_dt <= 0.05, na.rm = TRUE) != 0
         
+        omic_mat <- as.matrix(assay(omic_dt)) 
+        omic_mat <- (omic_mat != 0 & !is.na(omic_mat))
+
         rownames(omic_rowdata)[keep_vars]
     })
     multi_omics_dt[keep_rows_list,,]

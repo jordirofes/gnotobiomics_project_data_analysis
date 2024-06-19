@@ -4,9 +4,9 @@ author: "Jordi Rofes Herrera"
 date: "27/1/2022"
 output: html_document
 params:
-    file_dir: "../../inputs/Untargeted_Metabolomics/RP_Positive/"
-    metadata_file: "../../inputs/Untargeted_Metabolomics/RP_Positive/LC_MS_metadata.csv"
-    output_dir: "../../outputs/Untargeted_Metabolomics/Hermes_Results/RP_Positive/"
+    file_dir: "../../inputs/Untargeted_Metabolomics/Hilic_Negative/"
+    metadata_file: "../../inputs/Untargeted_Metabolomics/Hilic_Negative/LC_MS_metadata.csv"
+    output_dir: "../../outputs/Untargeted_Metabolomics/Hermes_Results/Hilic_Negative/"
 ---
 
 ```{r setup, include=FALSE}

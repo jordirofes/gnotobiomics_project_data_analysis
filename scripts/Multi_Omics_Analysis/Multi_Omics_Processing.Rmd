@@ -229,15 +229,38 @@ saveRDS(lima_multi_exp, paste0(multi_omic_dir, "Multi_Omics_Analysis_exp_lima.rd
 ```
 
 
-### LIMA
+### LIMA HFD
 
 ```{r}
 lapply(assays(lima_multi_exp), function(omic_dt){any(is.na(omic_dt))})
+
+exp_filt <- lapply(experiments(lima_multi_exp), function(omic_proc){
+    omic_proc <- omic_proc[,colData(omic_proc)$samplename[colData(omic_proc)$group != "HFE"]]
+    
+    omic_mat <- as.matrix(assay(omic_proc))
+    omic_mat <- omic_mat != 0 & !is.na(omic_mat)
+    
+    keep_vars <- apply(omic_mat, 1, function(dt_var){
+        group_dt <- tapply(dt_var,
+                            INDEX = droplevels(omic_proc$group),
+                            function(var_group){
+            sum(var_group)/length(var_group)
+        })
+        any(group_dt >= 0.8)
+    })
+    # keep_vars2 <- rowSums(omic_mat)/ncol(omic_mat) >= 0.6
+    
+    if(any(is.na(keep_vars))){browser()}
+    omic_proc <- omic_proc[keep_vars,] 
+    omic_proc
+})
+experiments(lima_multi_exp) <- ExperimentList(exp_filt)
 
 proc_omics <- lapply(names(experiments(lima_multi_exp)), function(omic_name){
     param_list <- list()
     function_list <- list()
     omic_proc <- experiments(lima_multi_exp)[[omic_name]]
+    
     if(grepl("WGB_DNA", omic_name)){
         function_list <- list(impute_knn_assay, scale_assay)
     }
@@ -248,7 +271,7 @@ proc_omics <- lapply(names(experiments(lima_multi_exp)), function(omic_name){
         function_list <- list(impute_knn_assay, count_vst_deseq2, scale_assay)
     }
     if(grepl("Targeted", omic_name)){
-        function_list <- list(impute_knn_assay, scale_assay)
+        function_list <- list(impute_knn_assay, count_vst_deseq2, scale_assay)
     }
     if(grepl("Histone", omic_name)){
         function_list <- list(transformToMvalues, scale_assay)

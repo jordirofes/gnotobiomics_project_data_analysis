@@ -37,9 +37,25 @@ library(survcomp)
 ## Loaded matrices
 
 ```{r}
-multi_omics_raw <- readRDS(paste0(params$output_dir, "Multi_Omics_Analysis_exp_lima.rds"))
 multi_omics <- readRDS(paste0(params$output_dir, "Multi_Omics_Analysis_MA_exp_lima.rds"))
-names(experiments(multi_omics))
+
+# new_exps <- experiments(multi_omics)
+# 
+# new_exps$Shotgun_Metagenomics_Functional.cecum.merge <- Reduce(
+#     f = function(x,y){
+#             combineRows(x, y, delayed = FALSE)
+# 
+#         },
+#     as.list(multi_omics@ExperimentList[grepl("Functional.cecum", names(multi_omics@ExperimentList))]))
+# 
+# new_exps$Shotgun_Metagenomics_Functional.colon.merge <- Reduce(
+#     f = function(x,y){
+#             combineRows(x, y, delayed = FALSE)
+# 
+#         },
+#     as.list(multi_omics@ExperimentList[grepl("Functional.colon", names(multi_omics@ExperimentList))]))
+# 
+# multi_omics <- MultiAssayExperiment(experiments = new_exps, colData = colData(multi_omics))
 
 filter_list <- c("16S", "Shotgun.cecum", "Shotgun.colon")
 ```
@@ -49,23 +65,32 @@ filter_list <- c("16S", "Shotgun.cecum", "Shotgun.colon")
 ```{r}
 multi_omics_names <- names(experiments(multi_omics))
 
-multi_omics_selected <- multi_omics_names[!grepl("16S|Shotgun|unsupervised", multi_omics_names)]
+# multi_omics_selected <- multi_omics_names[!grepl("16S|Shotgun|unsupervised", multi_omics_names)]
 
+multi_omics_selected <- multi_omics_names[grepl("WGB|RNA|Untargeted|liver",
+                                                multi_omics_names)]
 # multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S|unsupervised|Targeted|Metallomics|Histone", multi_omics_names)]
 
 # multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("genus", multi_omics_names)])
-multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("Species|metaerg_kegg|cogs", multi_omics_names)])
+# multi_omics_selected <- c(multi_omics_selected,
+#                           multi_omics_names[grepl("Species|cogs|colon.*kegg|EC|pathway",
+#                                                 multi_omics_names)])
+
 # |EC|metaer_kegg|cogs
-multi_omics_selected <- multi_omics_selected[c(1:14,
-                                            16, 15,17)]
+# multi_omics_selected <- multi_omics_selected[c(1:14,
+#                                              16,15)]
+# multi_omics_selected <- multi_omics_selected[c(1:12,
+#                                              14,13)]
 multi_omics_selected
 ```
 
 
 ```{r}
-omic_names_dup <- sapply(strsplit(multi_omics_selected, "\\."), 
+omic_names_dup <- sapply(strsplit(names(multi_omics), "\\."), 
                         function(x){x[[1]]})
-omic_names_dup[grep("cogs", multi_omics_selected)] <- paste0("Functional_Shotgun_cogs")
+omic_names_dup[grep("cogs", names(multi_omics))] <- paste0("Functional_Shotgun_cogs")
+omic_names_dup[grep("EC", names(multi_omics))] <- paste0("Functional_Shotgun_EC")
+omic_names_dup[grep("metaerg_kegg", names(multi_omics))] <- paste0("Functional_Shotgun_metaerg_kegg")
 
 unique_omics <- unique(omic_names_dup)
 
@@ -80,7 +105,7 @@ col_list <- lapply(seq_along(unique_omics), function(omic_id){
     return(col_ramp)
 })
 color_vect <- unlist(col_list)
-names(color_vect) <- multi_omics_selected
+names(color_vect) <- names(multi_omics)
 
 omic_color_dict <- color_vect
 ```
@@ -130,20 +155,28 @@ experiments(multi_omics) <- ExperimentList(filtered_exps)
 multi_omics_selected <- multi_omics_selected[multi_omics_selected %in% names(multi_omics)]
 ```
 
+
 ```{r}
-omic_names_dict <- c("Liver Histone Modifications", "Liver Metallomics", 
-                    "Cecum Metallomics", "Liver RNA Sequencing", 
-                    "Cecum Targeted Metabolomics", "Liver Targeted Metabolomics", 
-                    "Serum Targeted Metabolomics", "Liver Untargeted Metabolomics", 
-                    "Liver DNA Methylation", 
-                    "Cecum 16S Metagenomics", "Colon 16S Metagenomics", 
-                    "Cecum Shotgun Metagenomics", "Colon Shotgun Metagenomics", 
-                    "Cecum Shotgun Functional Metaerg KEGG", 
-                    "Colon Shotgun Functional Metaerg KEGG", 
-                    "Cecum Shotgun Functional COGS", 
+omic_names_dict <- c("Liver RNA Sequencing", "Liver DNA Methylation", 
+                    "Liver Histone Modifications", 
+                    "Liver Untargeted Metabolomics", 
+                    "Liver Targeted Metabolomics", "Liver Metallomics",
+                    "Serum Targeted Metabolomics",
+                    "Cecum Targeted Metabolomics", "Cecum Metallomics",    
+                    "Cecum 16S Metagenomics", "Cecum Shotgun Metagenomics",
+                    paste(rep("Cecum", 3), 
+                        "Shotgun Functional", 
+                        c("EC", "KEGG", "COGS")),
                     
-                    "Colon Shotgun Functional Metaerg COGS")
-names(omic_names_dict) <- multi_omics_selected
+                    "Colon 16S Metagenomics", "Colon Shotgun Metagenomics", 
+                    paste(rep("Colon", 4), 
+                        "Shotgun Functional", 
+                        c("EC", "KEGG", "Pathways", "COGS"))
+                    )
+
+names(omic_names_dict) <- names(multi_omics)[c(16, 40, 13, 39, 37, 14, 
+                                               38, 36, 15, 6, 22, 29:31, 
+                                               12, 28, 32:35)]
 
 group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(multi_omics$group))), 
                                                  name = "Set2")
@@ -182,19 +215,9 @@ names(omic_color_dict_mod) <- omic_names_dict[as.character(names(omic_color_dict
 
 plot_dt$var_id <- factor(omic_names_dict[as.character(plot_dt$var_id)])
 plot_dt$var_id <- reorder(plot_dt$var_id, 
-                        new.order = rev(c("Liver RNA Sequencing", "Liver DNA Methylation", 
-                                    "Liver Histone Modifications", 
-                                    "Liver Untargeted Metabolomics", 
-                                    "Liver Targeted Metabolomics", "Liver Metallomics",
-                                    "Serum Targeted Metabolomics",
-                                    "Cecum Targeted Metabolomics", "Cecum Metallomics",    
-                                    "Cecum 16S Metagenomics", "Cecum Shotgun Metagenomics",
-                                    "Cecum Shotgun Functional Metaerg KEGG",
-                                    "Cecum Shotgun Functional COGS",
-                                    "Colon 16S Metagenomics", "Colon Shotgun Metagenomics", 
-                                    "Colon Shotgun Functional Metaerg KEGG", 
-                                    "Colon Shotgun Functional Metaerg COGS")))
-
+                        new.order = levels(plot_dt$var_id)[match(rev(omic_names_dict[omic_names_dict %in%
+                                                                levels(plot_dt$var_id)]),
+                                            levels(plot_dt$var_id))])
 
 x_colors <- group_color_dict[as.character(group_var_dict[levels(plot_dt$sample_name)])]
 
@@ -293,7 +316,7 @@ Thus, the MOFA model will help us find correlated feature patterns in the statis
 # & !multi_omics$samplename %in% c("X643C", "X644C", "X658C")
 num_factors <- 2
 
-mofa_dir_name <- "sig_int_thr08"
+mofa_dir_name <- "sig_int_thr05_liver"
 
 param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
@@ -389,33 +412,77 @@ We applied an overrepresentation analysis (ORA) to the significant genes and dif
 output_dir <- paste0(params$output_dir, "MOFA_Results/", mofa_dir_name, "/")
 corr_output_dir <- paste0(output_dir, "correlation_results/")
 
-omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
+# omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
 
-sapply(names(experiments(omic_dt)), function(x){
-    x_dt <- experiments(omic_dt)[[x]]
-    hist(rowData(x_dt)$Factor_1_weights, main = x)
+## Adding weight data to multi assay
+mofa_mod <- MOFA2::load_model(paste0(output_dir, "model.hdf5"))
+mofa_w_abs <- MOFA2::get_weights(mofa_mod, as.data.frame = FALSE, abs = TRUE)
+# mofa_w_abs <- do.call(rbind, mofa_w_abs)
+```
+
+
+```{r}
+omic_dt <- multi_omics[,,!grepl("16S|Phylum|Genus|Class|Family|Order", names(multi_omics))]
+
+weight_cols <- paste0("Factor_", c("1", "2"), "_weights", 
+            c("", "", "_sig", "_sig"))
+
+mofa_prop_abs <- lapply(mofa_w_abs, function(x){
+    omic_props <- t(apply(x, 1, function(x){x/sum(x)}))
+    factor_max <- apply(omic_props, 1, which.max)
+    
+    max_f_dt <- lapply(unique(factor_max), function(x){
+        factor_max == x
+    })
+    max_f_dt <- do.call(cbind, max_f_dt)
+    max_f_dt <- cbind(as.data.frame(omic_props), max_f_dt)
+    colnames(max_f_dt) <- weight_cols
+    max_f_dt
 })
 
-experiments(omic_dt) <- ExperimentList(lapply(experiments(omic_dt), function(omic_exp){
-    
-    omic_rd <- rowData(omic_exp)[,grepl("Factor_[1,2,3]_weights$", colnames(rowData(omic_exp)))]
-    
-    rowData(omic_exp)$max_weight_id <- apply(abs(as.matrix(omic_rd)), 1, which.max)
+exp_list <- lapply(names(experiments(omic_dt)), function(omic_name){
+    omic_exp <- experiments(omic_dt)[[omic_name]]
+    if(omic_name %in% names(mofa_prop_abs)){
+        rowData(omic_exp) <- cbind(rowData(omic_exp), mofa_prop_abs[[omic_name]])
+    } else{
+        rowData(omic_exp)[weight_cols[1:2]] <- NA
+        rowData(omic_exp)[weight_cols[3:4]] <- TRUE    
+    }
     omic_exp
-}))
+})
+names(exp_list) <- names(omic_dt)
+experiments(omic_dt) <- ExperimentList(exp_list)
 
-network_omics <- list("All Omics" = names(assays(omic_dt)))
 
-# network_omics$`All Omics` <- grep("Untargeted|Targeted|RNASeq|species|metaerg_kegg|Metallomics|PTM|DNA_Methylation.liver",
-#                                   network_omics$`All Omics`, value = TRUE)
+omic_ids <- grepl("liver|RNA|Untargeted|WGB", names(omic_dt))
+omic_int <- names(omic_dt)[omic_ids]
+omic_nint <- names(omic_dt)[!omic_ids]
+omic_combn <- lapply(omic_int, function(x){
+    t(data.frame(x, omic_nint))
+})
+omic_combn <- do.call(cbind, omic_combn)
+network_omics <- list("Pairwise full liver" = omic_combn)
 
-# lapply(experiments(multi_omic_dt), function(x){colnames(rowData(x))})
+library(stringr)
 
+rowData(experiments(omic_dt)$Untargeted_Metabolomics)$compounds_merged <- rowData(experiments(omic_dt)$Untargeted_Metabolomics)$compound_names
+
+rowData(experiments(omic_dt)$Untargeted_Metabolomics)$compounds_merged[is.na(rowData(experiments(omic_dt)$Untargeted_Metabolomics)$compounds_merged)] <- rowData(experiments(omic_dt)$Untargeted_Metabolomics)$PutativeMetabolites[is.na(rowData(experiments(omic_dt)$Untargeted_Metabolomics)$compounds_merged)]
+
+
+rowData(experiments(omic_dt)$Untargeted_Metabolomics)$compounds_merged <- base::make.unique(str_trunc(rowData(experiments(omic_dt)$Untargeted_Metabolomics)$compounds_merged, 75))
+
+saveRDS(omic_dt, paste0(output_dir, "multi_omics_filtered_mod.rds"))
+```
+
+
+```{r}
+# network_omics <- list("All Omics" = names(assays(omic_dt)))
 variables_dicts <- lapply(network_omics[[1]], function(omic_name){
     if(omic_name == "RNA_Sequencing"){
         return("gene_lab")
     } else if(omic_name == "Untargeted_Metabolomics"){
-        return("compound_names")
+        return("compounds_merged")
         #return("HFD-CNT.formula")
     } else if(grepl("DNA_Methylation", omic_name)){
         return("geneName")
@@ -448,7 +515,7 @@ for(corr_method in corr_method_vect){
                                     "Factor_2" = quote(Factor_2_weights_sig)
                                 ),
                                 p_adj_thr = 1,
-                                omic_list_2_correlate = network_omics,
+                                omic_list_pairs = network_omics,
                                 rowData_variable_name_list = variables_dicts,
                                 draw_networks = TRUE,
                                 draw_cytoscape = FALSE,
@@ -501,7 +568,6 @@ factor_res <- lapply(seq_len(num_factors), function(factor_id){
     # factor_dt
 })
 factor_res <- do.call(rbind, factor_res)
-
 ```
 
 ## Correlation Analysis
@@ -514,7 +580,8 @@ library(org.Mm.eg.db)
 output_dir <- paste0(params$output_dir, "MOFA_Results/", mofa_dir_name, "/")
 corr_output_dir <- paste0(output_dir, "correlation_results/")
 
-omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
+# omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
+omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered_mod.rds"))
 
 nw_paths <- list.files(corr_output_dir, 
                        pattern = "network_results_0_005_chi_f1f2_spearman\\.rds$", full.names = T)
@@ -522,7 +589,7 @@ nw_graphs <- lapply(nw_paths, readRDS)
 
 nw_graphs <- lapply(nw_graphs, function(score_dt){
     lapply(score_dt, function(weight_dt){
-        weight_dt[["All Omics"]]
+        weight_dt[["Pairwise full liver"]]
     })
 })
 # table(vertex_attr(nw_graphs$spearman$Factor_1, "Node_Omic"))
@@ -810,7 +877,8 @@ enrich_results_partial <- lapply(names(clu_ids_enrich), function(factor_id){
                 y = strsplit(merged_enrich$GeneRatio.y, "/"))
             
             enrich_g@result <- merged_enrich
-            enrich_g
+    
+            enrich_g[order(enrich_g$Count, decreasing = TRUE),]
             # merged_enrich[merged_enrich$p.adjust <= 0.05,]
         })
     })
@@ -3209,7 +3277,7 @@ mice_dt <- openxlsx::read.xlsx(paste0(params$input_dir, "AnimalData_OscarYanes.x
 mice_num <- mice_dt
 mice_s <- as.data.frame(mice_num)
 dict_vect <- c("Ctrl" = "CNT", "Ctrl ext" = "CNT", "HFD" = "HFD",
-               "INT2" = "INT", "HFD cl." = "HFE")
+               "INT2" = "INT", "HFD excl." = "HFE")
 mice_s$group <- factor(dict_vect[mice_dt$Group], levels = c("CNT", "HFD", 
                                                             "INT", "HFE"))
 dict_vect_g <- c("CNT" = "C", "HFD" = "H", "INT" = "I", "HFE" = "E")
@@ -3218,7 +3286,11 @@ mice_s$samplename <- paste0(make.names(mice_dt$ID), dict_vect_g[mice_s$group])
 mice_s$samplename[!mice_s$samplename %in% omic_dt$samplename]
 omic_dt$samplename[!omic_dt$samplename %in% mice_s$samplename]
 mice_s$samplename[mice_s$samplename == "X686I"] <- "X687I"
+
+saveRDS(mice_s, "../../inputs/processed_mice_dt.rds")
 mice_s <- dplyr::left_join(as.data.frame(colData(omic_dt)), mice_s, by = "samplename")
+
+
 mice_s
 
 ```

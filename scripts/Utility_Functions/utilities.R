@@ -107,20 +107,23 @@ quantile_breaks <- function(dt, length_out){
 }
 
 heatMapFun <- function(dt_list, metadata, stratificationVar, cdQuantile = 0, 
-                       plot_name = NULL, show_colnames, 
-                       clustering_distance_rows, color_list = NA, ...){
+                       plot_name = NULL, show_colnames, show_rownames = FALSE, 
+                       clustering_method = "average",
+                       clustering_distance_rows, color_list = NA, use_cat = TRUE, 
+                       ...){
     group_var <- metadata[stratificationVar]
-    dt_merged <- t(dt_list)
-    if(any(is.na(dt_merged))){
-        dt_merged <- t(impute::impute.knn(t(dt_merged))$data)
+    if(any(is.na(dt_list))){
+        dt_list <- impute::impute.knn(as.matrix(dt_list))$data
     }
-    det_coef <- apply(dt_merged, 2, function(x){
+    dt_list <- t(dt_list)
+    
+    det_coef <- apply(dt_list, 2, function(x){
         sd(x, na.rm = TRUE)/mean(x, na.rm = TRUE)
     })
     det_coef <- sort(det_coef, decreasing = TRUE)
     sel_vars <- names(det_coef)[det_coef >= quantile(det_coef, cdQuantile)]
     
-    dt_quantiles <- quantile_breaks(dt = dt_merged[,sel_vars], 
+    dt_quantiles <- quantile_breaks(dt = dt_list[,sel_vars], 
                                     length_out = 101)
     
     if(cdQuantile != 0){
@@ -132,20 +135,35 @@ heatMapFun <- function(dt_list, metadata, stratificationVar, cdQuantile = 0,
     }
     
     plot_colors <- viridis::viridis(n = length(dt_quantiles) - 1)
-    cat("\n")
-    pheatmap::pheatmap(dt_merged[,sel_vars], color = plot_colors,
-                       annotation_row = as.data.frame(group_var), 
-                       show_colnames = show_colnames, fontsize = 5, 
-                       fontsize_col = 6, fontsize_row = 6, show_rownames = FALSE, 
-                       clustering_method = "average", cluster_rows = TRUE, 
-                       cluster_cols = TRUE, 
-                       clustering_distance_rows = clustering_distance_rows, 
-                       main = plot_name, 
-                       breaks = dt_quantiles, annotation_colors = color_list)
-    cat("\n")
+    
+    if(use_cat){
+        
+        cat("\n")
+        pheatmap::pheatmap(dt_list[,sel_vars], color = plot_colors,
+                           annotation_row = as.data.frame(group_var),
+                           show_colnames = show_colnames, fontsize = 5,
+                           fontsize_col = 6, fontsize_row = 6, show_rownames = show_rownames,
+                           clustering_method = clustering_method, cluster_rows = TRUE,
+                           cluster_cols = TRUE,
+                           clustering_distance_rows = clustering_distance_rows,
+                           main = plot_name,
+                           breaks = dt_quantiles, annotation_colors = color_list)
+        cat("\n")
+    } else{
+        pheatmap::pheatmap(dt_list[,sel_vars], color = plot_colors,
+                           annotation_row = as.data.frame(group_var),
+                           show_colnames = show_colnames, fontsize = 5,
+                           fontsize_col = 6, fontsize_row = 6, show_rownames = show_rownames,
+                           clustering_method = clustering_method, cluster_rows = TRUE,
+                           cluster_cols = TRUE,
+                           clustering_distance_rows = clustering_distance_rows,
+                           main = plot_name,
+                           breaks = dt_quantiles, annotation_colors = color_list)
+    }
 }
 
 pcaFun <- function(dt_list, metadata, stratificationVar){
+    
     patient_metadata_full_num <-  do.call(cbind, dt_list)
     if(any(is.na(patient_metadata_full_num))){
         pca_dt <- impute::impute.knn(t(patient_metadata_full_num))$data    
@@ -566,7 +584,8 @@ clr_proc <- function(omic_dt, ...){
     }
     omic_dt_temp <- transformAssay(x = omic_dt_temp, 
                                     assay.type = "relabundance", 
-                                    method = "rclr", name = "clr")
+                                    method = "clr", name = "clr", 
+                                    pseudocount = 1)
 
     assays(omic_dt) <- list("clr" = assay(omic_dt_temp, "clr"))
     omic_dt
