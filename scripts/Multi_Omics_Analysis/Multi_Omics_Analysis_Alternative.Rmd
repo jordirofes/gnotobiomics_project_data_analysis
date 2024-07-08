@@ -1308,13 +1308,15 @@ plot_dt <- lapply(names(nw_graphs), function(score_id){
 })
 plot_dt <- do.call(rbind, plot_dt)
 
+pdf("Correlation_percentages.pdf")
 ggplot(plot_dt) + geom_col(aes(x = factor, y = Freq,
                                fill = corr_omics_table)) +
     facet_grid(cols = vars(score)) + scale_fill_manual(values = omic_color_dict) + theme_minimal() 
+dev.off()
 
-ggplot(plot_dt) + geom_col(aes(x = factor, y = Freq, group = corr_omics_table,
-                               fill = corr_omics_table)) +
-    facet_grid(cols = vars(score)) + scale_fill_manual(values = omic_color_dict) + theme_minimal() + theme(axis.text.x = element_blank())
+# ggplot(plot_dt) + geom_col(aes(x = factor, y = Freq, group = corr_omics_table,
+#                                fill = corr_omics_table)) +
+#     facet_grid(cols = vars(score)) + scale_fill_manual(values = omic_color_dict) + theme_minimal() + theme(axis.text.x = element_blank())
 ```
 
 ```{r}
@@ -1531,6 +1533,7 @@ if(!dir.exists(enrich_nw_dir)){dir.create(enrich_nw_dir)}
 # })
 # dev.off()
 ```
+
 
 ###### Network creation
 

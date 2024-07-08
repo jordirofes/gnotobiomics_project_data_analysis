@@ -108,12 +108,15 @@ for(score_id in names(nw_graphs_dt)){
             found_ids <- lapply(names(clu_dt), function(pathway_ids){
                 ids <- clu_dt[[pathway_ids]]
                 found <- igraph::neighborhood(graph = nw_graphs_dt[[score_id]][[weight_id]], 
-                                    order = 1, nodes = ids)
+                                    order = 1, nodes = ids, mindist = 1)
                 found <- found[lengths(found) != 0]
+                
                 found <- unique(unlist(sapply(found, names)))
                 unlist(strsplit(paste(pathway_ids,  unique(found), sep = "\t"), "\t"))
             })
             names(found_ids) <- names(clu_dt)
+            found_ids <- found_ids[lengths(found_ids) > 1]
+            
             # found_ids
             Reduce(c, found_ids)
         })
@@ -303,7 +306,7 @@ if(!file.exists(cyt_session_path) | !file.exists(term_network_path)){
                 for(term_id in seq_along(term_nw_list)){
                     
                     term_network_list[[score_id]][[weight_id]][[clu_id]][[term_description[term_id]]] <- subgraph(clu_nw_n2, 
-                                                                                  vids = term_nw_list[[term_id]])
+                                vids = term_nw_list[[term_id]])
                     
                     term_name <- paste0(clu_name, ".", term_description[term_id])
                     

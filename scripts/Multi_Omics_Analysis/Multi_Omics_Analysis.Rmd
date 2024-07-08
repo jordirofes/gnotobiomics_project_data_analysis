@@ -73,13 +73,13 @@ multi_omics_selected <- multi_omics_names[!grepl("16S|Shotgun|unsupervised", mul
 # multi_omics_selected <- multi_omics_names[!grepl("Shotgun|16S|unsupervised|Targeted|Metallomics|Histone", multi_omics_names)]
 
 # multi_omics_selected <- c(multi_omics_selected, multi_omics_names[grepl("genus", multi_omics_names)])
-# multi_omics_selected <- c(multi_omics_selected,
-#                           multi_omics_names[grepl("Shotgun.*Species",
-#                                                 multi_omics_names)])
-
 multi_omics_selected <- c(multi_omics_selected,
-                          multi_omics_names[grepl("Shotgun.*Species|cogs|colon.*metaerg_kegg",
+                          multi_omics_names[grepl("Shotgun.*Species",
                                                 multi_omics_names)])
+
+# multi_omics_selected <- c(multi_omics_selected,
+#                           multi_omics_names[grepl("Shotgun.*Species|cogs|colon.*metaerg_kegg",
+#                                                 multi_omics_names)])
 multi_omics_selected
 ```
 
@@ -321,7 +321,7 @@ Thus, the MOFA model will help us find correlated feature patterns in the statis
 # & !multi_omics$samplename %in% c("X643C", "X644C", "X658C")
 num_factors <- 2
 score_filter <- 0.7
-mofa_dir_name <- "sig_int_thr07"
+mofa_dir_name <- "sig_int_thr07_test"
 
 param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
@@ -538,6 +538,7 @@ dev.off()
 ```{r}
 omic_enrich <- c("Untargeted_Metabolomics", "RNA_Sequencing", "WGB_DNA_Methylation")
 ids_enrich_names <- c("compounds_kegg_merged", "entrezID", "geneId")
+# ids_enrich_names <- c("compounds", "entrezID", "geneId")
 
 library(SummarizedExperiment)
 
