@@ -22,7 +22,7 @@ library(MultiAssayExperiment)
 ## Loading the omic dt
 
 ```{r}
-mofa_dir_name <- "sig_int_thr07"
+mofa_dir_name <- "sig_int_thr07_test"
 
 output_dir <- paste0(params$output_dir, "MOFA_Results/", mofa_dir_name, "/")
 corr_output_dir <- paste0(output_dir, "correlation_results/factor_part_kegg/")
@@ -98,51 +98,73 @@ universe_list_ids <- lapply(names(rna_seq_rd), function(omic_name){
 names(universe_list_ids) <- names(rna_seq_rd)
 ```
 
-```{r}
-coronavirus_genes <- strsplit(enrich_results$spearman.Factor_1.CL_1$geneID[1], "/")[[1]]
-cor_rna_seq <- omic_dt@ExperimentList$RNA_Sequencing[rownames(omic_dt@ExperimentList$RNA_Sequencing) %in%
-                                                         gsub("RNA_Sequencing.", "", coronavirus_genes),]
-rowData(cor_rna_seq)
-```
-
-
 ### Loading kegg pathway
 
 ```{r}
 library(KEGGREST)
 
-carbon_metabolism_id <- "mmu01200" 
+enrich_results <- enrich_results[1:2]
 
-carbon_metabolims_genes <- lapply(enrich_results, function(enrich_res){
-    
-    dmr_gene_ids <- strsplit(enrich_res[enrich_res$ID == "mmu01200",]$geneID.x, "/")[[1]]
-    
-    dmr_ids <- gsub("WGB_DNA_Methylation.", "", dmr_gene_ids[grepl("WGB_DNA_Methylation", dmr_gene_ids)],)
-    gene_ids <- gsub("RNA_Sequencing.", "", dmr_gene_ids[grepl("RNA_Sequencing", dmr_gene_ids)],)
-    # metabo_ids <- strsplit(enrich_res[enrich_res$ID == "mmu01200",]$geneID.y, "/")[[1]]
-    # 
-    
-    dmr_dt <- omic_dt@ExperimentList$WGB_DNA_Methylation[dmr_ids,]
-    gene_dt <- omic_dt@ExperimentList$RNA_Sequencing[gene_ids,]
-    
-    dmr_mat <- as.matrix(assay(dmr_dt))
-    gene_mat <- as.matrix(assay(gene_dt))
-    
-    dmr_ids <- rowData(dmr_dt)$geneId
-    gene_ids <- rowData(gene_dt)$entrezID
-    
-    rownames(dmr_mat) <- paste0(dmr_ids)
-    rownames(gene_mat) <- paste0(gene_ids)
-    # if(length(dmr_ids)){
-    #     rownames(dmr_mat) <- paste0("mmu:", dmr_ids)    
-    # }
-    # if(length(gene_ids)){
-    #     rownames(gene_mat) <- paste0("mmu:", gene_ids)
-    # }
-    # metabo_ids <- unique(unlist(strsplit(rowData(omic_dt@ExperimentList$Untargeted_Metabolomics[metabo_ids,])$compounds, ";")))
-    list("dmr" = dmr_mat, "genes" = gene_mat)
+
+overlapping_pathways <- intersect(enrich_results$pearson.Factor_1.CL_1$ID,
+                                  enrich_results$pearson.Factor_2.CL_1$ID)
+
+pathway_unique <- union(enrich_results$pearson.Factor_1.CL_1$ID,
+                          enrich_results$pearson.Factor_2.CL_1$ID)
+
+
+pathway_info <- lapply(pathway_unique, function(pathway_id){
+    lapply(enrich_results, function(enrich_res){
+        if(!any(enrich_res$ID == pathway_id)){return(NULL)}
+        
+        dmr_gene_ids <- strsplit(enrich_res[enrich_res$ID == pathway_id,]$geneID.x, "/")[[1]]
+        
+        dmr_ids <- gsub("WGB_DNA_Methylation.", "", dmr_gene_ids[grepl("WGB_DNA_Methylation", dmr_gene_ids)],)
+        gene_ids <- gsub("RNA_Sequencing.", "", dmr_gene_ids[grepl("RNA_Sequencing", dmr_gene_ids)],)
+        metabo_ids <- gsub("Untargeted_Metabolomics.", "", strsplit(enrich_res[enrich_res$ID == pathway_id,]$geneID.y, "/")[[1]])
+        metabo_ids <- metabo_ids[metabo_ids != "NA" & !is.na(metabo_ids)]
+        
+
+        if(length(dmr_ids)){
+            dmr_dt <- omic_dt@ExperimentList$WGB_DNA_Methylation[dmr_ids,]
+            dmr_mat <- as.matrix(assay(dmr_dt))
+            dmr_ids <- rowData(dmr_dt)$geneId
+            rownames(dmr_mat) <- paste0(dmr_ids)    
+        } else{
+            dmr_ids <- NULL
+            dmr_mat <- NULL
+        }
+        
+        if(length(gene_ids)){
+            gene_dt <- omic_dt@ExperimentList$RNA_Sequencing[gene_ids,]
+            gene_mat <- as.matrix(assay(gene_dt))
+            gene_ids <- rowData(gene_dt)$entrezID
+            rownames(gene_mat) <- paste0(gene_ids)    
+        } else{
+            gene_mat <- NULL
+            gene_ids <- NULL
+        }
+        
+        if(length(metabo_ids)){
+            metabo_dt <- omic_dt@ExperimentList$Untargeted_Metabolomics[metabo_ids,]
+            metabo_mat <- as.matrix(assay(metabo_dt))
+            
+            metabo_ids <- strsplit(rowData(metabo_dt)$compounds_kegg_merged, ";")
+            metabo_ids <- lapply(metabo_ids, function(x){x[!is.na(x) & x != "NA"]})
+            metabo_mat <- metabo_mat[rep(seq_len(length(metabo_ids)), lengths(metabo_ids)), ]
+            rownames(metabo_mat) <- unlist(metabo_ids)
+            metabo_ids <- unique(do.call(c, metabo_ids))
+        } else{
+            metabo_mat <- NULL
+            metabo_ids <- NULL
+        }
+        list("dmrs" = dmr_ids, "genes" = gene_ids, "metabolites" = metabo_ids)
+        # list("dmrs" = dmr_mat, "genes" = gene_mat, "metabolites" = metabo_mat)
+    })
 })
-entrez_id <- rowData(omic_dt@ExperimentList$RNA_Sequencing)$entrezID
+
+names(pathway_info) <- pathway_unique
+# entrez_id <- rowData(omic_dt@ExperimentList$RNA_Sequencing)$entrezID
 
 # gene.data = NULL; cpd.data = NULL; species = "hsa"; 
 #     kegg.dir = "."; cpd.idtype = "kegg"; gene.idtype = "entrez"; 
@@ -169,13 +191,85 @@ pw_output_dir <- paste0(corr_output_dir, "kegg_pathway_plots/")
 if(!dir.exists(pw_output_dir)){dir.create(pw_output_dir)}
 library(pathview)
 setwd(pw_output_dir)
-pathview::pathview(gene.data = c(rownames(carbon_metabolims_genes$spearman.Factor_1.CL_1$genes), 
-                                 rownames(carbon_metabolims_genes$spearman.Factor_1.CL_1$dmr)), 
-         pathway.id = "01200", 
-         species = "mmu", )
 
-pathview::pathview(gene.data = rownames(carbon_metabolims_genes$spearman.Factor_2.CL_1$genes), 
-         pathway.id = "01200", 
-         species = "mmu")
+lapply(names(pathway_info), function(pathway_id){
+    
+
+    pathway_dt <- pathway_info[[pathway_id]]
+    
+    
+    res_vect <- lapply(seq_len(num_factors), function(factor_id){
+        
+        dmr_vec <- rep(ifelse(factor_id == 1, 1, -1), 
+                        length(pathway_dt[[factor_id]]$dmrs))
+        names(dmr_vec) <- pathway_dt[[factor_id]]$dmrs    
+        
+        gene_vec <- rep(ifelse(factor_id == 1, 1, -1), 
+                        length(pathway_dt[[factor_id]]$genes))
+        names(gene_vec) <- pathway_dt[[factor_id]]$genes
+        
+        metabo_vec <- rep(factor_id, length(pathway_dt[[factor_id]]$metabolites))
+        names(metabo_vec) <- pathway_dt[[factor_id]]$metabolites
+        
+        list("genes" = c(dmr_vec, gene_vec), "metabolites" = metabo_vec)
+    })    
+    
+    met_f1 <- res_vect[[1]]$metabolites
+    met_f2 <- res_vect[[2]]$metabolites
+    
+    met_names <- unique(c(names(met_f1), names(met_f2)))
+    names(met_names) <- met_names
+    
+    met_names[intersect(names(met_f1), names(met_f2))] <- 0
+    met_names[setdiff(names(met_f1), names(met_f2))] <- 1
+    met_names[setdiff(names(met_f2), names(met_f1))] <- -1
+    mode(met_names) <- "numeric"
+    
+    merged_names <- list("genes" = c(res_vect[[1]]$genes, res_vect[[2]]$genes),
+         "metabolites" = met_names)
+    
+    merged_names$genes <- merged_names$genes[!duplicated(names(merged_names$genes))]
+    merged_names$metabolites <- merged_names$metabolites[!duplicated(names(merged_names$metabolites))]
+    
+    if(!length(merged_names$genes)){merged_names$genes <- NULL}
+    if(!length(merged_names$metabolites)){merged_names$metabolites <- NULL}
+    if(is.null(merged_names$genes) & is.null(merged_names$metabolites)){browser()} 
+    
+    pathview::pathview(
+                    gene.data = merged_names$genes, 
+                    cpd.data = merged_names$metabolites, 
+                    limit = list("gene" = c(-1,1), "cpd" = c(-1,1)), 
+                    both.dirs = list("gene" = FALSE, "cpd" = FALSE), 
+                    kegg.native = TRUE, 
+                    discrete = list("gene" = TRUE, "cpd" = TRUE),
+                    low = list("gene" = "white", "cpd" = "blue"),
+                    mid = list("gene" = "blue", "cpd" = "blue"),
+                    high = list("gene" = "red", "cpd" = "red"),
+                    pathway.id = pathway_id, 
+                    species = "mmu") 
+    # pathview::pathview(
+    #                 gene.data = merged_names$genes, 
+    #                 cpd.data = merged_names$metabolites, 
+    #                 limit = list("gene" = c(1), "cpd" = c(1)), 
+    #                 both.dirs = list("gene" = FALSE, "cpd" = FALSE), 
+    #                 kegg.native = TRUE, 
+    #                 discrete = list("gene" = TRUE, "cpd" = TRUE),
+    #                 low = list("gene" = "white", "cpd" = "blue"),
+    #                 mid = list("gene" = "blue", "cpd" = "blue"),
+    #                 high = list("gene" = "red", "cpd" = "red"),
+    #                 pathway.id = pathway_id, 
+    #                 species = "mmu") 
+    # pathview::pathview(gene.data = c(rownames(pathway_dt$pearson.Factor_1.CL_1$dmrs),
+    #                                 rownames(pathway_dt$pearson.Factor_1.CL_1$genes)), 
+    #                    cpd.data = rownames(pathway_dt$pearson.Factor_1.CL_1$metabolites),  
+    #      pathway.id = pathway_id, 
+    #      species = "mmu")    
+
+    # pathview::pathview(gene.data = c(rownames(pathway_dt$pearson.Factor_2.CL_1$dmrs),
+    #                                 rownames(pathway_dt$pearson.Factor_2.CL_1$genes)), 
+    #                    cpd.data = rownames(pathway_dt$pearson.Factor_2.CL_1$metabolites), 
+    #      pathway.id = pathway_id, 
+    #      species = "mmu")
+})
 ```
 

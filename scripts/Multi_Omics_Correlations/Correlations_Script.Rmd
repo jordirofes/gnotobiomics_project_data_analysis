@@ -155,6 +155,9 @@ omic_variable_correlation_list <- lapply(multi_omic_filtered_list, function(mult
         keep_omic <- sapply(omic_names, function(omic_name){nrow(assay(multi_omic_filtered[,,omic_name])) != 0})
         omic_names <- omic_names[keep_omic]
         
+        keep_combn <- sapply(as.data.frame(omic_combn), function(x){all(x %in% omic_names)})
+        omic_combn <- omic_combn[,keep_combn]
+        
         corr_output_list <- list()
         
         for(multi_omic_exp in seq_along(experiments(multi_omic_filtered))){

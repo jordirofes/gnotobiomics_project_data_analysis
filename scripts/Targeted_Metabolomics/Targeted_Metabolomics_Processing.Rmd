@@ -371,9 +371,9 @@ mapply(function(pca_dt, group_dt){
 ```{r}
 pca_dt_list <- lapply(gf_cv_data_list, function(organ_data){
     met_data <- assay(organ_data)
-    met_data <- impute::impute.knn(t(met_data))$data
+    met_data <- impute::impute.knn(as.matrix(met_data))$data
     
-    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = colData(organ_data), design = ~ group)
+    dt_pca <- DESeqDataSetFromMatrix(round(met_data), colData = colData(organ_data), design = ~ group)
     
     dt_pca <- estimateSizeFactors(dt_pca)
     dt_pca <- estimateDispersions(dt_pca)

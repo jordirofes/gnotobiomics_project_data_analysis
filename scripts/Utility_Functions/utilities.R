@@ -633,10 +633,14 @@ go_similarity_matrix <- function(go_list1, go_list2, semData, measure){
 
 network_heatmap_fun <- function(plot_dt, labels_dt, omic_color_dict, 
                                 x_colors, plot_title){
+    dt_quantiles <- quantile_breaks(dt = plot_dt[,"value"], 
+                                    length_out = 101)
+    
     p <- ggplot(plot_dt, aes(x = sample_name, fill = value, 
                                  y = var_id)) + 
             geom_tile() + 
-            theme_minimal() + scale_fill_viridis_c() + 
+            theme_minimal() + 
+            scale_fill_viridis_c(values = scales::rescale(dt_quantiles)) +
             theme(axis.text.x = element_text(angle = 90, 
                                              colour = x_colors),
                   axis.text.y = element_text(size = 5),
@@ -651,7 +655,8 @@ network_heatmap_fun <- function(plot_dt, labels_dt, omic_color_dict,
             geom_tile(inherit.aes = FALSE, 
                       aes(x = -1, y = var_id, 
                      fill = omic_name), data = labels_dt) +
-            scale_fill_manual(values = omic_color_dict)    
+            scale_fill_manual(values = omic_color_dict) 
+        
 }
 
 network_lineplot_fun <- function(plot_dt, labels_dt, omic_color_dict, x_colors, 
@@ -689,7 +694,6 @@ plot_nw_term <- function(omic_dt, feature_ids, term_ids, group_var = "group",
                         plot_type = c("Heatmap", "Lineplot")){
     
     # Preparing some dictionary data
-    feature_ids <- c(feature_ids, term_ids)
     if(!is.null(params$omic_names_dict)){
         names(omic_color_dict) <- omic_names_dict[as.character(names(omic_color_dict))]
     }
@@ -803,10 +807,12 @@ plot_nw_term <- function(omic_dt, feature_ids, term_ids, group_var = "group",
 }
 
 
-setReadable_custom <- function(enrich_res, featureDict){
-    if(!is(enrich_res, "enrichResult") || nrow(enrich_res@result) == 0){return(enrich_res)}
-    geneID_list <- strsplit(enrich_res@result$geneID, "/")
-    enrich_res@result$geneID <- sapply(geneID_list, function(pathway_ids){
+setReadable_custom <- function(enrich_res, featureDict, dt_type = "ora"){
+    
+    dt_type <- switch(dt_type, "ora" = "geneID", "gsea" = "core_enrichment")
+    if((!is(enrich_res, "enrichResult") & !is(enrich_res, "gseaResult")) || nrow(enrich_res@result) == 0){return(enrich_res)}
+    geneID_list <- strsplit(enrich_res@result[[dt_type]], "/")
+    enrich_res@result[[dt_type]] <- sapply(geneID_list, function(pathway_ids){
 
         found <- names(featureDict)[sapply(featureDict, function(ids_dict){any(ids_dict %in% pathway_ids)})]
         

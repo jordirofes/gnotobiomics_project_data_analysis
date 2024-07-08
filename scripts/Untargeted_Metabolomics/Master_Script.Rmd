@@ -82,7 +82,7 @@ for(id in column_ids){
     untargeted_lima_output <- paste0(output_path, "xcms_hermes_exp_lima.rds")
     untargeted_gfcv_output <- paste0(output_path, "xcms_hermes_exp_gfcv.rds")
     
-    if(!file.exists(untargeted_lima_output)){
+    if(file.exists(untargeted_lima_output)){
         param_list <- list(
             metadata_file = metadata_path,
             xcms_hermes_file = xcms_hermes_output_path,
@@ -226,6 +226,21 @@ rowData(lima_exp)$metaboanalyst_compound_names <- name_list
 # })
 # 
 # lima_exp <- lima_exp[union(keep_ids, keep_ids2)]
+library(stringr)
+rowData(lima_exp)$compounds_merged <- rowData(lima_exp)$compound_names
+
+rowData(lima_exp)$compounds_merged[is.na(rowData(lima_exp)$compounds_merged)] <- rowData(lima_exp)$PutativeMetabolitesKEGG[is.na(rowData(lima_exp)$compounds_merged)]
+
+
+rowData(lima_exp)$compounds_merged_readable <- str_trunc(rowData(lima_exp)$compounds_merged, 75)
+rowData(lima_exp)$compounds_merged_readable[!is.na(rowData(lima_exp)$compounds_merged_readable) & rowData(lima_exp)$compounds_merged_readable != ""] <- base::make.unique(rowData(lima_exp)$compounds_merged_readable[!is.na(rowData(lima_exp)$compounds_merged_readable) & rowData(lima_exp)$compounds_merged_readable != ""])    
+
+
+rowData(lima_exp)$compounds_kegg_merged <- rowData(lima_exp)$compounds
+rowData(lima_exp)$compounds_kegg_merged[is.na(rowData(lima_exp)$compounds_kegg_merged)] <- rowData(lima_exp)$kegg_id[is.na(rowData(lima_exp)$compounds_kegg_merged)]
+
+
+#####
 
 saveRDS(lima_exp, paste0(params$output_dir, "Untargeted_Metabolomics_exp_lima.rds"))
 

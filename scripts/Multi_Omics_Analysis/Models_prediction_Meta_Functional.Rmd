@@ -1,0 +1,331 @@
+---
+title: "Test_Correlations_Meta_Functional"
+output: html_document
+date: "2024-06-28"
+params:
+    input_dir: "../../inputs/"
+    output_dir: "../../outputs/Multi_Omics_Analysis/"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading the data
+```{r}
+library(MultiAssayExperiment)
+```
+
+```{r}
+num_factors <- 2
+score_filter <- 0.7
+mofa_dir_name <- "sig_int_thr07_test"
+output_dir <- paste0(params$output_dir, "MOFA_Results/", mofa_dir_name, "/")
+corr_output_dir <- paste0(output_dir, "correlation_results/")
+
+enrich_name <- "factor_part_kegg"
+enrich_nw_dir <- paste0(corr_output_dir, enrich_name, "/")
+# corr_output_dir <- paste0(output_dir, "correlation_results/")
+# omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
+
+omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
+
+
+exp_names <- names(omic_dt)[grepl("Shotgun.*Species", 
+                                names(omic_dt))]
+
+omic_dt_filt <- omic_dt[,,exp_names]
+
+
+multi_omics <- readRDS(paste0(params$output_dir, 
+                            "Multi_Omics_Analysis_MA_exp_lima.rds"))
+exp_names_f <- names(multi_omics)[grepl("Functional", 
+                                names(multi_omics))]
+multi_omic_filt <- multi_omics[,,exp_names_f]
+
+
+omic_var_names <- lapply(seq_len(num_factors), function(factor_id){
+    factor_col <- paste0("Factor_", factor_id,  "_weights_sig")
+    
+    sapply(names(omic_dt_filt), function(omic_id){
+        omic_exp <- experiments(omic_dt_filt)[[omic_id]]
+        rownames(omic_exp)[rowData(omic_exp)[,factor_col]]
+    })
+})
+names(omic_var_names) <- paste0("Factor_", seq_len(num_factors))
+```
+
+```{r}
+new_exps <- experiments(multi_omic_filt)
+
+new_exps$Shotgun_Metagenomics_Functional.cecum.merge <- Reduce(
+    f = function(x,y){
+            combineRows(x, y, delayed = FALSE)
+
+        },
+    as.list(multi_omic_filt@ExperimentList[grepl("Functional.cecum", names(multi_omic_filt@ExperimentList))]))
+
+new_exps$Shotgun_Metagenomics_Functional.colon.merge <- Reduce(
+    f = function(x,y){
+            combineRows(x, y, delayed = FALSE)
+
+        },
+    as.list(multi_omic_filt@ExperimentList[grepl("Functional.colon", names(multi_omic_filt@ExperimentList))]))
+
+multi_omic_filt <- MultiAssayExperiment(experiments = new_exps, 
+                                        colData = colData(multi_omic_filt))
+multi_omic_filt <- multi_omic_filt[,,grepl("merge", names(multi_omic_filt))]
+```
+
+
+```{r}
+filtered_exps <- lapply(names(multi_omic_filt), function(multi_omics_names){
+    multi_omics_exp <- experiments(multi_omic_filt)[[multi_omics_names]]
+    p_val_dt <- rowData(multi_omics_exp)[,grepl("adj.p.value", colnames(rowData(multi_omics_exp)))]
+    p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+    multi_omics_exp <- multi_omics_exp[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+    
+    if(nrow(multi_omics_exp) == 0){return(NA)}
+    
+    multi_omics_exp
+})
+names(filtered_exps) <- names(multi_omic_filt)
+filtered_exps[is.na(filtered_exps)] <- NULL
+
+experiments(multi_omic_filt) <- ExperimentList(filtered_exps)
+```
+
+
+```{r}
+# test_res <- lapply(seq_len(num_factors), function(weight_id){
+#     weight_vars <- omic_var_names[[weight_id]]
+# 
+#     organ_res <- lapply(c("cecum", "colon"), function(organ_id){
+#         organ_vars <- weight_vars[[grep(organ_id, names(weight_vars), value = TRUE)]]
+#         organ_vars <- make.names(organ_vars)
+#         
+#         if(!length(organ_vars)){return(NA)}
+# 
+#         functional_exp <- experiments(multi_omic_filt)[[grep(organ_id, names(multi_omic_filt), value = TRUE)]]
+#         rownames(functional_exp) <- make.names(rownames(functional_exp))
+#         functional_feat <- as.data.frame(t(assay(functional_exp)))
+#         
+#         sp_exp <- experiments(omic_dt_filt)[[grep(organ_id, names(omic_dt_filt), 
+#                                                    value = TRUE)]]
+#         rownames(sp_exp) <- make.names(rownames(sp_exp))
+#         
+#         sp_exp <- sp_exp[organ_vars,]
+#         
+#         if(length(organ_vars) >= ncol(sp_exp)){
+#             sp_exp <- sp_exp[order(abs(rowData(sp_exp)[[paste0("Factor_", weight_id, "_weights")]]), 
+#                                     decreasing = TRUE),]
+# 
+#             keep_names <- organ_vars[seq_len(ncol(sp_exp) - 2)]
+#             extra_names <- organ_vars[!seq_along(organ_vars) %in% keep_names]
+#             
+#             # sp_extra <- sp_exp[extra_names,]
+#             # sp_exp <- sp_exp[keep_names,]
+#         } else{
+#             extra_names <- NA
+#             keep_names <- rownames(sp_exp)
+#         }
+#         sp_feat <- as.data.frame(t(assay(sp_exp)))
+#         
+#         merged_dt <- cbind(sp_feat, functional_feat)
+#         
+#         feat_res <- lapply(colnames(functional_feat), function(feat_id){
+#             formula_dt <- expression(paste0(feat_id, " ~ ", 
+#                                             paste0(keep_names, 
+#                                                     collapse = "+")))
+#             feat_lm <- lm(as.formula(eval(formula_dt)), data = merged_dt)
+#             feat_lm <- step(feat_lm)
+#             
+#             feat_sum <- summary(feat_lm)
+#             if(nrow(feat_sum$coefficients) == 1){return(NA)}
+#             as.data.frame(feat_sum$coefficients[-1, "Pr(>|t|)", drop = FALSE])
+#             # if(any(coef_pvals <= 0.05)){
+#             #     return(feat_id)
+#             # }
+#         })
+#         names(feat_res) <- colnames(functional_feat)
+#         
+#         sp_res <- lapply(colnames(sp_feat), function(sp_dt){
+#             
+#             # na_dt <- data.frame(NA)
+#             # rownames(na_dt) <- sp_dt
+#             
+#             feat_pvals <- sapply(feat_res, function(f_res){
+#                 if(all(is.na(f_res))){return(NA)}
+#                 f_res[sp_dt,]
+#             })
+#             # names(feat_pvals) <- names(feat_res)
+#             # feat_pvals <- do.call(rbind, feat_pvals)
+#             feat_adj.pvals <- p.adjust(feat_pvals, method = "fdr")
+#             feat_names <- names(feat_adj.pvals)[!is.na(feat_adj.pvals) & feat_adj.pvals <= 0.05]
+#             rowData(functional_exp[feat_names,])
+# 
+#         })
+#         names(sp_res) <- colnames(sp_feat)
+#         sp_res
+#     })
+#     names(organ_res) <- c("cecum", "colon")
+#     organ_res
+# })
+```
+
+```{r}
+correlation_scores <- c("pearson", "spearman")
+test_res_score <- lapply(correlation_scores, function(score_id){
+    test_res <- lapply(seq_len(num_factors), function(weight_id){
+        weight_vars <- omic_var_names[[weight_id]]
+    
+        organ_res <- lapply(c("cecum", "colon"), function(organ_id){
+            organ_vars <- weight_vars[[grep(organ_id, names(weight_vars), value = TRUE)]]
+            organ_vars <- make.names(organ_vars)
+            
+            if(!length(organ_vars)){return(NA)}
+    
+            functional_exp <- experiments(multi_omic_filt)[[grep(organ_id, names(multi_omic_filt), value = TRUE)]]
+            rownames(functional_exp) <- make.names(rownames(functional_exp))
+            # functional_feat <- as.data.frame(t(assay(functional_exp)))
+            
+            sp_exp <- experiments(omic_dt_filt)[[grep(organ_id, names(omic_dt_filt), 
+                                                       value = TRUE)]]
+            rownames(sp_exp) <- make.names(rownames(sp_exp))
+            
+            sp_exp <- sp_exp[organ_vars,]
+        
+            corr_dt <- mia::getExperimentCrossAssociation(
+                        functional_exp, sp_exp, assay.type1 = "clr", 
+                        assay.type2 = "clr", method = score_id, 
+                        cor_threshold = NULL, p_adj_method = "fdr", 
+                        p_adj_threshold = 0.05, test_significance = TRUE)
+            
+            sp_res <- lapply(unique(corr_dt$Var2), function(sp_dt){
+                correlated_names <- as.character(corr_dt$Var1)[as.character(corr_dt$Var2) == sp_dt]
+                sp_rd <- rowData(functional_exp[correlated_names,])
+                cbind(data.frame("Specie" = sp_dt), sp_rd)
+            })
+            names(sp_res) <- as.character(unique(corr_dt$Var2))
+            sp_res
+        })
+        names(organ_res) <- c("cecum", "colon")
+        organ_res
+    })
+    names(test_res) <- paste0("Factor_", seq_len(num_factors))
+    test_res
+})
+names(test_res_score) <- correlation_scores
+
+
+results_wb <- openxlsx::createWorkbook()
+lapply(names(test_res_score), function(score_id){
+    
+    score_dt <- test_res_score[[score_id]]
+    
+    lapply(names(score_dt), function(factor_id){
+        factor_dt <- score_dt[[factor_id]]
+        lapply(names(factor_dt), function(organ_id){
+            organ_dt <- factor_dt[[organ_id]]
+            if(!length(organ_dt) | all(is.na(organ_dt))){return(NULL)}
+            organ_dt <- do.call(rbind, organ_dt)
+            
+            sheet_name <- paste(score_id, factor_id, organ_id, sep = ".")
+            output_name <- paste0(output_dir, "functional_associations.xlsx")
+                
+            openxlsx::addWorksheet(wb = results_wb,
+                                    sheetName = sheet_name)
+            openxlsx::writeData(wb = results_wb, sheet = sheet_name,
+                                x = as.data.frame(organ_dt)[,c(1, 38:47)])
+            openxlsx::saveWorkbook(results_wb, 
+                                    file = output_name, 
+                                    overwrite = TRUE)  
+                
+        })
+    })
+})
+```
+
+```{r}
+names_vect <- lapply(test_res, function(weight_dt){
+    lapply(weight_dt, function(organ_dt){
+        if(all(is.na(organ_dt))){return(NA)}
+        
+        organ_dt <- do.call(rbind, organ_dt)
+        
+        organ_dt$readable_name
+        
+        # lapply(organ_dt, function(specie_dt){
+        #     
+        #     
+        # })
+    })
+})
+
+intersect(names_vect$Factor_1$colon, names_vect$Factor_2$colon)
+
+setdiff(names_vect$Factor_1$colon, names_vect$Factor_2$colon)
+setdiff(names_vect$Factor_2$colon, names_vect$Factor_1$colon)
+```
+
+
+```{r}
+library(tm)
+library(wordcloud)
+
+# test_corpus <- test_res$Factor_1$colon$Family.Pyrinomonadaceae[["readable_name"]]
+# test_corpus
+
+lapply(test_res, function(weight_dt){
+    lapply(weight_dt, function(organ_dt){
+        if(all(is.na(organ_dt))){return(NA)}
+        lapply(organ_dt, function(specie_dt){
+            if(all(is.na(specie_dt)) && !nrow(specie_dt)){return(NA)}
+            specie_dt <- specie_dt$readable_name
+            corpus_dt <- Corpus(x = VectorSource(specie_dt))
+    
+            corpus_clean <- tm_map(corpus_dt, tolower)
+            corpus_clean <- tm_map(corpus_clean, function(x){gsub(";|-", " ", x)})
+            
+            corpus_clean <- tm_map(corpus_clean, removeWords, c(stopwords(), "colon", "pwy"))
+            corpus_clean <- tm_map(corpus_clean, removePunctuation)
+            corpus_clean <- tm_map(corpus_clean, stripWhitespace)
+            sms_dtm <- DocumentTermMatrix(corpus_clean)
+            
+            freq_dt <- colSums(as.matrix(sms_dtm))
+            
+            wordcloud(names(freq_dt), as.numeric(freq_dt), min.freq = 5, random.order = FALSE)    
+        })
+    })
+})
+
+```
+
+
+```{r}
+lapply(test_res, function(weight_dt){
+    lapply(weight_dt, function(organ_dt){
+        if(all(is.na(organ_dt))){return(NA)}
+        
+        organ_dt <- do.call(rbind, organ_dt)
+        
+        if(all(is.na(organ_dt)) && !nrow(organ_dt)){return(NA)}
+        organ_dt <- organ_dt$readable_name
+        corpus_dt <- Corpus(x = VectorSource(organ_dt))
+
+        corpus_clean <- tm_map(corpus_dt, tolower)
+        corpus_clean <- tm_map(corpus_clean, function(x){gsub(";|-", " ", x)})
+        
+        corpus_clean <- tm_map(corpus_clean, removeWords, c(stopwords(), "colon", "pwy"))
+        corpus_clean <- tm_map(corpus_clean, removePunctuation)
+        corpus_clean <- tm_map(corpus_clean, stripWhitespace)
+        sms_dtm <- DocumentTermMatrix(corpus_clean)
+        
+        freq_dt <- colSums(as.matrix(sms_dtm))
+        
+        wordcloud(names(freq_dt), as.numeric(freq_dt), min.freq = 30, random.order = FALSE)    
+    })
+})
+
+```
+

@@ -7,12 +7,14 @@ params:
     output_dir: "../../outputs/Multi_Omics_Analysis/MOFA_Results/"
     multi_omics_exp: !r multi_omics[,colData(multi_omics)$group != "HFE",multi_omics_selected]
     group_var: "group"
+    sample_var: "samplename"
     num_factors: 2
     results_name: !r mofa_dir_name
-    color_vec: !r c("CNT"="black", "HFD"="red", "INT"="blue")
+    color_vec: !r group_color_dict
     random_seed: 1234
     convergence_mode: "slow"
     ntries: 3
+    score_filter: 0.7
 ---
 
 ```{r setup, include=FALSE}
@@ -183,11 +185,13 @@ rm(model_list)
 # file_path <- "./model.hdf5"
 # model <- load_model(file_path)
 mofa_group_var <- colData(params$multi_omics_exp)[[params$group_var]]
+names(mofa_group_var) <- colData(params$multi_omics_exp)[[params$sample_var]]
 
 # colData(multi_omics)$sample <- colData(multi_omics)$samplename
 
 rownames(samples_metadata(multi_omics_mofa)) <- samples_metadata(multi_omics_mofa)$sample
 
+samples_metadata(multi_omics_mofa)$groups <- mofa_group_var[as.character(samples_metadata(multi_omics_mofa)$sample)]
 
 p <- plot_variance_explained(multi_omics_mofa) + theme(axis.text.x = element_text(size = 8, angle = 90))
 print(p)
@@ -196,9 +200,9 @@ pdf(paste0(output_dir, "mofa_explained_var.pdf"))
 print(p)
 dev.off()
 
-p <- plot_factor(multi_omics_mofa, group_by = mofa_group_var, 
+p <- plot_factor(multi_omics_mofa, group_by = "groups", 
                 factors = seq_len(params$num_factors), 
-                color_by = mofa_group_var, add_violin = TRUE)
+                color_by = "groups", add_violin = TRUE)
 
 p <- p + 
   scale_color_manual(values= params$color_vec) +
@@ -213,7 +217,7 @@ dev.off()
 ```{r, fig.height=12, fig.width=12}
 p <- plot_factors(multi_omics_mofa, 
   factors = seq_len(params$num_factors), 
-  color_by = as.character(mofa_group_var), 
+  color_by = "groups", 
   legend = FALSE, 
 ) + scale_color_manual(values = params$color_vec)
 print(p)
@@ -229,7 +233,7 @@ MOFA2::get_variance_explained(object = multi_omics_mofa, factors = seq_len(param
 
 d3plot <- plot_ly(x = pca_dt$group1[,1], y = pca_dt$group1[,2], 
                     z = pca_dt$group1[,3], 
-                    color = mofa_group_var)
+                    color = samples_metadata(multi_omics_mofa)$groups)
 d3plot <- d3plot %>% add_markers()
 # d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
 #                      yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
@@ -329,7 +333,7 @@ score_dt <- get_factors(object = multi_omics_mofa)
 ```
 
 ```{r}
-thr <- 0.5
+thr <- params$score_filter
 thr_score <- 0
 
 weight_dt <- get_weights(object = multi_omics_mofa)
@@ -434,7 +438,7 @@ for(id in seq_len(params$num_factors)){
         
         
         exp_dt <- MOFA2::get_data(multi_omics_mofa, views = view_id)[[1]][[1]]
-        exp_metadata <- colData(params$multi_omics_exp)
+        exp_metadata <- samples_metadata(multi_omics_mofa)
         # exp_metadata <- colData(multi_omics[,,multi_omics_selected])
             
         # feature_n_percent <- var_exp_dt[id,view_id]
@@ -465,7 +469,7 @@ for(id in seq_len(params$num_factors)){
 
         heatMapFun(exp_dt[keep_vars, samples_found], 
                 metadata = exp_metadata[samples_found,], 
-                stratificationVar = params$group_var, 
+                stratificationVar = "groups", 
                 cdQuantile = 0, 
                 plot_name = paste(view_id, "Top", length(keep_vars), 
                                 "Variables in factor", id, 

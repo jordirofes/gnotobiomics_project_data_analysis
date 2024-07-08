@@ -5,7 +5,7 @@ date: "2024-04-24"
 output: html_document
 params:
     nw_graphs: !r nw_graphs
-    enrich_results_list: !r enrich_results_partial
+    enrich_results_list: !r enrich_results_partial_ora
     output_dir: !r enrich_nw_dir
     omic_dt: !r omic_dt
     group_var: "group"
@@ -17,6 +17,7 @@ params:
     omic_shape_dict: !r shape_vect_ext
     var_order_col_list: !r var_order_col_list
     close_cyt_session: TRUE
+    exclude_neighbors_omics: !r NULL
 ---
 
 ```{r setup, include=FALSE}
@@ -67,7 +68,12 @@ for(score_id in names(nw_graphs_dt)){
         ## Define nodes n1
         term_dt <- lapply(names(term_list), function(clu_id){
             geneID_list <- strsplit(term_list[[clu_id]]$geneID, "/")
-            geneID_list <- lapply(geneID_list, function(x){x[!is.na(x) & x != "NA"]})
+            clu_nw <- nw_graphs_dt[[score_id]][[weight_id]]
+            
+            geneID_list <- lapply(geneID_list, function(x){
+                x <- x[!is.na(x) & x != "NA"]
+                x_found <- x[x %in% names(V(clu_nw))]
+            })
             
             names(geneID_list) <- term_list[[clu_id]]$ID
             
@@ -79,14 +85,17 @@ for(score_id in names(nw_graphs_dt)){
         ## Define edges n1
         
         term_dt_n1 <- lapply(term_dt, function(clu_dt){
-            
             found_ids <- lapply(names(clu_dt), function(pathway_ids){
                 ids <- clu_dt[[pathway_ids]]
                 ids <- unique(unlist(ids))
+                if(!length(ids)){
+                    return(NA)
+                }
                 unlist(strsplit(paste(pathway_ids,  unique(ids), sep = "\t"), "\t"))
             })
             names(found_ids) <- names(clu_dt)
-            # found_ids
+            found_ids[sapply(found_ids, function(x){all(is.na(x))})] <- NULL
+            
             Reduce(c, found_ids)
         })
         names(term_dt_n1) <- names(term_list) 
@@ -98,9 +107,9 @@ for(score_id in names(nw_graphs_dt)){
             
             found_ids <- lapply(names(clu_dt), function(pathway_ids){
                 ids <- clu_dt[[pathway_ids]]
-                
                 found <- igraph::neighborhood(graph = nw_graphs_dt[[score_id]][[weight_id]], 
                                     order = 1, nodes = ids)
+                found <- found[lengths(found) != 0]
                 found <- unique(unlist(sapply(found, names)))
                 unlist(strsplit(paste(pathway_ids,  unique(found), sep = "\t"), "\t"))
             })
@@ -165,9 +174,9 @@ library(RCy3)
 
 
 ```{r}
-cyt_session_path <- paste0(params$output_dir, 
-                        "correlation_results_f1f2_network_full.cys")
-term_network_path <- paste0(params$output_dir, 
+cyt_session_path <- paste0(params$output_dir,
+                            "correlation_results_f1f2_network_full.cys")
+term_network_path <- paste0(params$output_dir,
                             "term_network_list.rds")
 
 safe_loop <- function() {
@@ -241,11 +250,13 @@ if(!file.exists(cyt_session_path) | !file.exists(term_network_path)){
             
             small_node <- names(V(weight_dt))[grepl("Shotgun_Metagenomics_Functional", 
                                                     vertex_attr(weight_dt, name = "Node_Omic"))]
+            if(length(small_node)){
+                RCy3::setNodePropertyBypass(node.names = small_node, new.values = 60, 
+                                            visual.property = "NODE_LABEL_WIDTH")
+                RCy3::setNodePropertyBypass(node.names = small_node, new.values = 4, 
+                                            visual.property = "NODE_LABEL_FONT_SIZE")    
+            }
             
-            RCy3::setNodePropertyBypass(node.names = small_node, new.values = 60, 
-                                        visual.property = "NODE_LABEL_WIDTH")
-            RCy3::setNodePropertyBypass(node.names = small_node, new.values = 4, 
-                                        visual.property = "NODE_LABEL_FONT_SIZE")
             
             # RCy3::setNodeColorMapping(table.column = make.names(params$fold_change_variable), 
             #                         colors = colorRampPalette(colors = c("blue", 
@@ -280,7 +291,8 @@ if(!file.exists(cyt_session_path) | !file.exists(term_network_path)){
                 
                 term_nw_list <- lapply(names(clu_vertex), function(term_name){
                     neighbors_ids <- names(neighbors(clu_nw_n2, term_name))
-                    neighbors_ids <- neighbors_ids[!grepl("RNA_Sequencing|Untargeted_Metabolomics|WGB_DNA|enrich_term",
+                    neighbors_ids <- neighbors_ids[!grepl(paste(c(params$exclude_neighbors_omics, 
+                                                                "enrich_term"), collapse = "|"),
                                                         neighbors_ids)]
                     c(neighbors_ids, term_name)
                 })
@@ -363,15 +375,26 @@ lapply(names(term_network_list), function(score_id){
                 term_ids <- unlist(term_ids, use.names = FALSE)
                 
                 if(length(feature_ids) == 1){return(NULL)}
-                print(plot_nw_term(omic_dt = params$omic_dt, feature_ids = feature_ids, 
-                            term_ids = term_ids,
+                print(plot_nw_term(omic_dt = params$omic_dt, 
+                            feature_ids = term_ids, 
                             feature_ids_dict = params$feature_ids_dict, 
                             omic_names_dict = params$omic_names_dict,
                             var_order_col = params$var_order_col_list[[score_id]][[factor_id]],
                             omic_color_dict = params$omic_color_dict, 
                             group_color_dict = params$group_color_dict,
-                            plot_title = paste(clu_id, term_id), 
+                            plot_title = paste(clu_id, term_id, "Term Features"), 
                             plot_type = "Heatmap"))
+                
+                print(plot_nw_term(omic_dt = params$omic_dt, 
+                            feature_ids = feature_ids, 
+                            feature_ids_dict = params$feature_ids_dict, 
+                            omic_names_dict = params$omic_names_dict,
+                            var_order_col = params$var_order_col_list[[score_id]][[factor_id]],
+                            omic_color_dict = params$omic_color_dict, 
+                            group_color_dict = params$group_color_dict,
+                            plot_title = paste(clu_id, term_id, "Correlated Features"), 
+                            plot_type = "Heatmap"))
+                
             })
             
         })
@@ -404,14 +427,25 @@ lapply(names(term_network_list), function(score_id){
                 term_ids <- unlist(term_ids, use.names = FALSE)
                 
                 if(length(feature_ids) == 1){return(NULL)}
-                print(plot_nw_term(omic_dt = params$omic_dt, feature_ids = feature_ids, 
-                            term_ids = term_ids,
+                
+                print(plot_nw_term(omic_dt = params$omic_dt, 
+                            feature_ids = term_ids,
                             feature_ids_dict = params$feature_ids_dict, 
                             omic_names_dict = params$omic_names_dict,
                             var_order_col = params$var_order_col_list[[score_id]][[factor_id]],
                             omic_color_dict = params$omic_color_dict, 
                             group_color_dict = params$group_color_dict,
-                            plot_title = paste(clu_id, term_id), 
+                            plot_title = paste(clu_id, term_id, "Term Features"), 
+                            plot_type = "Lineplot"))
+                
+                print(plot_nw_term(omic_dt = params$omic_dt, 
+                            feature_ids = feature_ids, 
+                            feature_ids_dict = params$feature_ids_dict, 
+                            omic_names_dict = params$omic_names_dict,
+                            var_order_col = params$var_order_col_list[[score_id]][[factor_id]],
+                            omic_color_dict = params$omic_color_dict, 
+                            group_color_dict = params$group_color_dict,
+                            plot_title = paste(clu_id, term_id, "Correlated Features"), 
                             plot_type = "Lineplot"))
             })
             
@@ -451,7 +485,7 @@ lapply(names(term_network_list), function(score_id){
                 })
                 term_ids <- unlist(term_ids, use.names = FALSE)
                 
-                return(c(feature_ids, term_ids))
+                return(term_ids)
             })
             names(matched_ids) <- names(clu_nw)
             
@@ -481,3 +515,62 @@ openxlsx::saveWorkbook(term_ids_count,
                         overwrite = TRUE)
 ```
 
+```{r}
+omic_names <- c("DMRs", "Genes", "Metabolites")
+
+merged_feature_ids_dict <- Reduce(c, params$feature_ids_dict)
+
+term_ids_count <- openxlsx::createWorkbook()
+
+lapply(names(term_network_list), function(score_id){
+    score_nw <- term_network_list[[score_id]]
+    
+    lapply(names(score_nw), function(factor_id){
+        factor_nw <- score_nw[[factor_id]]
+        
+        lapply(names(factor_nw), function(clu_id){
+            
+            clu_nw <- factor_nw[[clu_id]]
+            sheet_name <- paste(score_id, factor_id, clu_id, sep = ".")
+            openxlsx::addWorksheet(wb = term_ids_count,
+                                    sheetName = sheet_name)
+            
+            matched_ids <- lapply(names(clu_nw), function(term_id){
+                term_nw <- clu_nw[[term_id]]
+                
+                feature_ids <- names(V(term_nw))
+                # term_ids <- lapply(omic_names, function(x){
+                #     found <- vertex_attr(term_nw, name = x, index = feature_ids)
+                #     strsplit(found[!is.na(found) & found != ""], ";")
+                # })
+                # term_ids <- unlist(term_ids, use.names = FALSE)
+                
+                return(feature_ids)
+            })
+            names(matched_ids) <- names(clu_nw)
+            
+            id_vect <- unlist(matched_ids)
+            id_vect <- id_vect[!grepl("enrich_term", id_vect)]
+            count_table <- table(id_vect)
+            
+            associated_terms <- sapply(names(count_table), function(x){
+                paste(names(matched_ids[sapply(matched_ids, 
+                                               function(y){x %in% y})]), collapse = ";")
+            })
+            
+            term_id_counts_res <- data.frame(
+                "Feature_ID" = names(count_table), 
+                "Readable_Name" = merged_feature_ids_dict[names(count_table)],
+                "Count" = as.numeric(count_table), 
+                "Associated Terms" = associated_terms)
+            term_id_counts_res <- term_id_counts_res[order(term_id_counts_res$Count, decreasing = TRUE),]
+            
+            openxlsx::writeData(wb = term_ids_count, sheet = sheet_name,
+                                x = term_id_counts_res)
+        })
+    })
+})
+openxlsx::saveWorkbook(term_ids_count, 
+                        file = paste0(params$output_dir, "feature_count_correlated.xlsx"), 
+                        overwrite = TRUE)
+```
