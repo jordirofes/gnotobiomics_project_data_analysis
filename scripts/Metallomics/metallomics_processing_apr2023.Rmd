@@ -143,8 +143,9 @@ pdf(paste0(params$output_dir, "boxplot_metallomics.pdf"))
 lapply(names(lima_data_list), function(organ_name){
     organ_dt <- lima_data_list[[organ_name]][["Metallomics_Data"]]
     organ_meta <- lima_data_list[[organ_name]][["Metallomics_Metadata"]]
+    
     sapply(names(organ_dt), function(var_name){
-        boxplot(organ_dt[[var_name]] ~ organ_meta$group, ylab = var_name, xlab = "Group")
+        boxplot(organ_dt[[var_name]] ~ organ_meta$group, ylab = var_name, xlab = "Group", main = organ_name) 
     })
     
 })

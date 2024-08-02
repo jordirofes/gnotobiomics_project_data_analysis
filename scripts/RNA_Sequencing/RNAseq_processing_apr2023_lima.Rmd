@@ -274,6 +274,7 @@ rna_seq_exp <- rna_seq_exp[,!(colnames(rna_seq_exp) %in% names(rna_bp$out))]
 ```
 
 ```{r}
+myLIMAfactors$groups_m <- droplevels(myLIMAfactors$groups_m)
 raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = t(myLIMAcounts),
                                       colData = myLIMAfactors,
                                       design= ~ 0 + groups_m)

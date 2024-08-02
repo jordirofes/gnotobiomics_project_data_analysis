@@ -64,7 +64,7 @@ head(train_opts)
 
 
 ```{r, results='hide'}
-outfile <- file.path(output_dir,"model.hdf5")
+
 model_list <- list()
 
 multi_omics_mofa <- prepare_mofa(
@@ -74,11 +74,24 @@ multi_omics_mofa <- prepare_mofa(
 
 untrained_mofa <- multi_omics_mofa
 
+outfile_list <- list()
+
 for(id in seq_len(params$ntries)){
     multi_omics_mofa@training_options$seed <- params$random_seed + id
     
-    model_list[[id]] <- run_mofa(multi_omics_mofa, outfile, use_basilisk = TRUE)    
+    outfile_list[[id]] <- paste0(output_dir, 
+                      paste0("model_", id, ".hdf5"))
+    
+    model_list[[id]] <- run_mofa(multi_omics_mofa, 
+                                 outfile = outfile_list[[id]], 
+                                 use_basilisk = TRUE)    
 }
+
+selected_mod_val <- seq_len(params$ntries) %in% which.max(sapply(model_list, get_elbo))
+file.remove(unlist(outfile_list[!selected_mod_val]))
+file.rename(from = unlist(outfile_list[selected_mod_val]), 
+            to = gsub(basename(unlist(outfile_list[selected_mod_val])), "model.hdf5",
+                      outfile_list[selected_mod_val]))
 
 multi_omics_mofa <- select_model(model_list)
 rm(model_list)
@@ -254,7 +267,6 @@ var_dt <- MOFA2::get_variance_explained(object = multi_omics_mofa)
 
 saveRDS(var_dt, paste0(output_dir, "var_data.rds"))
 
-
 highest_weights <- weight_dt$feature[weight_dt$value >= quantile(weight_dt$value, 0.95) | weight_dt$value <= quantile(weight_dt$value, 0.05)]
 ```
 
@@ -344,33 +356,32 @@ omic_res <- lapply(names(exp_dt), function(omic_name){
     omic_weight_props <- abs(omic_weights)
     
     omic_weight_props <- omic_weight_props/rowSums(omic_weight_props)
-    factor_selected <- apply(omic_weight_props, 2, function(x){
+    
+    apply(omic_weight_props, 2, function(x){
         names(x)[x >= thr]
     }, simplify = FALSE)
-    score_list <- lapply(seq_along(factor_selected), function(x){
         
-        f <- factor_selected[[x]]
-        # predicted <- (as.matrix(weight_dt[[omic_name]][,x]) %*% t(score_dt[[1]][,x]))[f,, drop = FALSE]
-        predicted <- MOFA2::predict(multi_omics_mofa, views = omic_name, 
-                                    factors = x)[[1]][[1]][f,, drop = FALSE]
-        
-        real <- exp_dt[[omic_name]][[1]][f,, drop = FALSE]
-        residuals <- (real-predicted)
-        
-        # predicted_all <- (as.matrix(weight_dt[[omic_name]]) %*% t(score_dt[[1]]))[f,, drop = FALSE]
-        predicted_all <- MOFA2::predict(multi_omics_mofa, 
-                                        views = omic_name)[[1]][[1]][f,, drop = FALSE]
-        
-        residuals_all <- real - predicted_all
-        
-        # hist(rowSums(residuals_all-residuals))
-        # hist(rowSums((residuals_all-residuals)^2))
-        # hist(rowSums((residuals_all)^2) / rowSums((residuals)^2))
-        score_vect <- rowSums((residuals_all)^2, na.rm = T) / rowSums((residuals)^2, na.rm = T)
-        return(names(score_vect)[score_vect >= thr_score])
-    })
+    # score_list <- lapply(seq_along(factor_selected), function(x){
+    #     
+    #     f <- factor_selected[[x]]
+    #     # predicted <- (as.matrix(weight_dt[[omic_name]][,x]) %*% t(score_dt[[1]][,x]))[f,, drop = FALSE]
+    #     predicted <- MOFA2::predict(multi_omics_mofa, views = omic_name, 
+    #                                 factors = x)[[1]][[1]][f,, drop = FALSE]
+    #     
+    #     real <- exp_dt[[omic_name]][[1]][f,, drop = FALSE]
+    #     residuals <- (real-predicted)
+    #     
+    #     # predicted_all <- (as.matrix(weight_dt[[omic_name]]) %*% t(score_dt[[1]]))[f,, drop = FALSE]
+    #     predicted_all <- MOFA2::predict(multi_omics_mofa, 
+    #                                     views = omic_name)[[1]][[1]][f,, drop = FALSE]
+    #     
+    #     residuals_all <- real - predicted_all
+    #     
+    #     score_vect <- rowSums((residuals_all)^2, na.rm = T) / rowSums((residuals)^2, na.rm = T)
+    #     return(names(score_vect)[score_vect >= thr_score])
+    # })
     
-    return(score_list)
+    # return(score_list)
 })
 names(omic_res) <- names(exp_dt)
 

@@ -12,6 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ## Loading the data
+
 ```{r}
 library(MultiAssayExperiment)
 ```
@@ -19,7 +20,7 @@ library(MultiAssayExperiment)
 ```{r}
 num_factors <- 2
 score_filter <- 0.7
-mofa_dir_name <- "sig_int_thr07_test"
+mofa_dir_name <- "sig_int_thr07_liv2"
 output_dir <- paste0(params$output_dir, "MOFA_Results/", mofa_dir_name, "/")
 corr_output_dir <- paste0(output_dir, "correlation_results/")
 
@@ -28,8 +29,7 @@ enrich_nw_dir <- paste0(corr_output_dir, enrich_name, "/")
 # corr_output_dir <- paste0(output_dir, "correlation_results/")
 # omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
 
-omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
-
+omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered_mod.rds"))
 
 exp_names <- names(omic_dt)[grepl("Shotgun.*Species", 
                                 names(omic_dt))]
@@ -54,6 +54,57 @@ omic_var_names <- lapply(seq_len(num_factors), function(factor_id){
 })
 names(omic_var_names) <- paste0("Factor_", seq_len(num_factors))
 ```
+
+## Loading the network
+
+```{r}
+nw_paths <- list.files(corr_output_dir, 
+                        pattern = "network_results_0_005_chi_f1f2_.*\\.rds$", 
+                        full.names = T)
+nw_graphs <- lapply(nw_paths, readRDS)
+
+nw_graphs <- lapply(nw_graphs, function(score_dt){
+    lapply(score_dt, function(weight_dt){
+        weight_dt[["Pairwise full liver"]]
+    })
+})
+
+score_names <- gsub("\\.rds", "", sapply(strsplit(grep("network_results", 
+                                                        basename(nw_paths), 
+                                                        value = TRUE), "_"),
+                                            function(x){x[length(x)]}))
+score_filters <- c(0.8, 0.8)
+names(score_filters) <- score_names
+names(nw_graphs) <- score_names
+
+rand_seed <- 1234
+universe_list <- lapply(nw_graphs, function(score_dt){
+    lapply(score_dt, function(graph_dt){
+        names(V(graph_dt))
+    })
+})
+
+nw_graphs <- lapply(names(nw_graphs), function(score_id){
+    score_dt <- nw_graphs[[score_id]]
+    score_res <- lapply(names(score_dt), function(graph_id){
+        graph_dt <- score_dt[[graph_id]]
+
+        graph_weights <- abs(edge_attr(graph_dt,
+                        name = "weight"))
+        graph_adj.p.val <- edge_attr(graph_dt, name = "adj.p.value")
+        subgraph.edges(graph_dt,
+                    E(graph_dt)[graph_weights >= score_filters[score_id] & graph_adj.p.val <= 0.05],
+                    delete.vertices = FALSE)
+    })
+    names(score_res) <- names(score_dt)
+    score_res
+})
+
+names(nw_graphs) <- score_names
+
+```
+
+## Mergin the microbiota functionalities data
 
 ```{r}
 new_exps <- experiments(multi_omic_filt)
@@ -173,6 +224,8 @@ experiments(multi_omic_filt) <- ExperimentList(filtered_exps)
 # })
 ```
 
+## Correlation calculation
+
 ```{r}
 correlation_scores <- c("pearson", "spearman")
 test_res_score <- lapply(correlation_scores, function(score_id){
@@ -198,7 +251,7 @@ test_res_score <- lapply(correlation_scores, function(score_id){
             corr_dt <- mia::getExperimentCrossAssociation(
                         functional_exp, sp_exp, assay.type1 = "clr", 
                         assay.type2 = "clr", method = score_id, 
-                        cor_threshold = NULL, p_adj_method = "fdr", 
+                        cor_threshold = 0.8, p_adj_method = "fdr", 
                         p_adj_threshold = 0.05, test_significance = TRUE)
             
             sp_res <- lapply(unique(corr_dt$Var2), function(sp_dt){
@@ -206,7 +259,7 @@ test_res_score <- lapply(correlation_scores, function(score_id){
                 sp_rd <- rowData(functional_exp[correlated_names,])
                 cbind(data.frame("Specie" = sp_dt), sp_rd)
             })
-            names(sp_res) <- as.character(unique(corr_dt$Var2))
+            names(sp_res) <- paste0("Species.", as.character(unique(corr_dt$Var2)))
             sp_res
         })
         names(organ_res) <- c("cecum", "colon")
@@ -246,14 +299,334 @@ lapply(names(test_res_score), function(score_id){
 })
 ```
 
+## Correlation filter nw factor
+
 ```{r}
+score_id <- "spearman"
+factor_id <- "Factor_1"
+organ_ids <- c("cecum", "colon")
+
+plot_dt <- lapply(names(nw_graphs), function(score_id){
+    score_dt <- nw_graphs[[score_id]]
+    score_res <- lapply(names(score_dt), function(factor_id){
+        factor_dt <- score_dt[[factor_id]]
+        
+        keep_nodes <- names(V(factor_dt))[igraph::degree(factor_dt) != 0 & 
+                                        grepl(pattern = "Shotgun",vertex_attr(factor_dt, "Node_Omic"))]
+        
+        found_info <- lapply(organ_ids, function(organ_id){
+            found_nodes <- grep(organ_id, keep_nodes, value = T)
+            found_nodes <- strsplit(found_nodes, "\\.")
+            
+            nodes_info <- test_res_score[[score_id]][[factor_id]][[organ_id]]
+            found_nodes <- sapply(found_nodes, function(x){make.names(paste0(x[3:length(x)], collapse = "."))})
+            
+            found_nodes_info <- sapply(found_nodes, function(x){
+                if(x %in% names(nodes_info)){
+                    return(nodes_info[[x]])
+                } else{
+                    return(data.frame())    
+                }
+            })
+        })
+        names(found_info) <- organ_ids
+        found_info
+    })
+    names(score_res) <- names(score_dt)
+    score_res
+})
+names(plot_dt) <- names(nw_graphs)
+```
+
+## Correlation filter correlated with variables
+
+```{r}
+score_id <- "spearman"
+factor_id <- "Factor_1"
+organ_ids <- c("cecum", "colon")
+
+res_path <- paste0(enrich_nw_dir,
+                "feature_count_correlated.xlsx")
+results_names <- openxlsx::getSheetNames(res_path)
+
+
+plot_dt_2 <- lapply(results_names, function(sheet_id){
+    results_excel <- openxlsx::read.xlsx(xlsxFile = res_path, 
+                                         sheet = sheet_id)
+    results_ids <- results_excel[grepl(pattern = "Shotgun", 
+                                        results_excel$Feature_ID),]
+    results_ids <- results_ids$Feature_ID
+    found_info <- lapply(organ_ids, function(organ_id){
+        
+        found_nodes <- grep(organ_id, results_ids, value = T)
+        found_nodes <- strsplit(found_nodes, "\\.")
+        
+        nodes_info <- test_res_score[[score_id]][[factor_id]][[organ_id]]
+        found_nodes <- sapply(found_nodes, function(x){make.names(paste0(x[3:length(x)], collapse = "."))})
+        
+        found_nodes_info <- lapply(found_nodes, function(x){
+            if(x %in% names(nodes_info)){
+                return(nodes_info[[x]])
+            } else{
+                return(data.frame())    
+            }
+        })
+        names(found_nodes_info) <- found_nodes
+        found_nodes_info
+    })
+    names(found_info) <- organ_ids
+    found_info
+ 
+})
+names(plot_dt_2) <- results_names
+
+
+
+```
+
+
+```{r}
+plot_data <- lapply(names(plot_dt_2), function(score_id){
+    score_dt <- plot_dt_2[[score_id]]
+    organ_res <- lapply(names(score_dt), function(organ_id){
+        organ_dt <- score_dt[[organ_id]]
+        factor_id <- sapply(strsplit(score_id, "\\."), function(x){x[[2]]})
+        score_id <- sapply(strsplit(score_id, "\\."), function(x){x[[1]]})
+        
+        data.frame("num_correlations" = sapply(organ_dt, nrow),
+                   "factor" = factor_id,
+                   "score" = score_id,
+                   "organ" = organ_id)
+    })
+    do.call(rbind, organ_res)
+})
+plot_data <- do.call(rbind, plot_data)
+
+ggplot(plot_data, aes(x = factor, y = num_correlations, color = organ)) + geom_boxplot() +
+    facet_grid(rows = vars(score)) 
+
+ggplot(plot_data[plot_data$num_correlations != 0,], 
+        aes(x = factor, y = num_correlations, color = organ)) + 
+    geom_boxplot() +
+    facet_grid(rows = vars(score)) 
+
+plot_data$group <- paste(plot_data$factor, plot_data$organ)
+
+lapply(unique(plot_data$score), function(score_id){
+    aov_dt <- plot_data[plot_data$score == score_id,]
+    
+    kruskal_res <- kruskal.test(formula = num_correlations ~ group + 0, data = aov_dt)
+    
+    if(kruskal_res$p.value <= 0.05){
+        DescTools::ConoverTest(x = aov_dt$num_correlations, aov_dt$group)
+    }
+    # aov_mod <- aov(formula = num_correlations ~ group + 0, data = aov_dt)
+    # TukeyHSD(aov_mod)    
+})
+
+```
+
+## Correlation filter correlated nw features & degree filter
+
+```{r}
+score_id <- "spearman"
+factor_id <- "Factor_1"
+organ_ids <- c("cecum", "colon")
+
+res_dt <- readRDS(paste0(corr_output_dir,
+                    "de_overlapped_features.rds"))
+
+
+plot_dt_3 <- lapply(names(nw_graphs), function(score_id){
+    score_dt <- nw_graphs[[score_id]]
+    score_res <- lapply(names(score_dt), function(factor_id){
+        factor_dt <- score_dt[[factor_id]]
+        
+        node_dt <- res_dt[[score_id]][[factor_id]]
+        node_dt <- node_dt[node_dt$degree.x >= 5 | node_dt$degree.y >= 5,]
+        
+        keep_nodes <- names(V(factor_dt))[names(V(factor_dt)) %in% 
+                                                grep(pattern = "Shotgun",
+                                                    node_dt$nodes, value = TRUE)]
+        
+        found_info <- lapply(organ_ids, function(organ_id){
+            found_nodes <- grep(organ_id, keep_nodes, value = T)
+            found_nodes <- strsplit(found_nodes, "\\.")
+            
+            nodes_info <- test_res_score[[score_id]][[factor_id]][[organ_id]]
+            found_nodes <- sapply(found_nodes, function(x){make.names(paste0(x[3:length(x)], collapse = "."))})
+            
+            found_nodes_info <- sapply(found_nodes, function(x){
+                if(x %in% names(nodes_info)){
+                    return(nodes_info[[x]])
+                } else{
+                    return(data.frame())    
+                }
+            })
+        })
+        names(found_info) <- organ_ids
+        found_info
+    })
+    names(score_res) <- names(score_dt)
+    score_res
+})
+names(plot_dt_3) <- names(nw_graphs)
+```
+
+```{r}
+plot_data <- lapply(names(plot_dt_3), function(score_id){
+    score_dt <- plot_dt_3[[score_id]]
+    score_res <- lapply(names(score_dt), function(factor_id){
+        factor_dt <- score_dt[[factor_id]]
+        organ_res <- lapply(names(factor_dt), function(organ_id){
+            organ_dt <- factor_dt[[organ_id]]
+
+            data.frame("num_correlations" = sapply(organ_dt, nrow),
+                       "factor" = factor_id,
+                       "score" = score_id,
+                       "organ" = organ_id)
+        })
+        do.call(rbind, organ_res)
+    })
+    do.call(rbind, score_res)
+})
+plot_data <- do.call(rbind, plot_data)
+
+ggplot(plot_data, aes(x = factor, y = num_correlations, color = organ)) + geom_boxplot() +
+    facet_grid(rows = vars(score)) + ylab("Number of correlated functions for each specie") + xlab(NULL)
+
+ggplot(plot_data[plot_data$num_correlations != 0,], aes(x = factor, y = num_correlations, color = organ)) + geom_boxplot() +
+    facet_grid(rows = vars(score)) 
+
+plot_data$group <- paste(plot_data$factor, plot_data$organ)
+
+lapply(unique(plot_data$score), function(score_id){
+    aov_dt <- plot_data[plot_data$score == score_id & plot_data$num_correlations != 0,]
+    aov_mod <- aov(formula = num_correlations ~ group + 0, data = aov_dt)
+    TukeyHSD(aov_mod)    
+})
+
+```
+
+## Correlation filter correlated nw features & degree filter
+
+```{r}
+score_id <- "spearman"
+factor_id <- "Factor_1"
+organ_ids <- c("cecum", "colon")
+
+res_dt <- readRDS(paste0(corr_output_dir,
+                    "de_overlapped_features.rds"))
+
+
+plot_dt_3 <- lapply(names(nw_graphs), function(score_id){
+    score_dt <- nw_graphs[[score_id]]
+    score_res <- lapply(names(score_dt), function(factor_id){
+        factor_dt <- score_dt[[factor_id]]
+        
+        node_dt <- res_dt[[score_id]][[factor_id]]
+
+        keep_nodes <- names(V(factor_dt))[names(V(factor_dt)) %in% 
+                                                grep(pattern = "Shotgun",
+                                                    node_dt$nodes, value = TRUE)]
+        
+        found_info <- lapply(organ_ids, function(organ_id){
+            found_nodes <- grep(organ_id, keep_nodes, value = T)
+            found_nodes <- strsplit(found_nodes, "\\.")
+            
+            nodes_info <- test_res_score[[score_id]][[factor_id]][[organ_id]]
+            found_nodes <- sapply(found_nodes, function(x){make.names(paste0(x[3:length(x)], collapse = "."))})
+            
+            found_nodes_info <- sapply(found_nodes, function(x){
+                if(x %in% names(nodes_info)){
+                    return(nodes_info[[x]])
+                } else{
+                    return(data.frame())    
+                }
+            })
+        })
+        names(found_info) <- organ_ids
+        found_info
+    })
+    names(score_res) <- names(score_dt)
+    score_res
+})
+names(plot_dt_3) <- names(nw_graphs)
+```
+
+```{r}
+plot_data <- lapply(names(plot_dt_3), function(score_id){
+    score_dt <- plot_dt_3[[score_id]]
+    score_res <- lapply(names(score_dt), function(factor_id){
+        factor_dt <- score_dt[[factor_id]]
+        organ_res <- lapply(names(factor_dt), function(organ_id){
+            organ_dt <- factor_dt[[organ_id]]
+
+            data.frame("num_correlations" = sapply(organ_dt, nrow),
+                       "factor" = factor_id,
+                       "score" = score_id,
+                       "organ" = organ_id)
+        })
+        do.call(rbind, organ_res)
+    })
+    do.call(rbind, score_res)
+})
+plot_data <- do.call(rbind, plot_data)
+
+ggplot(plot_data, aes(x = factor, y = num_correlations, color = organ)) + geom_boxplot() +
+    facet_grid(rows = vars(score)) + ylab("Number of correlated functions for each specie") + xlab(NULL)
+
+ggplot(plot_data[plot_data$num_correlations != 0,], aes(x = factor, y = num_correlations, color = organ)) + geom_boxplot() +
+    facet_grid(rows = vars(score)) 
+
+plot_data$group <- paste(plot_data$factor, plot_data$organ)
+
+lapply(unique(plot_data$score), function(score_id){
+    aov_dt <- plot_data[plot_data$score == score_id & plot_data$num_correlations != 0,]
+    aov_mod <- aov(formula = num_correlations ~ group + 0, data = aov_dt)
+    TukeyHSD(aov_mod)    
+})
+
+
+ggplot(plot_data, aes(x = factor, y = num_correlations, color = organ)) + geom_boxplot() + ylab("Number of correlated functions for each specie") + xlab(NULL)
+
+aov_dt <- plot_data
+aov_mod <- aov(formula = num_correlations ~ group + 0, data = aov_dt)
+TukeyHSD(aov_mod)    
+
+```
+## Altres
+
+```{r}
+
+score_res_found <- lapply(results_names, function(sheet_name){
+    
+    found_res <- lapply(test_res_score, function(score_dt){
+        
+
+        score_dt <- unlist(score_dt$Factor_1, recursive = FALSE)
+        
+        names(score_dt) <- make.names(paste0("Shotgun_Metagenomics.", names(score_dt)))
+        results_excel <- results_excel[grepl("Shotgun_Metagenomics",
+                                            results_excel$Feature_ID),]    
+        score_dt[make.names(results_excel$Feature_ID)]
+        
+    })
+    found_res
+})
+names(score_res_found) <- results_names
+```
+
+
+```{r}
+
+
 names_vect <- lapply(test_res, function(weight_dt){
     lapply(weight_dt, function(organ_dt){
         if(all(is.na(organ_dt))){return(NA)}
         
         organ_dt <- do.call(rbind, organ_dt)
         
-        organ_dt$readable_name
         
         # lapply(organ_dt, function(specie_dt){
         #     

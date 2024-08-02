@@ -15,6 +15,8 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Loading the data
 
 ```{r}
+if(!dir.exists(params$output_dir)){dir.create(params$output_dir)}
+
 mice_dt <- openxlsx::read.xlsx(paste0(params$input_dir, "AnimalData_OscarYanes.xlsx"))
 # mice_num <- mice_dt[,c("BW(g)", "WATep(g)", "Liver(g)")]
 mice_num <- mice_dt
@@ -26,6 +28,7 @@ mice_s$group <- factor(dict_vect[mice_dt$Group], levels = c("CNT", "HFD",
 dict_vect_g <- c("CNT" = "C", "HFD" = "H", "INT" = "I", "HFE" = "E")
 mice_s$samplename <- paste0(make.names(mice_dt$ID), dict_vect_g[mice_s$group])
 mice_s$samplename[mice_s$samplename == "X686I"] <- "X687I"
+mice_s$Sacrifice <- as.factor(mice_s$Sacrifice)
 
 saveRDS(mice_s, paste0(params$output_dir, "processed_mice_dt.rds"))
 ```
@@ -40,13 +43,15 @@ colnames(mice_lima)
 keep_vars <- c("group", "Cage")
 
 num_vars <- mice_lima[sapply(mice_lima, is.numeric)]
+cat_vars <- mice_lima[!sapply(mice_lima, is.numeric)]
+
 cat_vars <- cat_vars[keep_vars]
 
 ggally_vars <- cbind(num_vars, cat_vars)
 
 GGally::ggpairs(ggally_vars, mapping = aes(fill = group), progress = FALSE)
 
-pdf(paste0(params$output_dir, "var_plots.pdf"))
+# pdf(paste0(params$output_dir, "var_plots.pdf"))
 ```
 
 ```{r, fig.width=8, fig.height=8}
