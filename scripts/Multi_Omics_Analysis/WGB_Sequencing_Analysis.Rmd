@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 ```{r}
 library(methrix)
 library(SummarizedExperiment)
+library(ggplot2)
 ```
 
 
@@ -22,18 +23,296 @@ library(SummarizedExperiment)
 gfcv_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/GFCV/merged_methrix.rds")
 lima_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/merged_methrix.rds")
 
-gfcv_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_gfcv.rds")
-lima_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_lima.rds")
+# gfcv_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_gfcv.rds")
+# lima_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_lima.rds")
+
+gfcv_dss <- readRDS("../../outputs/WGB_DNA_Methylation/GFCV/DSS.group.non_smoothed_005/dna_met_exp_non_smoothed_005.group.reduced.rds")
+lima_dss <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_005/dna_met_exp_non_smoothed_005.group.reduced.rds")
+lima_dss <- lima_dss[!seqnames(rowRanges(lima_dss)) %in% c("chrX", "chrY")]
 ```
+
+```{r}
+dss_data <- lapply(c("GFCV", "LIMA"), function(model_id){
+    model_paths <- paste0("../../outputs/WGB_DNA_Methylation/", 
+                        model_id, "/DSS.group.non_smoothed/dss_results_list_non_smoothed.group.rds")
+    readRDS(model_paths)
+})
+names(dss_data) <- c("GFCV", "LIMA")
+
+model_res <- lapply(dss_data, function(model_dt){
+    comp_res <- lapply(model_dt, function(comp_dt){
+        comp_dt <- comp_dt[!comp_dt$chr %in% c("chrY", "chrX"),]
+        which(!is.na(comp_dt$fdrs) & comp_dt$fdrs <= 0.05)
+    })
+    length(Reduce(union, comp_res))
+})
+model_res
+
+model_res_raw <- lapply(dss_data, function(model_dt){
+    comp_res <- lapply(model_dt, function(comp_dt){
+        comp_dt <- comp_dt[!comp_dt$chr %in% c("chrY", "chrX"),]
+        which(!is.na(comp_dt[,4]) & comp_dt[,4] <= 0.05)
+    })
+    length(Reduce(union, comp_res))
+})
+model_res_raw
+
+model_res_areas <- lapply(names(dss_data), function(model_id){
+    model_dt <- dss_data[[model_id]]
+    comp_res <- lapply(model_dt, function(comp_dt){
+        comp_dt <- comp_dt[!comp_dt$chr %in% c("chrY", "chrX"),]
+        abs(comp_dt[,3][!is.na(comp_dt[,3])])
+    })
+    summary(unlist(comp_res))
+})
+model_res_areas
+
+model_res_areas <- lapply(names(dss_data), function(model_id){
+    model_dt <- dss_data[[model_id]]
+    comp_res <- lapply(model_dt, function(comp_dt){
+        comp_dt <- comp_dt[!comp_dt$chr %in% c("chrY", "chrX"),]
+        abs(comp_dt[,3][!is.na(comp_dt[,3])])
+    })
+    data.frame("CpG_areas" = unlist(comp_res), "model" = model_id)
+})
+model_res_areas <- do.call(rbind, model_res_areas)
+
+```
+
+```{r}
+model_data <- lapply(c("GFCV", "LIMA"), function(model_id){
+    model_paths <- grep("DSS", list.files(paste0("../../outputs/WGB_DNA_Methylation/", 
+                                model_id, "/"), 
+                           full.names = TRUE), value = TRUE)
+    stat_res <- lapply(model_paths, function(stat_id){
+        
+        path_id <- grep("reduced.*.rds$", list.files(stat_id, full.names = TRUE), value = TRUE)
+        return(readRDS(path_id))
+    })
+    names(stat_res) <- basename(model_paths)
+    stat_res
+})
+names(model_data) <- c("GFCV", "LIMA")
+
+library(SummarizedExperiment)
+rna_seq_dt <- readRDS("D:/Tesis Doctoral/gnotobiomics_project_data_analysis/outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_MA_exp_lima.rds")
+rna_seq_dt <- rna_seq_dt@ExperimentList$RNA_Sequencing
+
+p_val_dt <- rowData(rna_seq_dt)[,grepl("adj.p.value", colnames(rowData(rna_seq_dt)))]
+p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+rna_seq_dt_f <- rna_seq_dt[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+```
+
+```{r}
+hist(log(rowSums(get_matrix(lima_methrix, type = "C"))))
+summary(log(rowSums(get_matrix(lima_methrix, type = "C"))))
+plot_res <- lapply(names(model_data), function(model_list_id){
+    model_list <- model_data[[model_list_id]]
+    lapply(model_list, function(comp_exp){
+        if(model_list_id == "GFCV"){
+            sub_methrix <- subset_methrix(m = gfcv_methrix, 
+                                        regions = rowRanges(comp_exp), 
+                                        overlap_type = "any")
+        } else if(model_list_id == "LIMA"){
+            sub_methrix <- subset_methrix(m = gfcv_methrix, 
+                                        regions = rowRanges(comp_exp), 
+                                        overlap_type = "any")
+        }
+        hist(log(rowSums2(methrix::get_matrix(sub_methrix, type = "C"))))
+        summary(log(rowSums2(methrix::get_matrix(sub_methrix, type = "C"))))
+    })
+})
+
+```
+
+```{r}
+lapply(names(model_data), function(model_list_id){
+    model_list <- model_data[[model_list_id]]
+    lapply(model_list, function(comp_exp){
+        length(unique(rowData(comp_exp)$geneSymbol))
+    })
+})
+
+```
+
+```{r}
+lapply(names(model_data[[1]]), function(comp_name){
+    findOverlaps(model_data[[1]][[comp_name]], 
+                 model_data[[2]][[comp_name]])
+})
+```
+
+
+```{r}
+gene_names <- read.table("../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_liv2/enrich_results_irb/genes_irb.txt")
+
+gene_names_found <- lapply(names(model_data), function(model_list_id){
+    model_list <- model_data[[model_list_id]]
+    lapply(model_list, function(comp_exp){
+        sapply(gene_names$V1, function(x){grep(x, rowData(comp_exp)$geneSymbol, ignore.case = TRUE)})
+    })
+})
+```
+
+```{r}
+gene_names_found <- lapply(names(model_data), function(model_list_id){
+    model_list <- model_data[[model_list_id]]
+    lapply(model_list, function(comp_exp){
+        area_dt <- as.data.frame(rowRanges(comp_exp))[,grep("areaStat", colnames(as.data.frame(rowRanges(comp_exp))))]
+        area_dt <- abs(unlist(as.data.frame(area_dt)))
+        hist(area_dt[!is.na(area_dt)], breaks = 50)
+        summary(area_dt[!is.na(area_dt)])
+    })
+})
+gene_names_found
+```
+
+
+```{r}
+stat_res <- lapply(model_data, function(model_list){
+    comp_res <- lapply(model_list, function(comp_exp){
+        
+        data.frame("Raw overlap" = length(intersect(rowRanges(comp_exp)$geneId, rowData(rna_seq_dt)$entrezID)),
+                   "Any sig overlap" = length(intersect(rowRanges(comp_exp)$geneId, rowData(rna_seq_dt_f)$entrezID)),
+                   "Total vars any sig RNASeq" = nrow(rna_seq_dt_f),
+                   "Total vars dmrs" = nrow(comp_exp))
+        
+    })
+    do.call(rbind, comp_res)
+})
+stat_res <- do.call(rbind, stat_res)
+stat_res
+```
+
+
+```{r}
+gfcv_meta <- elementMetadata(rowRanges(gfcv_dss))[,grep("areaStat", colnames(elementMetadata(rowRanges(gfcv_dss))))]
+gfcv_areas <- unlist(gfcv_meta)
+
+plot_gfcv <- data.frame("areas" = abs(gfcv_areas[!is.na(gfcv_areas)]), "model" = "gfcv")
+
+lima_meta <- elementMetadata(rowRanges(lima_dss))[,grep("areaStat", colnames(elementMetadata(rowRanges(lima_dss))))]
+lima_areas <- unlist(lima_meta)
+
+plot_lima <- data.frame("areas" = abs(lima_areas[!is.na(lima_areas)]), "model" = "lima")
+
+plot_dt <- rbind(plot_gfcv, plot_lima)                        
+
+# ggplot(plot_dt) + geom_histogram(aes(x = areas, y = ..density.., fill = model), bins = 100) + 
+#     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+
+ggplot(plot_dt) + geom_density(aes(x = areas, fill = model), alpha = 0.6, bins = 100) + 
+    theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+```
+
+```{r}
+gfcv_l <- lengths(rowRanges(gfcv_dss))
+lima_l <- lengths(rowRanges(lima_dss))
+
+plot_gfcv <- data.frame("lengths" = gfcv_l, "model" = "gfcv")
+plot_lima <- data.frame("lengths" = lima_l, "model" = "lima")
+
+plot_dt <- rbind(plot_gfcv, plot_lima)                        
+
+# ggplot(plot_dt) + geom_histogram(aes(x = lengths, y = ..density.., fill = model), bins = 100) + 
+#     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+
+plotly::ggplotly(ggplot(plot_dt) + geom_density(aes(x = lengths, fill = model), alpha = 0.6, bins = 100) + 
+    theme_minimal() + scale_fill_brewer(palette = "Pastel1"))
+
+summary(plot_gfcv$lengths)
+summary(plot_lima$lengths)
+
+```
+
+
+```{r}
+stat_res <- lapply(model_data, function(model_list){
+    comp_res <- lapply(model_list, function(comp_exp){
+        
+        t(scale(t(assay(comp_exp))))
+    })
+    do.call(rbind, comp_res)
+})
+stat_res <- do.call(rbind, stat_res)
+stat_res
+```
+
+
+```{r}
+gfcv_dmrseq <- readRDS("../../outputs/WGB_DNA_Methylation/GFCV/dmrseq.group.non_smoothed/dna_met_exp_non_smoothed.reduced.group.reduced.rds")
+lima_dmrseq <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/dmrseq.group.non_smoothed/dna_met_exp_filtered_non_smoothed.disjoint.group.disjoint.rds")
+
+```
+
+```{r}
+findOverlaps(rowRanges(lima_dss), rowRanges(lima_dmrseq)) 
+```
+
 
 ```{r}
 gfcv_sig_cpgs <- nrow(subset_methrix(gfcv_methrix, rowRanges(gfcv_dss)))
 gfcv_cpgs <- nrow(gfcv_methrix)
 
+(gfcv_sig_cpgs/gfcv_cpgs)*100
 
 lima_sig_cpgs <- nrow(subset_methrix(lima_methrix, rowRanges(lima_dss)))
 lima_cpgs <- nrow(lima_methrix)
+
+(lima_sig_cpgs/lima_cpgs)*100
+
+mean(lengths(rowRanges(gfcv_dss)))
+mean(lengths(rowRanges(lima_dss)))
+
+median(lengths(rowRanges(gfcv_dss)))
+median(lengths(rowRanges(lima_dss)))
+
+length(unique(rowRanges(gfcv_dss)$geneName))
+length(unique(rowRanges(lima_dss)$geneName))
+
+hist(lengths(rowRanges(gfcv_dss)), breaks = 100)
+hist(lengths(rowRanges(lima_dss)), breaks = 100)
+
 ```
+
+```{r}
+gfcv_sig_cpgs <- nrow(subset_methrix(gfcv_methrix, rowRanges(gfcv_dmrseq)))
+gfcv_cpgs <- nrow(gfcv_methrix)
+
+(gfcv_sig_cpgs/gfcv_cpgs)*100
+
+lima_sig_cpgs <- nrow(subset_methrix(lima_methrix, rowRanges(lima_dmrseq)))
+lima_cpgs <- nrow(lima_methrix)
+
+(lima_sig_cpgs/lima_cpgs)*100
+```
+
+
+
+```{r}
+p_val_dt <- rowData(gfcv_dmrseq)[,grepl("adj.p.value", colnames(rowData(gfcv_dmrseq)))]
+p_val_dt <- p_val_dt[,grepl("CVF-CVM|GFM-CVM|GFF-CVF|GFF-GFM", colnames(p_val_dt))]
+gfcv_dmrseq_f <- gfcv_dmrseq[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+
+
+p_val_dt <- rowData(lima_dmrseq)[,grepl("adj.p.value", colnames(rowData(lima_dmrseq)))]
+p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+lima_dmrseq_f <- lima_dmrseq[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+
+```
+
+```{r}
+gfcv_sig_cpgs <- nrow(subset_methrix(gfcv_methrix, rowRanges(gfcv_dmrseq_f)))
+gfcv_cpgs <- nrow(gfcv_methrix)
+
+(gfcv_sig_cpgs/gfcv_cpgs)*100
+
+lima_sig_cpgs <- nrow(subset_methrix(lima_methrix, rowRanges(lima_dmrseq_f)))
+lima_cpgs <- nrow(lima_methrix)
+
+(lima_sig_cpgs/lima_cpgs)*100
+```
+
 
 Using all CpGs after filtering all the ones not in each experiment (different denominators), there is a `r (gfcv_sig_cpgs/gfcv_cpgs)*100` % of CpGs significantly changed in the GFCV from all analyzed in this experiment and `r (lima_sig_cpgs/lima_cpgs)*100` % in the LIMA model.
 
@@ -52,4 +331,116 @@ overlap_lima <- length(unique(overlaps@to))/nrow(lima_dss)*100
 ```
 
 Looking at the overlap between regions a `r overlap_gfcv` % of the GFCV DMRs can be found in the LIMA results (`r length(unique(overlaps@from))`/`r nrow(gfcv_dss)`) and `r overlap_lima` % of the LIMA DMRs can be found in the GFCV results (`r length(unique(overlaps@to))`/`r nrow(lima_dss)`)
+
+
+## DMRs comparison statistics
+
+```{r}
+dmrs_0001 <- readRDS("D:/Tesis Doctoral/gnotobiomics_project_data_analysis/outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed/dna_met_exp_non_smoothed.group.reduced.rds")
+
+dmrs_001 <- readRDS("D:/Tesis Doctoral/gnotobiomics_project_data_analysis/outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_001/dna_met_exp_non_smoothed_001.group.reduced.rds")
+
+dmrs_005 <- readRDS("D:/Tesis Doctoral/gnotobiomics_project_data_analysis/outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_005/dna_met_exp_non_smoothed_005.group.reduced.rds")
+```
+
+```{r}
+length(unique(rowRanges(dmrs_0001)$geneName))
+length(unique(rowRanges(dmrs_001)$geneName))
+length(unique(rowRanges(dmrs_005)$geneName))
+
+rna_seq_dt <- readRDS("D:/Tesis Doctoral/gnotobiomics_project_data_analysis/outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_MA_exp_lima.rds")
+rna_seq_dt <- rna_seq_dt@ExperimentList$RNA_Sequencing
+
+length(intersect(rowRanges(dmrs_0001)$geneId, rowData(rna_seq_dt)$entrezID))
+length(intersect(rowRanges(dmrs_001)$geneId, rowData(rna_seq_dt)$entrezID))
+length(intersect(rowRanges(dmrs_005)$geneId, rowData(rna_seq_dt)$entrezID))
+
+p_val_dt <- rowData(rna_seq_dt)[,grepl("adj.p.value", colnames(rowData(rna_seq_dt)))]
+p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+rna_seq_dt_f <- rna_seq_dt[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+
+length(intersect(rowRanges(dmrs_0001)$geneId, rowData(rna_seq_dt_f)$entrezID))
+length(intersect(rowRanges(dmrs_001)$geneId, rowData(rna_seq_dt_f)$entrezID))
+length(intersect(rowRanges(dmrs_005)$geneId, rowData(rna_seq_dt_f)$entrezID))
+
+```
+
+```{r}
+dmrs_ma <- impute::impute.knn(data = as.matrix(assay(dmrs_005)))
+dmrs_ma <- t(scale(t(dmrs_ma$data)))    
+dmrs_ma
+
+int_cols <- intersect(colnames(dmrs_ma), colnames(rna_seq_dt_f))
+
+gene_ov <- intersect(rowRanges(dmrs_005)$geneId, rowData(rna_seq_dt_f)$entrezID)
+cor_ov <- lapply(gene_ov, function(x){
+    
+    dmr_dt <- dmrs_ma[rowRanges(dmrs_005)$geneId %in% x, int_cols, drop = FALSE]
+    
+    
+    gene_dt <- unlist(assay(rna_seq_dt_f)[rowData(rna_seq_dt_f)$entrezID %in% x & !is.na(rowData(rna_seq_dt_f)$entrezID), int_cols])
+    apply(dmr_dt, 1, function(x){cor(x, gene_dt)})
+    # cor(dmr_dt, gene_dt)
+})
+names(cor_ov) <- gene_ov
+
+
+dmrs_ma <- impute::impute.knn(data = as.matrix(assay(dmrs_001)))
+dmrs_ma <- t(scale(t(dmrs_ma$data)))    
+dmrs_ma
+
+gene_ov <- intersect(rowRanges(dmrs_001)$geneId, rowData(rna_seq_dt_f)$entrezID)
+cor_ov2 <- lapply(gene_ov, function(x){
+    
+    dmr_dt <- dmrs_ma[rowRanges(dmrs_001)$geneId %in% x, int_cols, drop = FALSE]
+    
+    
+    gene_dt <- unlist(assay(rna_seq_dt_f)[rowData(rna_seq_dt_f)$entrezID %in% x & !is.na(rowData(rna_seq_dt_f)$entrezID), int_cols])
+    apply(dmr_dt, 1, function(x){cor(x, gene_dt)})
+    # cor(dmr_dt, gene_dt)
+})
+names(cor_ov2) <- gene_ov
+
+dmrs_ma <- impute::impute.knn(data = as.matrix(assay(dmrs_0001)))
+dmrs_ma <- t(scale(t(dmrs_ma$data)))    
+dmrs_ma
+
+gene_ov <- intersect(rowRanges(dmrs_0001)$geneId, rowData(rna_seq_dt_f)$entrezID)
+cor_ov3 <- lapply(gene_ov, function(x){
+    dmr_dt <- dmrs_ma[rowRanges(dmrs_0001)$geneId %in% x, int_cols, drop = FALSE]
+    
+    
+    gene_dt <- unlist(assay(rna_seq_dt_f)[rowData(rna_seq_dt_f)$entrezID %in% x & !is.na(rowData(rna_seq_dt_f)$entrezID), int_cols])
+    apply(dmr_dt, 1, function(x){cor(x, gene_dt)})
+    # cor(dmr_dt, gene_dt)
+})
+names(cor_ov3) <- gene_ov
+
+sum(sapply(cor_ov3, function(x){x[which.max(abs(x))]}) < 0)
+sum(sapply(cor_ov3, function(x){x[which.max(abs(x))]}) > 0)
+
+
+cor_ov <- lapply(gene_ov, function(x){
+    
+    dmr_dt <- assay(dmrs_005)[rowRanges(dmrs_005)$geneId %in% x, int_cols, drop = FALSE]
+    
+    gene_dt <- unlist(assay(rna_seq_dt_f)[rowData(rna_seq_dt_f)$entrezID %in% x & !is.na(rowData(rna_seq_dt_f)$entrezID), int_cols])
+    
+    # plot_dt1 <- melt(dmr_dt)
+    # plot_dt2 <- melt(gene_dt)
+    # 
+    # plot_dt2$X1 <- x
+    # plot_dt2$X2 <- rownames(plot_dt2)    
+    # 
+    # plot_dt <- rbind(plot_dt1, plot_dt2)
+    # 
+    # ggplot(plot_dt) + geom_point(aes(x = X2, y = value, color = X1))
+    ggplot() + geom_point(aes(x = gene_dt, y = unlist(dmr_dt[4,]), color = colData(rna_seq_dt_f)[int_cols, "group"]))
+    
+    
+})
+
+```
+
+
 

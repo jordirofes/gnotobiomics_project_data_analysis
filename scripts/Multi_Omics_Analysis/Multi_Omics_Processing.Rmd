@@ -274,7 +274,7 @@ proc_omics <- lapply(names(experiments(lima_multi_exp)), function(omic_name){
         function_list <- list(impute_knn_assay, count_vst_deseq2, scale_assay)
     }
     if(grepl("Histone", omic_name)){
-        function_list <- list(transformToMvalues, scale_assay)
+        function_list <- list(scale_assay)
     }
     if(grepl("16S|Shotgun_Metagenomics", omic_name)){
         function_list <- list(clr_proc, scale_assay)
@@ -308,6 +308,9 @@ proc_omics <- lapply(names(experiments(gfcv_multi_exp)), function(omic_name){
     function_list <- list()
     omic_proc <- experiments(gfcv_multi_exp)[[omic_name]]
     
+    if(grepl("WGB_DNA", omic_name)){
+        function_list <- list(impute_knn_assay, ComBat_norm, scale_assay)
+    }
     if(grepl("RNA_Seq", omic_name)){
         function_list <- list(count_vst_deseq2, ComBat_norm, scale_assay)
     }
@@ -319,7 +322,7 @@ proc_omics <- lapply(names(experiments(gfcv_multi_exp)), function(omic_name){
         function_list <- list(impute_knn_assay, ComBat_norm, scale_assay)
     }
     if(grepl("Histone", omic_name)){
-        function_list <- list(transformToMvalues, ComBat_norm, scale_assay)
+        function_list <- list(ComBat_norm, scale_assay)
     }
     if(grepl("16S|Shotgun", omic_name)){
         function_list <- list(clr_proc, ComBat_norm, scale_assay)

@@ -1,3 +1,18 @@
+data_pca <- function(dt_list, metadata, stratificationVar, pc_x = 1, pc_y = 2, 
+                     scale. = FALSE, center = FALSE, plot_name, color_vect, ...){
+    group_var <- metadata[[stratificationVar]]
+    if(any(is.na(dt_list))){
+        dt_list <- t(impute::impute.knn(as.matrix(dt_list))$data)    
+    } else{
+        dt_list <- t(dt_list)
+    }
+    
+    pca_dt <- prcomp(dt_list, center = center, scale. = scale.)
+    
+    pca_plot(pca_dt, pc_x = pc_x, pc_y = pc_y, group_var = group_var, 
+             ellipse_var = group_var, interactive = FALSE, color_vect = color_vect) + 
+        ggtitle(plot_name)
+}
 
 plot_pc <- function(plot_dt, group_var, x_lab, y_lab, loading_dt = NA, color_vect, 
                     allElipse = TRUE, ellipse_var = NA, interactive = TRUE, level = 0.95){
@@ -42,12 +57,12 @@ plot_pc <- function(plot_dt, group_var, x_lab, y_lab, loading_dt = NA, color_vec
             annotate(geom = "segment", x = 0, y = 0, 
                             xend = loading_dt[,1]*(arrow_scale + arrow_scale/2), 
                             yend = loading_dt[,2]*(arrow_scale + arrow_scale/2), size = 0.2,  
-                        arrow = arrow(length = unit(0.2, "cm"), ends = "last")) + 
+                     arrow = arrow(length = unit(0.2, "cm"), ends = "last")) + 
             annotate(geom = "text",
-                    x = loading_dt[,1]*(arrow_scale+ arrow_scale/2 + 1), 
-                    y = loading_dt[,2]*(arrow_scale+ arrow_scale/2 + 1), 
-                    label = rownames(loading_dt), 
-                    size = 2.5, color = "blue")
+                     x = loading_dt[,1]*(arrow_scale+ arrow_scale/2 + 1), 
+                     y = loading_dt[,2]*(arrow_scale+ arrow_scale/2 + 1), 
+                     label = rownames(loading_dt), 
+                     size = 2.5, color = "blue")
     }
     
     if(interactive){
@@ -63,7 +78,7 @@ pca_plot <- function(pca_data, pc_x = 1, pc_y = 2, group_var, ellipse_var = NA,
     
     if(missing(color_vect) & length(unique(group_var)) < 9){
         color_vect <- RColorBrewer::brewer.pal(length(unique(group_var)), name = "Set1")    
-    } else{
+    } else if(missing(color_vect) & length(unique(group_var)) >= 9){
         color_vect <- RCy3::paletteColorRandom(value.count = length(unique(group_var)))
     }
     
@@ -76,7 +91,7 @@ pca_plot <- function(pca_data, pc_x = 1, pc_y = 2, group_var, ellipse_var = NA,
     
     loading_effect_sum <- apply(loading_dt, 1, function(x){sum(abs(x))})
     loading_names <- names(loading_effect_sum)[order(loading_effect_sum, 
-                                                            decreasing = TRUE)]
+                                                     decreasing = TRUE)]
     loading_dt <- loading_dt[loading_names[1:c(min(length(loading_names), 10))],]
     
     return(plot_pc(plot_dt, group_var, x_lab, y_lab, loading_dt, color_vect, 
@@ -107,7 +122,7 @@ quantile_breaks <- function(dt, length_out){
 }
 
 heatMapFun <- function(dt_list, metadata, stratificationVar, cdQuantile = 0, 
-                       plot_name = NULL, show_colnames, show_rownames = FALSE, 
+                       plot_name = "Data Heatmap", show_colnames, show_rownames = FALSE, 
                        clustering_method = "average",
                        clustering_distance_rows, color_list = NA, use_cat = TRUE, 
                        ...){
@@ -128,8 +143,8 @@ heatMapFun <- function(dt_list, metadata, stratificationVar, cdQuantile = 0,
     
     if(cdQuantile != 0){
         plot_name <- paste0(plot_name, " Top ", 
-                                     length(sel_vars),
-                                     " variables (>=", cdQuantile*100, "%) CV")
+                            length(sel_vars),
+                            " variables (>=", cdQuantile*100, "%) CV")
     } else if(cdQuantile != 0 & is.null(plot_name)){
         plot_name <- paste("Top", length(sel_vars), "variables")
     }
@@ -177,16 +192,16 @@ pcaFun <- function(dt_list, metadata, stratificationVar){
         cat("##### ", group_var_name, " \n")
         cat(knit_print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, 
                                 group_var = group_var, 
-                 ellipse_var = group_var)), " \n")
+                                ellipse_var = group_var)), " \n")
         cat("\n")
         pcvar <- round(pca_dt$sdev^2/sum(pca_dt$sdev^2)*100, 2)
-    
+        
         d3plot <- plot_ly(x = pca_dt$x[,1], y = pca_dt$x[,2], 
                           z = pca_dt$x[,3], color = group_var)
         d3plot <- d3plot %>% add_markers()
         d3plot <- d3plot %>% layout(scene = list(xaxis = list(title = paste0('PC1', "(", pcvar[1], "%)")),
-                            yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
-                            zaxis = list(title = paste0('PC3', "(", pcvar[3], "%)"))))
+                                                 yaxis = list(title = paste0('PC2', "(", pcvar[2], "%)")),
+                                                 zaxis = list(title = paste0('PC3', "(", pcvar[3], "%)"))))
         cat(knit_print(d3plot), " \n")
         cat("\n")
     }
@@ -203,7 +218,7 @@ boxplotFun <- function(dt_list, metadata, stratificationVar){
         names(test_boxplots) <- names(dt)
         test_boxplots
     })
-
+    
     for(dt_name in names(test_boxplots_list)){
         cat("##### ", dt_name, "{.tabset} \n")
         for(var_name in names(test_boxplots_list[[dt_name]])){
@@ -236,11 +251,11 @@ significant_tables_chunks <- function(contrs_result_sig_list, contrs_names, temp
 annotate_data <- function(deseqRes, annotationPackage){
     ensembl_id <- rownames(deseqRes)
     entrez_ids <- AnnotationDbi::mapIds(annotationPackage, keys = ensembl_id, column = c("ENTREZID"), 
-                                             keytype = "ENSEMBL", multiVals = "first")
+                                        keytype = "ENSEMBL", multiVals = "first")
     symbols <- AnnotationDbi::mapIds(annotationPackage, keys = ensembl_id, column = c("SYMBOL"), 
-                                             keytype = "ENSEMBL", multiVals = "first")
+                                     keytype = "ENSEMBL", multiVals = "first")
     gene_name <- AnnotationDbi::mapIds(annotationPackage, keys = ensembl_id, column = c("GENENAME"), 
-                                            keytype = "ENSEMBL", multiVals = "first")
+                                       keytype = "ENSEMBL", multiVals = "first")
     annotated_data_frame <- cbind(deseqRes, entrez_ids, symbols, gene_name)
     return(annotated_data_frame)
 }
@@ -253,15 +268,17 @@ enrich_filter <- function(dt_list){
 }
 
 multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db", 
-                        keyType = keyType, qvalueCutoff = 0.01, 
-                        pAdjustMthd = "BH", pvalueCutoff = 0.01, 
-                        simplify_res = FALSE, simplify_cutoff = 0.6, 
-                        simplify_col = "p.adjust", simplify_fun = min,
-                        enrichFun = c("ora", "gsea", "kegg", "wp", 
-                                      "david", "msigdbrORA", "gseKegg", 
-                                      "gseWp", "msigdbrGSEA"), 
-                        keggOrg, keggKeyType, davidOrg, wpOrg, 
-                        msigdbCategory, msigdbSpc, ...){
+                         keyType = keyType, qvalueCutoff = 0.01, 
+                         pAdjustMthd = "BH", pvalueCutoff = 0.01, 
+                         simplify_res = FALSE, simplify_cutoff = 0.6, 
+                         simplify_col = "p.adjust", simplify_fun = min,
+                         enrichFun = c("ora", "gsea", "kegg", "wp", 
+                                       "david", "msigdbrORA", "gseKegg", 
+                                       "gseWp", "msigdbrGSEA", "custom_ora", 
+                                       "custom_gsea"), 
+                         keggOrg, keggKeyType, davidOrg, wpOrg, 
+                         msigdbCategory, msigdbSpc, 
+                         TERM2GENE, TERM2NAME, ...){
     
     if(!is(enrichFun, "function")){
         enrichFun <- match.arg(enrichFun)
@@ -274,7 +291,9 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db",
                               "wp" = enrichWP,
                               "david" = enrichDAVID,
                               "msigdbrORA" = enricher,
-                              "msigdbrGSEA" = GSEA
+                              "msigdbrGSEA" = GSEA,
+                              "custom_ora" = enricher,
+                              "custom_gsea" = GSEA
         )
         switch(enrichFun, "ora" = {
             param_list <- list(keyType = keyType, OrgDb = OrgDb, 
@@ -310,7 +329,7 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db",
             param_list <- list(pAdjustMethod = pAdjustMthd, 
                                pvalueCutoff = pvalueCutoff)
             
-            wpOrg <- match.arg(wpOrg, get_wp_organisms())
+            # wpOrg <- match.arg(wpOrg, get_wp_organisms())
             param_list$organism <- wpOrg
             dt_to_pathway <- lapply(dt_to_pathway, mapIds, x = OrgDb, 
                                     column = "ENTREZID", keytype = keyType, 
@@ -333,7 +352,7 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db",
                                     column = "ENTREZID", keytype = keyType, 
                                     multiVals = "first")
             C3_t2g <- msigdbr(species = msigdbSpc, category = msigdbCategory) %>% 
-                            dplyr::select(gs_name, entrez_gene)
+                dplyr::select(gs_name, entrez_gene)
             
             enrichFun <- paste0(enrichFun, "_", msigdbCategory)
             
@@ -345,15 +364,15 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db",
             param_list <- list(pAdjustMethod = pAdjustMthd, 
                                pvalueCutoff = pvalueCutoff)
             C3_t2g <- msigdbr(species = msigdbSpc, category = msigdbCategory) %>% 
-                            dplyr::select(gs_name, entrez_gene)
+                dplyr::select(gs_name, entrez_gene)
             
             enrichFun <- paste0(enrichFun, "_", msigdbCategory)
             
             dt_to_pathway <- lapply(dt_to_pathway, function(x){
                 names(x) <- mapIds(x = OrgDb, keys = names(x),
-                        column = "ENTREZID", 
-                        keytype = keyType, 
-                        multiVals = "first")
+                                   column = "ENTREZID", 
+                                   keytype = keyType, 
+                                   multiVals = "first")
                 x
             })
             
@@ -361,17 +380,17 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db",
             gene_input_name <- "geneList"
             dt_to_pathway <- lapply(dt_to_pathway, sort, decreasing = TRUE)
             simplify_res <- FALSE
-
+            
         }, 
         "gseWp" = {
             param_list <- list(pAdjustMethod = pAdjustMthd, 
                                pvalueCutoff = pvalueCutoff)
-            wpOrg <- match.arg(wpOrg, get_wp_organisms())
+            # wpOrg <- match.arg(wpOrg, get_wp_organisms())
             param_list$organism <- wpOrg
             dt_to_pathway <- lapply(dt_to_pathway, function(x){
                 names(x) <- mapIds(x = OrgDb, column = "ENTREZID", 
-                                    keys = names(x), keytype = keyType, 
-                                    multiVals = "first")
+                                   keys = names(x), keytype = keyType, 
+                                   multiVals = "first")
                 x
             })
             dt_to_pathway <- lapply(dt_to_pathway, sort, decreasing = TRUE)
@@ -388,13 +407,47 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db",
             gene_input_name <- "geneList"
             dt_to_pathway <- lapply(dt_to_pathway, function(x){
                 names(x) <- mapIds(x = OrgDb, column = "ENTREZID", 
-                                    keys = names(x), keytype = keyType, 
-                                    multiVals = "first")
+                                   keys = names(x), keytype = keyType, 
+                                   multiVals = "first")
                 x
             })
             dt_to_pathway <- lapply(dt_to_pathway, sort, decreasing = TRUE)
             
             param_list$organism <- keggOrg
+            
+            param_list$universe <- universe
+            simplify_res <- FALSE
+        },
+        "custom_ora" = {
+            param_list <- list(pAdjustMethod = pAdjustMthd, 
+                               pvalueCutoff = pvalueCutoff)
+            
+            gene_input_name <- "gene"
+            dt_to_pathway <- lapply(dt_to_pathway, mapIds, x = OrgDb, 
+                                    column = "ENTREZID", keytype = keyType, 
+                                    multiVals = "first")
+            param_list$TERM2GENE <- TERM2GENE
+            param_list$TERM2NAME <- TERM2NAME
+            
+            param_list$universe <- universe
+            param_list$qvalueCutoff  <- qvalueCutoff
+            simplify_res <- FALSE
+        },
+        "custom_gsea" = {
+            param_list <- list(pAdjustMethod = pAdjustMthd, 
+                               pvalueCutoff = pvalueCutoff)
+            
+            gene_input_name <- "geneList"
+            dt_to_pathway <- lapply(dt_to_pathway, function(x){
+                names(x) <- mapIds(x = OrgDb, column = "ENTREZID", 
+                                   keys = names(x), keytype = keyType, 
+                                   multiVals = "first")
+                x
+            })
+            dt_to_pathway <- lapply(dt_to_pathway, sort, decreasing = TRUE)
+            
+            param_list$TERM2GENE <- TERM2GENE
+            param_list$TERM2NAME <- TERM2NAME
             
             param_list$universe <- universe
             simplify_res <- FALSE
@@ -417,7 +470,9 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db",
             
             param_list$ont <- "MF"
             gohyperMF <- do.call(enrich_fun, param_list)
-            enrich_data[[i]] <- list("BP" = gohyperBP,"CC" = gohyperCC,"MF" = gohyperMF)    
+            enrich_data[[i]] <- list("BP" = gohyperBP, 
+                                     "CC" = gohyperCC,
+                                    "MF" = gohyperMF)    
         } else{
             enrichRes <- do.call(enrich_fun, param_list)
             enrich_data[[i]] <- list(enrichRes)
@@ -427,29 +482,32 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db",
         names(enrich_data)[i] <- comparison
         if(simplify_res){
             enrich_data[[i]][!sapply(enrich_data[[i]], is.null)] <- lapply(enrich_data[[i]][!sapply(enrich_data[[i]], is.null)], 
-                                                                   simplify, cutoff = simplify_cutoff)
+                                                                           simplify, cutoff = simplify_cutoff)
         }
     }
     
     return(enrich_data)
 }
 
-
-
 enrich_plots <- function(enrich_data, fold_change_list = NULL, 
                          node_label = "category", legend_name = "Fold Change (log2)"){
     enrich_plots_res <- lapply(seq_along(enrich_data), function(path_data_id){
         path_data <- enrich_data[[path_data_id]]
-        fold_change_dt <- fold_change_list[[path_data_id]]
+        if(!is.null(fold_change_list)){
+            fold_change_dt <- fold_change_list[[path_data_id]]
+        } else{
+            fold_change_dt <- NULL
+        }
+        
         enrich_plot <- lapply(path_data, function(component){
             if(is.null(component)){return(NA)}
             if(nrow(as.data.frame(component)) == 0){return(NA)}
             dot_plot <- enrichplot::dotplot(component, showCategory = 30, 
                                             font.size = 8)
             network_plot <- enrichplot::cnetplot(component, 
-                categorySize = "geneNum", foldChange = fold_change_dt, 
-                showCategory = 15, node_label= node_label, 
-                cex.params = list(category_label = 0.4)) + 
+                                                 categorySize = "geneNum", foldChange = fold_change_dt, 
+                                                 showCategory = 15, node_label= node_label, 
+                                                 cex.params = list(category_label = 0.4)) + 
                 guides(colour=guide_colorbar(title = legend_name))
             return(list(dot_plot, network_plot))
         })
@@ -461,10 +519,16 @@ enrich_plots <- function(enrich_data, fold_change_list = NULL,
 
 
 enrich_chunks <- function(enrichData_all, enrich_plot_data){
+    
+    if(is.null(enrichData_all) || length(enrichData_all) == 0){return(NULL)}
     for(i in 1:length(enrich_plot_data)){
+        
+        if(is.null(enrichData_all[[i]]) || length(enrichData_all[[i]]) == 0){next}
+        
         cat("#### ", names(enrich_plot_data)[i], "{.tabset} \n");
         for(z in 1:length(enrichData_all[[i]])){
             dt_to_table <- as.data.frame(enrichData_all[[i]][[z]])
+            if(is.null(dt_to_table) || nrow(dt_to_table) == 0){next}
             num_vars <- sapply(dt_to_table, is.numeric)
             
             cat("#####", names(enrichData_all[[i]])[z], " {.tabset} \n")
@@ -496,9 +560,9 @@ calculate_enrich_fc <- function(enrich_table){
 
 dmr_annotation_plot <- function(omic_dt, 
                                 annotation_labels = c("Intron", "Promoter", 
-                                                    "Distal Intergenic", 
-                                                    "3' UTR", "5' UTR", 
-                                                    "Exon", "Downstream"), 
+                                                      "Distal Intergenic", 
+                                                      "3' UTR", "5' UTR", 
+                                                      "Exon", "Downstream"), 
                                 annotation_metadata_var = "annotation", 
                                 x_lab = "Region Proportions"){
     if(length(annotation_labels) <= 8){
@@ -522,9 +586,9 @@ dmr_annotation_plot <- function(omic_dt,
             }
         }
         exp_annotation <- sapply(as.character(annotation_labels), function(x){
-                found_anno <- grepl(pattern = x, annotation_variable)
-                sum(found_anno)
-            })
+            found_anno <- grepl(pattern = x, annotation_variable)
+            sum(found_anno)
+        })
         exp_annotation
         # table(unlist(exp_annotation))
     })
@@ -583,10 +647,10 @@ clr_proc <- function(omic_dt, ...){
                                        method = "relabundance")
     }
     omic_dt_temp <- transformAssay(x = omic_dt_temp, 
-                                    assay.type = "relabundance", 
-                                    method = "clr", name = "clr", 
-                                    pseudocount = 1)
-
+                                   assay.type = "relabundance", 
+                                   method = "clr", name = "clr", 
+                                   pseudocount = 1)
+    
     assays(omic_dt) <- list("clr" = assay(omic_dt_temp, "clr"))
     omic_dt
 }
@@ -612,7 +676,7 @@ impute_knn_assay <- function(omic_dt, k = 10, ...){
 
 ComBat_norm <- function(omic_dt, covariate, ...){
     assay(omic_dt) <- as.data.frame(ComBat(dat = as.matrix(assay(omic_dt)), 
-                                            batch = omic_dt[[covariate]]))
+                                           batch = omic_dt[[covariate]]))
     omic_dt
 }
 
@@ -622,7 +686,7 @@ go_similarity_matrix <- function(go_list1, go_list2, semData, measure){
     for(go1 in seq_along(go_list1)){
         for(go2 in seq_along(go_list2)){
             sim_mat[go1, go2] <- goSim(go_list1[go1], go_list2[go2], 
-                                        semData = semData, measure = measure)
+                                       semData = semData, measure = measure)
         }
     }
     rownames(sim_mat) <- go_list1
@@ -637,41 +701,41 @@ network_heatmap_fun <- function(plot_dt, labels_dt, omic_color_dict,
                                     length_out = 101)
     
     p <- ggplot(plot_dt, aes(x = sample_name, fill = value, 
-                                 y = var_id)) + 
-            geom_tile() + 
-            theme_minimal() + 
-            scale_fill_viridis_c(values = scales::rescale(dt_quantiles)) +
-            theme(axis.text.x = element_text(angle = 90, 
-                                             colour = x_colors),
-                  axis.text.y = element_text(size = 5),
-                    legend.position = "right", 
-                    legend.justification = "top", 
-                    legend.title = element_blank(), 
-                    plot.title = element_text(hjust = 0.5),
-                    legend.spacing.y = unit(0.1, "cm")) + 
-            ggtitle(plot_title) + 
-            xlab(NULL) + ylab(NULL) + 
-            ggnewscale::new_scale_fill() + 
-            geom_tile(inherit.aes = FALSE, 
-                      aes(x = -1, y = var_id, 
-                     fill = omic_name), data = labels_dt) +
-            scale_fill_manual(values = omic_color_dict) 
-        
+                             y = var_id)) + 
+        geom_tile() + 
+        theme_minimal() + 
+        scale_fill_viridis_c(values = scales::rescale(dt_quantiles)) +
+        theme(axis.text.x = element_text(angle = 90, 
+                                         colour = x_colors),
+              axis.text.y = element_text(size = 5),
+              legend.position = "right", 
+              legend.justification = "top", 
+              legend.title = element_blank(), 
+              plot.title = element_text(hjust = 0.5),
+              legend.spacing.y = unit(0.1, "cm")) + 
+        ggtitle(plot_title) + 
+        xlab(NULL) + ylab(NULL) + 
+        ggnewscale::new_scale_fill() + 
+        geom_tile(inherit.aes = FALSE, 
+                  aes(x = -1, y = var_id, 
+                      fill = omic_name), data = labels_dt) +
+        scale_fill_manual(values = omic_color_dict) 
+    
 }
 
 network_lineplot_fun <- function(plot_dt, labels_dt, omic_color_dict, x_colors, 
-                                legend_colors, plot_title){
+                                 legend_colors, plot_title){
     p <- ggplot(plot_dt, aes(x = sample_name, y = value, color = omic_name,
                              group = var_id, shape = var_id)) +
         geom_point() + geom_smooth(aes(color = omic_name, fill = omic_name),
                                    se = FALSE, span = 0.5, alpha = 0.1) +
         theme_minimal() +
         theme(axis.text.x = element_text(angle = 90, colour = x_colors),
-                legend.position = "right",
-                legend.justification = "top",
-                legend.title = element_blank(),
-                plot.title = element_text(hjust = 0.5),
-                legend.spacing.y = unit(0.1, "cm")) +
+              legend.position = "right",
+              legend.justification = "top",
+              legend.title = element_blank(),
+              plot.title = element_text(hjust = 0.5),
+              legend.spacing.y = unit(0.1, "cm")) +
         ggtitle(plot_title) +
         xlab(NULL) + ylab("Normalized Values") +
         scale_color_manual(values = omic_color_dict)  +
@@ -687,11 +751,11 @@ network_lineplot_fun <- function(plot_dt, labels_dt, omic_color_dict, x_colors,
 }
 
 plot_nw_term <- function(omic_dt, feature_ids, term_ids, group_var = "group", 
-                        sample_var = "samplename", feature_ids_dict = NULL, 
-                        omic_names_dict = NULL, omic_color_dict, 
-                        group_color_dict = NULL,
-                        var_order_col = "Factor_2", plot_title, 
-                        plot_type = c("Heatmap", "Lineplot")){
+                         sample_var = "samplename", feature_ids_dict = NULL, 
+                         omic_names_dict = NULL, omic_color_dict, 
+                         group_color_dict = NULL,
+                         var_order_col = "Factor_2", plot_title, 
+                         plot_type = c("Heatmap", "Lineplot")){
     
     # Preparing some dictionary data
     if(!is.null(params$omic_names_dict)){
@@ -723,11 +787,11 @@ plot_nw_term <- function(omic_dt, feature_ids, term_ids, group_var = "group",
         
         melted_dt$factor_weight <- rowData(omic_exp)[melted_dt$var_id, var_order_col]
         melted_dt$factor_weight_pos <- ifelse(melted_dt$factor_weight >= 0,
-                                      "Positive", "Negative")
+                                              "Positive", "Negative")
         
         # melted_dt$var_id <- factor(gsub(paste0(omic_exp_name, "."), "", melted_dt$var_id))
         melted_dt$var_id <- factor(paste(omic_exp_name, 
-                                        melted_dt$var_id, sep = "."))
+                                         melted_dt$var_id, sep = "."))
         melted_dt$omic_name <- factor(omic_exp_name)
         
         melted_dt$group <- factor(group_var_dict[as.character(melted_dt$sample_name)])
@@ -745,7 +809,7 @@ plot_nw_term <- function(omic_dt, feature_ids, term_ids, group_var = "group",
     plot_dt <- do.call(rbind, plot_dt)
     
     # plot_dt$var_id <- factor(abbreviate(as.character(plot_dt$var_id), 75, ))
-
+    
     plot_dt$var_id <- factor(plot_dt$var_id, levels = levels(plot_dt$var_id), 
                              labels = base::make.unique(str_trunc(levels(plot_dt$var_id), 75)))
     
@@ -757,7 +821,7 @@ plot_nw_term <- function(omic_dt, feature_ids, term_ids, group_var = "group",
     reordered_sample_levels <- sample_levels[order(group_var_dict[as.character(sample_levels)])]
     
     plot_dt$sample_name <- reorder(plot_dt$sample_name, 
-                                    new.order = reordered_sample_levels)
+                                   new.order = reordered_sample_levels)
     
     x_colors <- group_color_dict[as.character(group_var_dict[levels(plot_dt$sample_name)])]
     
@@ -772,16 +836,16 @@ plot_nw_term <- function(omic_dt, feature_ids, term_ids, group_var = "group",
     
     # reordered_var_levels <- var_levels[order(var_omic_dict[as.character(var_levels)])]
     reordered_var_levels <- labels_dt$var_id[order(labels_dt$factor_weight, 
-                                                    decreasing = TRUE)]
+                                                   decreasing = TRUE)]
     
     
     plot_dt$var_id <- reorder(plot_dt$var_id, 
-                            new.order = reordered_var_levels)
+                              new.order = reordered_var_levels)
     
     legend_colors <- omic_color_dict[as.character(sapply(levels(plot_dt$var_id), function(x){
         labels_dt$omic_name[as.character(labels_dt$var_id) == x]
     }))]
-
+    
     names(legend_colors) <- levels(plot_dt$var_id)
     labels_dt$omic_colors <- legend_colors[labels_dt$var_id]
     
@@ -791,16 +855,16 @@ plot_nw_term <- function(omic_dt, feature_ids, term_ids, group_var = "group",
     plot_type <- match.arg(plot_type)
     
     switch(plot_type, 
-        "Heatmap" = {
-        p <- network_heatmap_fun(plot_dt = plot_dt, labels_dt = labels_dt, 
-                                omic_color_dict = omic_color_dict,
-                                x_colors = x_colors, plot_title = plot_title)
-    }, "Lineplot" = {
-        p <- network_lineplot_fun(plot_dt = plot_dt, labels_dt = labels_dt, 
-                            legend_colors = legend_colors, 
-                            omic_color_dict = omic_color_dict,
-                            x_colors = x_colors, plot_title = plot_title)
-    })
+           "Heatmap" = {
+               p <- network_heatmap_fun(plot_dt = plot_dt, labels_dt = labels_dt, 
+                                        omic_color_dict = omic_color_dict,
+                                        x_colors = x_colors, plot_title = plot_title)
+           }, "Lineplot" = {
+               p <- network_lineplot_fun(plot_dt = plot_dt, labels_dt = labels_dt, 
+                                         legend_colors = legend_colors, 
+                                         omic_color_dict = omic_color_dict,
+                                         x_colors = x_colors, plot_title = plot_title)
+           })
     
     
     return(p)
@@ -813,7 +877,7 @@ setReadable_custom <- function(enrich_res, featureDict, dt_type = "ora"){
     if((!is(enrich_res, "enrichResult") & !is(enrich_res, "gseaResult")) || nrow(enrich_res@result) == 0){return(enrich_res)}
     geneID_list <- strsplit(enrich_res@result[[dt_type]], "/")
     enrich_res@result[[dt_type]] <- sapply(geneID_list, function(pathway_ids){
-
+        
         found <- names(featureDict)[sapply(featureDict, function(ids_dict){any(ids_dict %in% pathway_ids)})]
         
         paste(unique(unlist(found)), collapse = "/")
@@ -824,7 +888,7 @@ setReadable_custom <- function(enrich_res, featureDict, dt_type = "ora"){
 enrich_multi_omic_clusters <- function(graph, feature_dict, 
                                        membership_attribute, universe, 
                                        min_n = 25){
-
+    
     membership_vector <- vertex_attr(graph, membership_attribute)
     clu_vertex <- lapply(unique(membership_vector), function(cl_id){
         names(V(graph))[membership_vector == cl_id]
@@ -833,12 +897,11 @@ enrich_multi_omic_clusters <- function(graph, feature_dict,
     clu_vertex <- clu_vertex[lengths(clu_vertex) >= min_n]
     rna_seq_tag <- "RNA_Sequencing\\."
     dna_seq_tag <- "WGB_DNA_Methylation\\."
-
+    
     general_tag <- paste0(rna_seq_tag, "|", dna_seq_tag)
     
     enrich_res <- lapply(clu_vertex, function(clu_ids){
         merged_ids <- grep(general_tag, clu_ids, value = TRUE)
-        
         merged_ids <- feature_dict[merged_ids]
         enrich_go <- clusterProfiler::enrichGO(
             gene = merged_ids, OrgDb = org.Mm.eg.db,

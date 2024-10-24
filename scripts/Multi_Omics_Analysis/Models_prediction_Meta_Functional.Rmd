@@ -24,7 +24,7 @@ mofa_dir_name <- "sig_int_thr07_liv2"
 output_dir <- paste0(params$output_dir, "MOFA_Results/", mofa_dir_name, "/")
 corr_output_dir <- paste0(output_dir, "correlation_results/")
 
-enrich_name <- "factor_part_kegg"
+enrich_name <- "merged_kegg_results"
 enrich_nw_dir <- paste0(corr_output_dir, enrich_name, "/")
 # corr_output_dir <- paste0(output_dir, "correlation_results/")
 # omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
@@ -44,15 +44,44 @@ exp_names_f <- names(multi_omics)[grepl("Functional",
 multi_omic_filt <- multi_omics[,,exp_names_f]
 
 
-omic_var_names <- lapply(seq_len(num_factors), function(factor_id){
-    factor_col <- paste0("Factor_", factor_id,  "_weights_sig")
-    
-    sapply(names(omic_dt_filt), function(omic_id){
-        omic_exp <- experiments(omic_dt_filt)[[omic_id]]
-        rownames(omic_exp)[rowData(omic_exp)[,factor_col]]
-    })
+corr_feature_path <- paste0(enrich_nw_dir, "feature_count_correlated.xlsx")
+corr_feature_names <- openxlsx::getSheetNames(corr_feature_path)
+
+corr_results <- lapply(corr_feature_names, function(sheet_name){
+    openxlsx::read.xlsx(corr_feature_path, sheet = sheet_name)
 })
-names(omic_var_names) <- paste0("Factor_", seq_len(num_factors))
+
+names(corr_results) <- corr_feature_names
+
+omic_var_names <- lapply(corr_results, function(corr_res){
+    corr_res$Feature_ID[grep("Shotgun", corr_res$Feature_ID)]
+})
+
+omic_var_names <- lapply(c("pearson", "spearman"), function(score_id){
+    factor_res <- lapply(seq_len(num_factors), function(factor_id){
+        corr_ids <- corr_results[[grep(paste0(score_id, ".", "Factor_", factor_id), names(corr_results))]]$Feature_ID
+        corr_ids[grep("Shotgun", corr_ids)]
+        
+        exp_res <- lapply(exp_names, function(exp_names){
+            gsub(paste0(exp_names, "."), "", corr_ids[grepl(exp_names, corr_ids)])
+        })
+        names(exp_res) <- exp_names
+        exp_res
+    })
+    names(factor_res) <- paste0("Factor_", seq_len(num_factors))
+    factor_res
+})
+names(omic_var_names) <- c("pearson", "spearman")
+
+# omic_var_names <- lapply(seq_len(num_factors), function(factor_id){
+#     factor_col <- paste0("Factor_", factor_id,  "_weights_sig")
+# 
+#     sapply(names(omic_dt_filt), function(omic_id){
+#         omic_exp <- experiments(omic_dt_filt)[[omic_id]]
+#         rownames(omic_exp)[rowData(omic_exp)[,factor_col]]
+#     })
+# })
+# names(omic_var_names) <- paste0("Factor_", seq_len(num_factors))
 ```
 
 ## Loading the network
@@ -230,12 +259,12 @@ experiments(multi_omic_filt) <- ExperimentList(filtered_exps)
 correlation_scores <- c("pearson", "spearman")
 test_res_score <- lapply(correlation_scores, function(score_id){
     test_res <- lapply(seq_len(num_factors), function(weight_id){
-        weight_vars <- omic_var_names[[weight_id]]
+        weight_vars <- omic_var_names[[score_id]][[weight_id]]
     
         organ_res <- lapply(c("cecum", "colon"), function(organ_id){
             organ_vars <- weight_vars[[grep(organ_id, names(weight_vars), value = TRUE)]]
-            organ_vars <- make.names(organ_vars)
             
+            organ_vars <- make.names(organ_vars)
             if(!length(organ_vars)){return(NA)}
     
             functional_exp <- experiments(multi_omic_filt)[[grep(organ_id, names(multi_omic_filt), value = TRUE)]]
@@ -253,11 +282,10 @@ test_res_score <- lapply(correlation_scores, function(score_id){
                         assay.type2 = "clr", method = score_id, 
                         cor_threshold = 0.8, p_adj_method = "fdr", 
                         p_adj_threshold = 0.05, test_significance = TRUE)
-            
             sp_res <- lapply(unique(corr_dt$Var2), function(sp_dt){
                 correlated_names <- as.character(corr_dt$Var1)[as.character(corr_dt$Var2) == sp_dt]
                 sp_rd <- rowData(functional_exp[correlated_names,])
-                cbind(data.frame("Specie" = sp_dt), sp_rd)
+                cbind(data.frame("Specie" = sp_dt, "Functionality" = correlated_names), sp_rd)
             })
             names(sp_res) <- paste0("Species.", as.character(unique(corr_dt$Var2)))
             sp_res
@@ -289,7 +317,43 @@ lapply(names(test_res_score), function(score_id){
             openxlsx::addWorksheet(wb = results_wb,
                                     sheetName = sheet_name)
             openxlsx::writeData(wb = results_wb, sheet = sheet_name,
-                                x = as.data.frame(organ_dt)[,c(1, 38:47)])
+                                x = as.data.frame(organ_dt)[,c(1,2, 39:48)])
+            openxlsx::saveWorkbook(results_wb, 
+                                    file = output_name, 
+                                    overwrite = TRUE)  
+                
+        })
+    })
+})
+```
+
+```{r}
+results_wb <- openxlsx::createWorkbook()
+lapply(names(test_res_score), function(score_id){
+    
+    score_dt <- test_res_score[[score_id]]
+    
+    lapply(names(score_dt), function(factor_id){
+        factor_dt <- score_dt[[factor_id]]
+        lapply(names(factor_dt), function(organ_id){
+            organ_dt <- factor_dt[[organ_id]]
+            if(!length(organ_dt) | all(is.na(organ_dt))){return(NULL)}
+            organ_dt <- do.call(rbind, organ_dt)
+
+            fun_dt <- as.data.frame(table(organ_dt$Functionality))
+            
+            fun_dt <- cbind(fun_dt, organ_dt[sapply(fun_dt$Var1, function(x){
+                which(organ_dt$Functionality == x)[1]
+            }),3:ncol(organ_dt)])
+            fun_dt <- fun_dt[order(fun_dt$Freq, decreasing = TRUE),]
+            
+            sheet_name <- paste(score_id, factor_id, organ_id, sep = ".")
+            output_name <- paste0(output_dir, "functional_associations_counts.xlsx")
+                
+            openxlsx::addWorksheet(wb = results_wb,
+                                    sheetName = sheet_name)
+            openxlsx::writeData(wb = results_wb, sheet = sheet_name,
+                                x = fun_dt[,c(1,2, 39:48)])
             openxlsx::saveWorkbook(results_wb, 
                                     file = output_name, 
                                     overwrite = TRUE)  

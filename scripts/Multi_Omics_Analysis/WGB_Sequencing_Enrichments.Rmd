@@ -32,17 +32,16 @@ lima_universe <- GenomicRanges::makeGRangesFromDataFrame(df = lima_methrix@eleme
 ```
 
 ```{r}
-DSS::
-```
-
-```{r}
 chain_mm39_mm10 <- rtracklayer::import.chain(con = "../../../LOLA_tests/mm39ToMm10.over.chain")
 
-gfcv_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_gfcv.rds")
-lima_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_lima.rds")
+# gfcv_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_gfcv.rds")
+# lima_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_lima.rds")
+# 
+# 
+# lima_clu <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed/heatmap_data.rds")
 
-
-lima_clu <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed/heatmap_data.rds")
+lima_dss <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_001/dna_met_exp_non_smoothed_001.group.reduced.rds")
+lima_clu <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_001/heatmap_data.rds")
 ```
 
 ```{r}
@@ -76,7 +75,7 @@ pheatmap::pheatmap(mat = scale(t(plot_dt)),
                   main = paste("DMRs Any Significant (Mean methylation value & adj pvalue <=",
                               0.1),
                   color = color_values, clustering_distance_rows = dist(scale(t(plot_dt))), 
-                  breaks = quantile_breaks, show_colnames = FALSE, cutree_cols = 4, )
+                  breaks = quantile_breaks, show_colnames = FALSE, cutree_cols = 4)
 ```
 ```{r}
 gfcv_dss_mm10 <- unlist(rtracklayer::liftOver(x = rowRanges(gfcv_dss), chain = chain_mm39_mm10))

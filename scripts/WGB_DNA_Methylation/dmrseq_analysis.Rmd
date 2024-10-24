@@ -3,30 +3,30 @@ title: "dmrseq_analysis"
 output: html_document
 date: "2023-12-06"
 params:
-  methrix_path: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/merged_methrix.rds"
-  output_dir: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/dmrseq.group.non_smoothed_global/"
+  methrix_path: !r paste0(output_dir, "merged_methrix.rds")
+  output_dir: !r dmrseq_output
   threads: 1
   
-  chromosome_filter: !r NULL
-  outlier_samples: !r  c("X670E", "X594C")
+  chromosome_filter: !r chromosome_filter
+  outlier_samples: !r  NULL
   
-  max_fraction_missing: 0
+  max_fraction_missing: 0.2
   
   random_seed: 1234
   group_var: "group"
   
   global_test: FALSE
-  covariates: !r NULL
-  cutoff: 0.1
+  covariates: "batch"
+  cutoff: 0.05
   bpSpan: 500
   minNumRegion: 3
   minInSpan: 11 
   smooth: FALSE
   maxGapSmooth: 2000
   maxGap: 200 
-  maxPerms: 10
+  maxPerms: 3
   
-  results_name: "non_smoothed_global"
+  results_name: "results_name"
   
   dmrseq_thr: 0.05
 
@@ -75,54 +75,57 @@ dmrseq_path <- paste0(params$output_dir, "dmrseq_results_", results_name, ".rds"
 # bsseq_path <- paste0(params$output_dir, "bsseq_obj.rds")
 
 if(!file.exists(dmrseq_path)){
-  
-  # merged_methrix <- methrix::subset_methrix(merged_methrix, contigs = c("chr1"))
-
-  bsseq_obj <- methrix::methrix2bsseq(merged_methrix)
-  
-  delayed_cov <- getCoverage(bsseq_obj, type="Cov") == 0
-  
-  # loci.idx <- which((DelayedMatrixStats::rowSums2(getCoverage(bsseq_obj, type="Cov")==0)/ncol(bsseq_obj)) <= params$max_fraction_missing)
-  
-  loci.idx <- lapply(levels(bsseq_obj[[params$group_var]]), function(cond_level){
-    which((DelayedMatrixStats::rowSums2(delayed_cov, cols = bsseq_obj[[params$group_var]] == cond_level)/sum(bsseq_obj[[params$group_var]] == cond_level)) < params$max_fraction_missing)
-  })
-
-  # loci.idx <- Reduce(intersect, loci.idx)
-  
-  bsseq_obj <- bsseq_obj[loci.idx,]
-  
-  if(params$global_test){
-    set.seed(params$random_seed)
-    local_res_ctrs <- list("Global Test" = dmrseq::dmrseq(
-        bs = bsseq_obj, cutoff = params$cutoff, 
-        testCovariate = params$group_var, minNumRegion = params$minNumRegion,
-        bpSpan = params$bpSpan, minInSpan = params$minInSpan, 
-        smooth = params$smooth, maxGapSmooth = params$maxGapSmooth, 
-        maxGap = params$maxGap, maxPerms = params$maxPerms, 
-        BPPARAM = BiocParallel::SerialParam()))
-  } else{
-    ctrs_list <- combn(levels(merged_methrix[[params$group_var]]), 2)
-    rm(loci.idx)
-    rm(delayed_cov)
-  
-    local_res_ctrs <- list()
     
-    set.seed(params$random_seed)
-    for(row_ids in seq_len(ncol(ctrs_list))){
-      ctrs_ids <- ctrs_list[,row_ids]
-      set.seed(params$random_seed)
-      local_res_ctrs[[paste0(ctrs_ids[2:1], collapse = "-")]] <- dmrseq::dmrseq(
-          bs = bsseq_obj[,bsseq_obj[[params$group_var]] %in% ctrs_ids], cutoff = params$cutoff, 
-          testCovariate = params$group_var, minNumRegion = params$minNumRegion,
-          bpSpan = params$bpSpan, minInSpan = params$minInSpan, smooth = params$smooth,
-          maxGapSmooth = params$maxGapSmooth, maxGap = params$maxGap, 
-          maxPerms = params$maxPerms, 
-          BPPARAM = BiocParallel::SerialParam())
+    # merged_methrix <- methrix::subset_methrix(merged_methrix, contigs = c("chr1"))
+    
+    bsseq_obj <- methrix::methrix2bsseq(merged_methrix)
+    
+    delayed_cov <- getCoverage(bsseq_obj, type="Cov") == 0
+    
+    # loci.idx <- which((DelayedMatrixStats::rowSums2(getCoverage(bsseq_obj, type="Cov")==0)/ncol(bsseq_obj)) <= params$max_fraction_missing)
+  
+    loci.idx <- lapply(levels(bsseq_obj[[params$group_var]]), function(cond_level){
+        which((DelayedMatrixStats::rowSums2(delayed_cov, 
+                                            cols = bsseq_obj[[params$group_var]] == cond_level)/sum(bsseq_obj[[params$group_var]] == cond_level)) < params$max_fraction_missing)
+    })
+
+    # loci.idx <- Reduce(union, loci.idx)
+    loci.idx <- Reduce(intersect, loci.idx)
+    # 
+    
+    bsseq_obj <- bsseq_obj[sort(loci.idx),]
+    
+    if(params$global_test){
+        set.seed(params$random_seed)
+        local_res_ctrs <- list("Global Test" = dmrseq::dmrseq(
+            bs = bsseq_obj, cutoff = params$cutoff, 
+            testCovariate = params$group_var, minNumRegion = params$minNumRegion,
+            bpSpan = params$bpSpan, minInSpan = params$minInSpan, 
+            smooth = params$smooth, maxGapSmooth = params$maxGapSmooth, 
+            maxGap = params$maxGap, maxPerms = params$maxPerms, 
+            BPPARAM = BiocParallel::SerialParam()))
+    } else{
+        ctrs_list <- combn(levels(merged_methrix[[params$group_var]]), 2)
+        rm(loci.idx)
+        rm(delayed_cov)
+        
+        local_res_ctrs <- list()
+        
+        set.seed(params$random_seed)
+        for(row_ids in seq_len(ncol(ctrs_list))){
+          ctrs_ids <- ctrs_list[,row_ids]
+          set.seed(params$random_seed)
+          local_res_ctrs[[paste0(ctrs_ids[2:1], collapse = "-")]] <- dmrseq::dmrseq(
+              bs = bsseq_obj[,bsseq_obj[[params$group_var]] %in% ctrs_ids], cutoff = params$cutoff, 
+              testCovariate = params$group_var, minNumRegion = params$minNumRegion,
+              bpSpan = params$bpSpan, minInSpan = params$minInSpan, smooth = params$smooth,
+              maxGapSmooth = params$maxGapSmooth, maxGap = params$maxGap, 
+              maxPerms = params$maxPerms, 
+              BPPARAM = BiocParallel::SerialParam())
+        }
     }
-  }
-  # saveRDS(bsseq_obj, bsseq_path)
-  saveRDS(local_res_ctrs, dmrseq_path)
+    # saveRDS(bsseq_obj, bsseq_path)
+    saveRDS(local_res_ctrs, dmrseq_path)
 } else{
   local_res_ctrs <- readRDS(dmrseq_path)  
   bsseq_obj <- methrix2bsseq(merged_methrix)

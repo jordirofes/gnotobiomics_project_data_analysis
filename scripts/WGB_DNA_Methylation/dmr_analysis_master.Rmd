@@ -514,38 +514,80 @@ xfun::Rscript_call(rmarkdown::render,
 )
 ```
 
-<!-- # ```{r} -->
-<!-- # merge_method <- "disjoint" -->
-<!-- #  -->
-<!-- # xfun::Rscript_call(rmarkdown::render,  -->
-<!-- #   args = list( -->
-<!-- #     input = "./dmr_analysis.Rmd",  -->
-<!-- #     output_file = paste0(dss_output, "dmr_analysis_",  -->
-<!-- #                          results_name, ".", merge_method, ".html"),  -->
-<!-- #     params = list( -->
-<!-- #       output_dir = dss_output, -->
-<!-- #       results_name = paste0(results_name,".", merge_method), -->
-<!-- #    -->
-<!-- #       threads = 1, -->
-<!-- #       methrix_path = paste0(output_dir, "merged_methrix.rds"), -->
-<!-- #       granges_path = paste0(dss_output, "dss_dmr_results_",  -->
-<!-- #                             results_name, ".", group_var, ".rds"), -->
-<!-- #        -->
-<!-- #       outlier_samples =  outlier_samples, -->
-<!-- #       group_var = group_var, -->
-<!-- #        -->
-<!-- #       merge_granges = TRUE, -->
-<!-- #       merge_method = merge_method, -->
-<!-- #        -->
-<!-- #       unique_gene_region_annotation_filter = FALSE,  -->
-<!-- #        -->
-<!-- #       genome_id = "mm39", -->
-<!-- #       annotation_genome = "TxDb.Mmusculus.UCSC.mm39.knownGene", -->
-<!-- #       organism_db = "org.Mm.eg.db" -->
-<!-- #     ) -->
-<!-- #   ) -->
-<!-- # ) -->
-<!-- # ``` -->
+```{r}
+merge_method <- "reduced"
+
+xfun::Rscript_call(rmarkdown::render, 
+  args = list(
+    input = "./dmr_analysis.Rmd", 
+    output_file = paste0(dss_output, "dmr_analysis_", 
+                         results_name, ".", merge_method, ".html"), 
+    params = list(
+      output_dir = dss_output,
+      results_name = results_name,
+  
+      threads = 1,
+      methrix_path = paste0(output_dir, "merged_methrix.rds"),
+      granges_path = paste0(dss_output, "dss_dmr_results_", 
+                            results_name, ".", group_var, ".rds"),
+      
+      outlier_samples =  outlier_samples,
+      chromosome_filter = NULL,
+      group_var = group_var,
+      
+      merge_granges = TRUE,
+      merge_method = merge_method,
+      
+      unique_gene_region_annotation_filter = FALSE, 
+      
+      genome_id = "mm39",
+      annotation_genome = "TxDb.Mmusculus.UCSC.mm39.knownGene",
+      organism_db = "org.Mm.eg.db"
+    )
+  )
+)
+```
+
+```{r}
+file.exists(results_path)
+                                                                results_path <- paste0(dss_output, "dna_met_exp_", results_name,".", 
+                        group_var, ".", merge_method, ".rds")
+file.copy(from = results_path, 
+          to = paste0(params$output_dir, "WGB_DNA_Methylation_exp_lima.rds"))
+```
+
+#### Non-Smoothed 0.01
+
+```{r}
+results_name <- "non_smoothed_001"
+
+dss_output <- paste0(output_dir, "DSS.", group_var, ".", results_name, "/") 
+
+if(!dir.exists(dss_output)){dir.create(dss_output)}
+
+xfun::Rscript_call(rmarkdown::render, 
+    args = list(
+      input = "./DSS_analysis.Rmd", 
+      output_file = paste0(dss_output, "DSS_analysis_",
+                            results_name), 
+      params = list(
+        output_dir = dss_output,
+        results_name = results_name,
+  
+        methrix_path = paste0(output_dir, "merged_methrix.rds"),
+        
+        outlier_samples =  outlier_samples,
+        chromosome_filter = NULL,
+        group_var = group_var,
+        
+        random_seed = 1234,
+
+        smoothing = FALSE,
+        dmr_pvalue = 0.01
+    ) 
+  )
+)
+```
 
 ```{r}
 merge_method <- "reduced"
@@ -580,18 +622,78 @@ xfun::Rscript_call(rmarkdown::render,
 )
 ```
 
+
+#### Non-Smoothed pval 0.05 
+
 ```{r}
-file.exists(results_path)
-                                                                results_path <- paste0(dss_output, "dna_met_exp_", results_name,".", 
-                        group_var, ".", merge_method, ".rds")
-file.copy(from = results_path, 
-          to = paste0(params$output_dir, "WGB_DNA_Methylation_exp_lima.rds"))
+results_name <- "non_smoothed_005"
+
+dss_output <- paste0(output_dir, "DSS.", group_var, ".", results_name, "/") 
+
+if(!dir.exists(dss_output)){dir.create(dss_output)}
+
+xfun::Rscript_call(rmarkdown::render, 
+    args = list(
+      input = "./DSS_analysis.Rmd", 
+      output_file = paste0(dss_output, "DSS_analysis_",
+                            results_name), 
+      params = list(
+        output_dir = dss_output,
+        results_name = results_name,
+  
+        methrix_path = paste0(output_dir, "merged_methrix.rds"),
+        
+        outlier_samples =  outlier_samples,
+        chromosome_filter = NULL,
+        group_var = group_var,
+        
+        random_seed = 1234,
+
+        smoothing = FALSE,
+        dmr_pvalue = 0.05
+    ) 
+  )
+)
 ```
+
+```{r}
+merge_method <- "reduced"
+
+xfun::Rscript_call(rmarkdown::render, 
+  args = list(
+    input = "./dmr_analysis.Rmd", 
+    output_file = paste0(dss_output, "dmr_analysis_", 
+                         results_name, ".", merge_method, ".html"), 
+    params = list(
+      output_dir = dss_output,
+      results_name = results_name,
+  
+      threads = 1,
+      methrix_path = paste0(output_dir, "merged_methrix.rds"),
+      granges_path = paste0(dss_output, "dss_dmr_results_", 
+                            results_name, ".", group_var, ".rds"),
+      
+      outlier_samples =  outlier_samples,
+      group_var = group_var,
+      
+      merge_granges = TRUE,
+      merge_method = merge_method,
+      
+      unique_gene_region_annotation_filter = FALSE, 
+      
+      genome_id = "mm39",
+      annotation_genome = "TxDb.Mmusculus.UCSC.mm39.knownGene",
+      organism_db = "org.Mm.eg.db"
+    )
+  )
+)
+```
+
 
 ## GFCV Model
 
 ```{r}
-merged_methrix$batch <- as.factor(merged_methrix$batch)
+# merged_methrix$batch <- as.factor(merged_methrix$batch)
 
 output_dir <- paste0(params$output_dir, "GFCV/")
 
@@ -661,13 +763,15 @@ xfun::Rscript_call(rmarkdown::render,
         threads = 1,
         methrix_path = paste0(output_dir, "merged_methrix.rds"),
         
-        outlier_samples =  outlier_samples,
+        outlier_samples =  NULL,
+        chromosome_filter = chromosome_filter,
+        
         group_var = group_var,
         
         max_fraction_missing = 0.2,
         
         random_seed = 1234,
-        covariates =  NULL,
+        covariates =  "batch",
         cutoff = 0.05,
         bpSpan = 500,
         minNumRegion = 3,
@@ -697,7 +801,8 @@ xfun::Rscript_call(rmarkdown::render,
         granges_path = paste0(dmrseq_output, "dmrseq_results_", 
                               results_name, ".", group_var, ".rds"),
         
-        outlier_samples =  outlier_samples,
+        outlier_samples =  NULL,
+        chromosome_filter = chromosome_filter,
         group_var = group_var,
         
         merge_granges = TRUE,
@@ -775,9 +880,10 @@ xfun::Rscript_call(rmarkdown::render,
         granges_path = paste0(dmrseq_output, "dmrseq_results_", 
                               results_name, ".", group_var, ".rds"),
         
-        outlier_samples =  outlier_samples,
-        group_var = group_var,
+        outlier_samples =  NULL,
+        chromosome_filter = chromosome_filter,
         
+        group_var = group_var,
         merge_granges = FALSE,
         merge_method = merge_method,
         
@@ -868,6 +974,142 @@ file.copy(from = results_path,
           to = paste0(params$output_dir, "WGB_DNA_Methylation_exp_gfcv.rds"))
 ```
 
+#### Non-Smoothed 0.01
+
+```{r}
+results_name <- "non_smoothed_001"
+
+dss_output <- paste0(output_dir, "DSS.", group_var, ".", results_name, "/") 
+
+if(!dir.exists(dss_output)){dir.create(dss_output)}
+
+xfun::Rscript_call(rmarkdown::render, 
+    args = list(
+      input = "./DSS_analysis.Rmd", 
+      output_file = paste0(dss_output, "DSS_analysis_",
+                            results_name), 
+      params = list(
+        output_dir = dss_output,
+        results_name = results_name,
+  
+        methrix_path = paste0(output_dir, "merged_methrix.rds"),
+        
+        outlier_samples =  NULL,
+        chromosome_filter = chromosome_filter,
+        group_var = group_var,
+        covariates = "batch",
+        
+        random_seed = 1234,
+
+        smoothing = FALSE,
+        dmr_pvalue = 0.01
+    ) 
+  )
+)
+```
+
+```{r}
+merge_method <- "reduced"
+
+xfun::Rscript_call(rmarkdown::render, 
+  args = list(
+    input = "./dmr_analysis.Rmd", 
+    output_file = paste0(dss_output, "dmr_analysis_", 
+                         results_name, ".", merge_method, ".html"), 
+    params = list(
+      output_dir = dss_output,
+      results_name = results_name,
+  
+      threads = 1,
+      methrix_path = paste0(output_dir, "merged_methrix.rds"),
+      granges_path = paste0(dss_output, "dss_dmr_results_", 
+                            results_name, ".", group_var, ".rds"),
+      
+      outlier_samples = NULL, 
+      chromosome_filter = chromosome_filter,
+      group_var = group_var,
+      
+      merge_granges = TRUE,
+      merge_method = merge_method,
+      
+      unique_gene_region_annotation_filter = FALSE, 
+      
+      genome_id = "mm39",
+      annotation_genome = "TxDb.Mmusculus.UCSC.mm39.knownGene",
+      organism_db = "org.Mm.eg.db"
+    )
+  )
+)
+```
+
+
+#### Non-Smoothed 0.05
+
+```{r}
+results_name <- "non_smoothed_005"
+
+dss_output <- paste0(output_dir, "DSS.", group_var, ".", results_name, "/") 
+
+if(!dir.exists(dss_output)){dir.create(dss_output)}
+
+xfun::Rscript_call(rmarkdown::render, 
+    args = list(
+      input = "./DSS_analysis.Rmd", 
+      output_file = paste0(dss_output, "DSS_analysis_",
+                            results_name), 
+      params = list(
+        output_dir = dss_output,
+        results_name = results_name,
+  
+        methrix_path = paste0(output_dir, "merged_methrix.rds"),
+        
+        outlier_samples =  NULL,
+        chromosome_filter = chromosome_filter,
+        group_var = group_var,
+        covariates = "batch",
+        
+        random_seed = 1234,
+
+        smoothing = FALSE,
+        dmr_pvalue = 0.05
+    ) 
+  )
+)
+```
+
+```{r}
+merge_method <- "reduced"
+
+xfun::Rscript_call(rmarkdown::render, 
+  args = list(
+    input = "./dmr_analysis.Rmd", 
+    output_file = paste0(dss_output, "dmr_analysis_", 
+                         results_name, ".", merge_method, ".html"), 
+    params = list(
+      output_dir = dss_output,
+      results_name = results_name,
+  
+      threads = 1,
+      methrix_path = paste0(output_dir, "merged_methrix.rds"),
+      granges_path = paste0(dss_output, "dss_dmr_results_", 
+                            results_name, ".", group_var, ".rds"),
+      
+      outlier_samples = NULL, 
+      chromosome_filter = chromosome_filter,
+      group_var = group_var,
+      
+      merge_granges = TRUE,
+      merge_method = merge_method,
+      
+      unique_gene_region_annotation_filter = FALSE, 
+      
+      genome_id = "mm39",
+      annotation_genome = "TxDb.Mmusculus.UCSC.mm39.knownGene",
+      organism_db = "org.Mm.eg.db"
+    )
+  )
+)
+```
 
 ### GFCV comparison
 

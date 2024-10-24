@@ -3,6 +3,9 @@ title: "Weight Gene Correlation Network Analysis"
 author: "Jordi Rofes Herrera"
 date: "2023-09-19"
 output: html_document
+params:
+    input_dir: "../../outputs/Multi_Omics_Analysis/"
+    output_dir: "../../outputs/Multi_Omics_Analysis/full_gene_analysis/"
 ---
 
 ```{r setup, include=FALSE}
@@ -23,7 +26,10 @@ library(clusterProfiler)
 ## Loading the data
 
 ```{r}
-multi_omic_dt <- readRDS("../../outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_MA_exp_lima.rds")
+
+if(!dir.exists(params$output_dir)){dir.create(params$output_dir)}
+
+multi_omic_dt <- readRDS(paste0(params$input_dir, "Multi_Omics_Analysis_MA_exp_lima.rds"))
 
 rna_seq_dt <- experiments(multi_omic_dt)[["RNA_Sequencing"]]
 
@@ -34,7 +40,7 @@ rna_seq_filt <- rna_seq_dt[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
 gsg <- goodSamplesGenes(datExpr = t(assay(rna_seq_filt)))
 gsg$allOK
 
-dt_list <- assay(rna_seq_dt)
+dt_list <- assay(rna_seq_filt)
 rowMetadata <- rowData(rna_seq_filt)
 metadata <- colData(rna_seq_filt)
 ```
@@ -65,11 +71,12 @@ text(spt$fitIndices[,1], spt$fitIndices[,5], labels= spt$fitIndices[,1],col="red
 ```
 
 ```{r}
+setwd(params$output_dir)
 # Network construction
-bwnet <- blockwiseModules(datExpr = t(dt_list), maxBlockSize = 5000, power = 17, 
-                        TOMType = "signed", minModuleSize = 30, 
+bwnet <- blockwiseModules(datExpr = t(dt_list), power = 26, 
+                        TOMType = "signed", minModuleSize = 30,
                         reassignThreshold = 0, mergeCutHeight = 0.25,
-                        numericLabels = TRUE, saveTOMs = TRUE, 
+                        numericLabels = TRUE, saveTOMs = TRUE, loadTOM = TRUE,
                         saveTOMFileBase = "lima_blockwise", 
                         verbose = 3, randomSeed = 1234)
 ```

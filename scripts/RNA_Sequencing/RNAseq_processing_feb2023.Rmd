@@ -191,7 +191,7 @@ myGFCVcountsTPM_80ord <- dplyr::arrange(myGFCVcountsTPM_80, aver)
 
 dim(myGFCVcountsTPM_80ord)
   
-myGFCVcountsTPM_80ord_f <- dplyr::filter(myGFCVcountsTPM_80ord, aver > 0.1)
+myGFCVcountsTPM_80ord_f <- dplyr::filter(myGFCVcountsTPM_80ord, aver > 1)
 
 dim(myGFCVcountsTPM_80ord_f) # same results, the order does not matter
 

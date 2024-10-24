@@ -142,41 +142,41 @@ rm(model_list)
 ```
 
 
-<!-- # ```{r} -->
-<!-- # n_rand <- 10 -->
-<!-- # set.seed(1234) -->
-<!-- # random_mofa_list <- lapply(seq_len(n_rand), function(x){ -->
-<!-- #     set.seed(123*x) -->
-<!-- #     untrained_mofa@data <- lapply(untrained_mofa@data, function(omic_dt){ -->
-<!-- #         test <- t(replicate(n = nrow(omic_dt$group1), expr = { -->
-<!-- #             rnorm(n = ncol(omic_dt$group1), mean = 0, sd = 1) -->
-<!-- #         })) -->
-<!-- #         rownames(test) <- rownames(omic_dt$group1) -->
-<!-- #         colnames(test) <- colnames(omic_dt$group1) -->
-<!-- #          -->
-<!-- #         omic_dt$group1 <- test -->
-<!-- #         return(omic_dt) -->
-<!-- #         # for(row_id in seq_len(nrow(omic_dt$group1))){ -->
-<!-- #         #     omic_dt$group1[row_id,] <-     -->
-<!-- #         # } -->
-<!-- #     }) -->
-<!-- #     run_mofa(untrained_mofa, outfile = NULL, use_basilisk = TRUE) -->
-<!-- # }) -->
-<!-- # ``` -->
-<!-- #  -->
-<!-- # ```{r} -->
-<!-- # weight_list <- lapply(random_mofa_list, get_weights) -->
-<!-- # quantile_list <- lapply(names(experiments(params$multi_omics_exp)), function(omic_name){ -->
-<!-- #     omic_weights <- lapply(weight_list, function(x){x[[omic_name]]}) -->
-<!-- #     hist_dt <- do.call(rbind, omic_weights) -->
-<!-- #     lapply(as.data.frame(hist_dt), function(x){ -->
-<!-- #         quantile(x, c(0.025, 0.975)) -->
-<!-- #     }) -->
-<!-- # }) -->
-<!-- # names(quantile_list) <- names(experiments(params$multi_omics_exp)) -->
-<!-- # quantile_list -->
-<!-- # ``` -->
-<!-- #  -->
+```{r}
+n_rand <- 10
+set.seed(1234)
+random_mofa_list <- lapply(seq_len(n_rand), function(x){
+    set.seed(123*x)
+    untrained_mofa@data <- lapply(untrained_mofa@data, function(omic_dt){
+        test <- t(replicate(n = nrow(omic_dt$group1), expr = {
+            rnorm(n = ncol(omic_dt$group1), mean = 0, sd = 1)
+        }))
+        rownames(test) <- rownames(omic_dt$group1)
+        colnames(test) <- colnames(omic_dt$group1)
+
+        omic_dt$group1 <- test
+        return(omic_dt)
+        # for(row_id in seq_len(nrow(omic_dt$group1))){
+        #     omic_dt$group1[row_id,] <-
+        # }
+    })
+    run_mofa(untrained_mofa, outfile = NULL, use_basilisk = TRUE)
+})
+```
+
+```{r}
+weight_list <- lapply(random_mofa_list, get_weights)
+quantile_list <- lapply(names(experiments(params$multi_omics_exp)), function(omic_name){
+    omic_weights <- lapply(weight_list, function(x){x[[omic_name]]})
+    hist_dt <- do.call(rbind, omic_weights)
+    lapply(as.data.frame(hist_dt), function(x){
+        quantile(x, c(0.025, 0.975))
+    })
+})
+names(quantile_list) <- names(experiments(params$multi_omics_exp))
+quantile_list
+```
+
 
 <!-- # ```{r} -->
 <!-- # omic_dt <- get_data(multi_omics_mofa) -->
@@ -204,7 +204,7 @@ names(mofa_group_var) <- colData(params$multi_omics_exp)[[params$sample_var]]
 
 rownames(samples_metadata(multi_omics_mofa)) <- samples_metadata(multi_omics_mofa)$sample
 
-samples_metadata(multi_omics_mofa)$groups <- mofa_group_var[as.character(samples_metadata(multi_omics_mofa)$sample)]
+samples_metadata(multi_omics_mofa)$groups <- droplevels(mofa_group_var[as.character(samples_metadata(multi_omics_mofa)$sample)])
 
 p <- plot_variance_explained(multi_omics_mofa) + theme(axis.text.x = element_text(size = 8, angle = 90))
 print(p)
@@ -231,8 +231,9 @@ dev.off()
 p <- plot_factors(multi_omics_mofa, 
   factors = seq_len(params$num_factors), 
   color_by = "groups", 
-  legend = FALSE, 
-) + scale_color_manual(values = params$color_vec)
+  legend = TRUE, 
+) + scale_fill_manual(values = params$color_vec)
+
 print(p)
 pdf(paste0(output_dir, "mofa_factors_scatter.pdf"))
 print(p)

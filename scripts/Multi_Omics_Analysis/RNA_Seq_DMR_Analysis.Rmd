@@ -1,0 +1,78 @@
+---
+title: "RNA_Seq_DMR_Analysis"
+output: html_document
+date: "2024-10-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading the data
+
+```{r}
+lima_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/merged_methrix.rds")
+lima_rna_seq <- readRDS("../../outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_MA_exp_lima.rds")
+lima_rna_seq <- lima_rna_seq@ExperimentList$RNA_Sequencing
+```
+
+```{r}
+library(GenomicFeatures)
+library(TxDb.Mmusculus.UCSC.mm39.refGene)
+library(SummarizedExperiment)
+txdb_mm39 <- TxDb.Mmusculus.UCSC.mm39.refGene
+keys <- rowData(lima_rna_seq)$entrezID
+mapped_tx <- AnnotationDbi::select(txdb_mm39, keys = keys, columns="TXNAME", keytype="GENEID")
+
+gene_list <- transcriptsBy(x = txdb_mm39, by = "gene")
+gene_promotors <- promoters(x = txdb_mm39)
+
+found_promotors <- gene_promotors[gene_promotors$tx_name %in% mapped_tx$TXNAME]
+
+gene_granges <- gene_list[names(gene_list) %in% keys]
+gene_granges
+```
+```{r}
+prom_methrix <- methrix::get_region_summary(lima_methrix, found_promotors, overlap_type = "any")
+num_m <- prom_methrix[,6:41]
+seq_dt <- prom_methrix[,1:5]
+
+found_info <- found_promotors[seq_dt$rid]
+
+matched_genes <- sapply(found_info$tx_name, function(x){unique(mapped_tx$GENEID[mapped_tx$TXNAME == x & !is.na(mapped_tx$TXNAME)])})
+which(lengths(matched_genes) != 1)
+
+col_intersect <- intersect(colnames(lima_rna_seq), colnames(num_m))
+
+
+cor_list <- sapply(seq_len(nrow(num_m)), function(row_id){
+    dmr_dt <- num_m[row_id, ..col_intersect]
+    
+    gene_exp <- lima_rna_seq[rowData(lima_rna_seq)$entrezID == matched_genes[row_id] & !is.na(rowData(lima_rna_seq)$entrezID),][1,]
+    cor(as.numeric(dmr_dt), as.numeric(assay(gene_exp)[,col_intersect]))
+})
+names(cor_list) <- names(matched_genes)
+    
+mapped_tx$cor_pearson <- cor_list[mapped_tx$TXNAME]
+
+gene_symbols <- sapply(mapped_tx$GENEID, function(x){
+    rowData(lima_rna_seq)$symbol[rowData(lima_rna_seq)$entrezID == x & !is.na(rowData(lima_rna_seq)$entrezID)][1]
+})
+
+mapped_tx$geneSymbol <- gene_symbols
+
+```
+
+```{r}
+
+gene_test <- assay(lima_rna_seq[rowData(lima_rna_seq)$entrezID == "18777" &
+                                    !is.na(rowData(lima_rna_seq)$entrezID),])
+
+
+
+lapply(rownames(lima_rna_seq), function(x){
+            
+})
+cor(unlist(gene_test[,col_union]), unlist(as.data.frame(num_m)[1, col_union]))
+```
+

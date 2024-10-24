@@ -5,7 +5,7 @@ date: "2024-04-24"
 output: html_document
 params:
     nw_graphs: !r nw_graphs
-    enrich_results_list: !r enrich_results_partial_ora
+    enrich_results_list: !r enrich_results_partial_gsea
     output_dir: !r enrich_nw_dir
     omic_dt: !r omic_dt
     group_var: "group"
@@ -376,7 +376,6 @@ lapply(names(term_network_list), function(score_id){
                     strsplit(found[!is.na(found) & found != ""], ";")
                 })
                 term_ids <- unlist(term_ids, use.names = FALSE)
-                
                 if(length(feature_ids) == 1){return(NULL)}
                 print(plot_nw_term(omic_dt = params$omic_dt, 
                             feature_ids = term_ids, 

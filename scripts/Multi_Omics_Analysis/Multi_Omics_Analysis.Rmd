@@ -321,7 +321,7 @@ Thus, the MOFA model will help us find correlated feature patterns in the statis
 # & !multi_omics$samplename %in% c("X643C", "X644C", "X658C")
 num_factors <- 2
 score_filter <- 0.7
-mofa_dir_name <- "sig_int_thr07_test"
+mofa_dir_name <- "sig_int_thr07"
 
 param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
     output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
@@ -3714,48 +3714,48 @@ mice_s
 
 
 
-<!-- ### rGREAT Enrichment & Region Analysis {.tabset} -->
+### rGREAT Enrichment & Region Analysis {.tabset}
 
-<!-- ```{r} -->
-<!-- dna_met_list <- lapply(seq_len(num_factors), function(factor_id){ -->
-<!--     dna_met_dt <- experiments(omic_dt)$WGB_DNA_Methylation -->
-<!--     list("All_Weights" = dna_met_dt, -->
-<!--         "Positive_Weights" = dna_met_dt[rowData(dna_met_dt)[[paste0("Factor_", factor_id, "_weights")]] >= 0,], -->
-<!--         "Negative_Weights" = dna_met_dt[rowData(dna_met_dt)[[paste0("Factor_", factor_id, "_weights")]] < 0,]) -->
-<!-- }) -->
+```{r}
+dna_met_list <- lapply(seq_len(num_factors), function(factor_id){
+    dna_met_dt <- experiments(omic_dt)$WGB_DNA_Methylation
+    list("All_Weights" = dna_met_dt,
+        "Positive_Weights" = dna_met_dt[rowData(dna_met_dt)[[paste0("Factor_", factor_id, "_weights")]] >= 0,],
+        "Negative_Weights" = dna_met_dt[rowData(dna_met_dt)[[paste0("Factor_", factor_id, "_weights")]] < 0,])
+})
 
-<!-- names(dna_met_list) <- paste0("Factor_", seq_len(num_factors)) -->
+names(dna_met_list) <- paste0("Factor_", seq_len(num_factors))
 
-<!-- rgreat_output_dir <- paste0(output_dir, "rGreat_results/") -->
+rgreat_output_dir <- paste0(output_dir, "rGreat_results/")
 
-<!-- if(!dir.exists(rgreat_output_dir)){dir.create(rgreat_output_dir)} -->
+if(!dir.exists(rgreat_output_dir)){dir.create(rgreat_output_dir)}
 
-<!-- for(dna_seq_name in names(dna_met_list)){ -->
+for(dna_seq_name in names(dna_met_list)){
 
-<!--     dna_seq_exp <- dna_met_list[[dna_seq_name]] -->
+    dna_seq_exp <- dna_met_list[[dna_seq_name]]
 
-<!--     gsea_cols_list <- lapply(names(dna_seq_exp), function(x){paste0(dna_seq_name, "_weights")}) -->
-<!--     names(gsea_cols_list) <- names(dna_seq_exp) -->
+    gsea_cols_list <- lapply(names(dna_seq_exp), function(x){paste0(dna_seq_name, "_weights")})
+    names(gsea_cols_list) <- names(dna_seq_exp)
 
-<!--     param_list <- list( -->
-<!--         dmr_exp_list = dna_seq_exp, -->
-<!--         txdb_id = "TxDb.Mmusculus.UCSC.mm39.refGene", -->
-<!--         msigdbr_specie = "Mus musculus", -->
-<!--         ora_filter = parse(text = paste0(dna_seq_name, "_weights_sig")), -->
-<!--         random_seed = 1234, -->
-<!--         output_dir = output_dir, -->
-<!--         results_name = dna_seq_name -->
-<!--     ) -->
-<!--     xfun::Rscript_call(rmarkdown::render, -->
-<!--                         args = list(input = "../WGB_DNA_Methylation/DMR_enrichment_analysis.Rmd",  -->
-<!--                                     output_file = paste0(rgreat_output_dir,  -->
-<!--                                                          "WGB_Sequencing_Enrichment_", -->
-<!--                                                          dna_seq_name, ".html"),  -->
-<!--                                     params = param_list -->
-<!--                                 ) -->
-<!--                         ) -->
-<!-- } -->
-<!-- ``` -->
+    param_list <- list(
+        dmr_exp_list = dna_seq_exp,
+        txdb_id = "TxDb.Mmusculus.UCSC.mm39.refGene",
+        msigdbr_specie = "Mus musculus",
+        ora_filter = parse(text = paste0(dna_seq_name, "_weights_sig")),
+        random_seed = 1234,
+        output_dir = output_dir,
+        results_name = dna_seq_name
+    )
+    xfun::Rscript_call(rmarkdown::render,
+                        args = list(input = "../WGB_DNA_Methylation/DMR_enrichment_analysis.Rmd",
+                                    output_file = paste0(rgreat_output_dir,
+                                                         "WGB_Sequencing_Enrichment_",
+                                                         dna_seq_name, ".html"),
+                                    params = param_list
+                                )
+                        )
+}
+```
 
 <!-- ### MetaboAnalyst Mummichog analysis -->
 

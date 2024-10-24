@@ -41,6 +41,16 @@ myCounts <- read.csv(paste0(params$input_dir, "MERGED_gfcv&LIMA_raw_counts.csv")
                          stringsAsFactors = F,
                          colClasses = c("character",rep("numeric",74)),
                          row.names = 1)
+
+
+geneSymbols <- mapIds(org.Mm.eg.db, keys = rownames(myCounts),
+                                    column = c("SYMBOL"),
+                         keytype = "ENSEMBL", multiVals = "first")
+
+# found_genes <- sapply(gene_names$V1, function(x){
+#     grep(pattern = x, x = geneSymbols, ignore.case = TRUE)
+# })
+# lengths(found_genes) != 0
 ```
 
 ### Model data frames and metadata
@@ -204,6 +214,27 @@ dim(myLIMAcountsTPM_80ord_f) # same results, the order does not matter
 myLIMAcountsTPM_80ord_f <- dplyr::select(myLIMAcountsTPM_80ord_f, -aver)
 
 dim(myLIMAcountsTPM_80ord_f)
+
+
+
+
+
+# geneSymbols <- mapIds(org.Mm.eg.db, keys = rownames(myLIMAcountsTPM_80),
+#                                      column = c("SYMBOL"),
+#                           keytype = "ENSEMBL", multiVals = "first")
+# found_genes_80 <- sapply(gene_names$V1, function(x){
+#     grep(pattern = x, x = geneSymbols, ignore.case = TRUE)
+# })
+# lengths(found_genes) != 0
+# 
+# geneSymbols <- mapIds(org.Mm.eg.db, keys = rownames(myLIMAcounts80),
+#                                      column = c("SYMBOL"),
+#                           keytype = "ENSEMBL", multiVals = "first")
+# found_genes_80 <- sapply(gene_names$V1, function(x){
+#     grep(pattern = x, x = geneSymbols, ignore.case = TRUE)
+# })
+# lengths(found_genes) != 0
+
 ```
 
 ```{r}
@@ -376,4 +407,3 @@ rowData(rna_seq_exp) <- lima_DESeq_results
 
 saveRDS(rna_seq_exp, paste0(params$output_dir, "RNA_Sequencing_exp_lima.rds"))
 ```
-

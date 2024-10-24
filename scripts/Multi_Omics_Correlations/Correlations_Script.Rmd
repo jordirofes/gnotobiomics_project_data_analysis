@@ -15,6 +15,7 @@ params:
     filter_variable_2_correlate: !r list("Factor_1" = quote(Factor_1_weights_sig), "Factor_2" = quote(Factor_2_weights_sig))
     omic_list_pairs: !r network_omics
     rowData_variable_name_list: !r variables_dicts
+    omic_colors: !r NULL
     
     add_variables: TRUE
     variables_names: !r add_var_names
@@ -69,25 +70,27 @@ if(is(params$multi_omic_path, "MultiAssayExperiment")){
     multi_omic_dt <- readRDS(params$multi_omic_path)    
 }
 
-omic_names_dup <- sapply(strsplit(names(experiments(multi_omic_dt)), "\\."), function(x){x[[1]]})
-
-unique_omics <- unique(omic_names_dup)
-
-omic_colors <- RColorBrewer::brewer.pal(n = length(unique_omics), name = "Set3")
-
-col_list <- lapply(seq_along(unique_omics), function(omic_id){
-    omic_name <- unique_omics[omic_id]
-    omic_num <- length(omic_names_dup[omic_names_dup == omic_name])
-    omic_col <- omic_colors[omic_id]
-    
-    col_ramp <- colorRampPalette(colors = c(omic_col, "white"))(omic_num + 8)[seq_len(omic_num)]
-    return(col_ramp)
-})
-color_vect <- unlist(col_list)
-names(color_vect) <- names(experiments(multi_omic_dt))
+# omic_names_dup <- sapply(strsplit(names(experiments(multi_omic_dt)), "\\."), function(x){x[[1]]})
+# 
+# unique_omics <- unique(omic_names_dup)
+# 
+# omic_colors <- RColorBrewer::brewer.pal(n = length(unique_omics), name = "Set3")
+# 
+# col_list <- lapply(seq_along(unique_omics), function(omic_id){
+#     omic_name <- unique_omics[omic_id]
+#     omic_num <- length(omic_names_dup[omic_names_dup == omic_name])
+#     omic_col <- omic_colors[omic_id]
+# 
+#     col_ramp <- colorRampPalette(colors = c(omic_col, "white"))(omic_num + 8)[seq_len(omic_num)]
+#     return(col_ramp)
+# })
+# color_vect <- unlist(col_list)
+# names(color_vect) <- names(experiments(multi_omic_dt))
 
 exp_list <- lapply(names(experiments(multi_omic_dt)), function(omic_names){
     omic_dt <- experiments(multi_omic_dt)[[omic_names]]
+    if(!nrow(omic_dt)){return(omic_dt)}
+    
     rownames(omic_dt) <- paste0(omic_names, ".", rownames(omic_dt))
     omic_dt
 })

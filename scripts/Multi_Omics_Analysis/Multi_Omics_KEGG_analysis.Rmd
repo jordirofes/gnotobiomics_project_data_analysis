@@ -25,7 +25,7 @@ library(MultiAssayExperiment)
 mofa_dir_name <- "sig_int_thr07_liv2"
 
 output_dir <- paste0(params$output_dir, "MOFA_Results/", mofa_dir_name, "/")
-corr_output_dir <- paste0(output_dir, "correlation_results/factor_part_kegg/")
+corr_output_dir <- paste0(output_dir, "correlation_results/kegg_results/")
 
 omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
 ```
@@ -106,11 +106,11 @@ library(KEGGREST)
 enrich_results <- enrich_results[1:2]
 
 
-overlapping_pathways <- intersect(enrich_results$pearson.Factor_1.CL_1$ID,
-                                  enrich_results$pearson.Factor_2.CL_1$ID)
+overlapping_pathways <- intersect(enrich_results$Factor_1.CL_1$ID,
+                                  enrich_results$Factor_2.CL_1$ID)
 
-pathway_unique <- union(enrich_results$pearson.Factor_1.CL_1$ID,
-                          enrich_results$pearson.Factor_2.CL_1$ID)
+pathway_unique <- union(enrich_results$Factor_1.CL_1$ID,
+                          enrich_results$Factor_2.CL_1$ID)
 
 
 pathway_info <- lapply(pathway_unique, function(pathway_id){
@@ -276,9 +276,9 @@ lapply(names(pathway_info), function(pathway_id){
 ```
 
 
-### Pathways GSEA
+## Pathways GSEA
 
-## Loading the omic dt
+### Loading the omic dt
 
 ```{r}
 mofa_dir_name <- "sig_int_thr07_liv2"
@@ -291,7 +291,7 @@ omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
 ```
 
 
-## Loading the enrichment data
+### Loading the enrichment data
 
 ```{r}
 enrich_res_path <- paste0(corr_output_dir, "enrich_gsea_results_2.xlsx")

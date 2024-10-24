@@ -24,14 +24,58 @@ library(SummarizedExperiment)
 ptm_data <- read.csv(paste0(params$input_dir, "mydataLIMAptm_relabu.csv"), row.names = 1)
 rownames(ptm_data) <- ptm_data$Replicate_Name
 
+
 ptm_metadata <- ptm_data[,1:2]
 ptm_data <- ptm_data[,3:ncol(ptm_data)]
 ptm_metadata$group <- factor(ptm_metadata$group, levels = c("C", "H", "I", "E"), 
                               labels = c("CNT", "HFD", "INT", "HFE"))
 
+histone_names <- sapply(strsplit(colnames(ptm_data), "_"), function(x){
+    histone_residues <- x[4]
+    histone_residues <- stringr::str_extract_all(string = histone_residues, 
+                                                pattern = "[K][[:digit:]]{1,5}|[M][[:digit:]]{1,5}|[M]{1,5}")[[1]]
+    
+    histone_modifications <- x[5]
+    not_used <- ifelse(grepl("NOT", ignore.case = TRUE, 
+                            histone_modifications), 
+                        "_Not.Used", "")
+    histone_modifications <- gsub("\\.Not.*", replacement = "", 
+                                x = histone_modifications, ignore.case = TRUE)
+    
+    histone_modifications <- stringr::str_extract_all(string = histone_modifications,
+                                                    pattern = "ox[[:digit:]]?|p[[:digit:]]?|ac[[:digit:]]?|m[[:digit:]]?")[[1]]
+    
+    if(length(histone_residues) != length(histone_modifications)){return("BAD")}
+    paste0(x[1], paste0(paste0(histone_residues, 
+                                histone_modifications), collapse = ""), 
+            not_used)
+})
+
+# ptm_data <- ptm_data[,!grepl("NOT", colnames(ptm_data), ignore.case = TRUE)]
 
 # saveRDS(list("LIMA"= list("PTM_Data" = ptm_data, "PTM_Metadata" = ptm_metadata)),"./ptm_data_list.rds")
 ```
+
+```{r}
+# boxplot(log(t(ptm_data)))
+# 
+# pheatmap::pheatmap(scale(as.matrix(ptm_data)), show_colnames = FALSE, 
+#                    annotation_row = ptm_metadata[,"group", drop = FALSE])
+# 
+
+
+# pheatmap::pheatmap(scale(as.matrix(ptm_data)), show_colnames = FALSE, 
+#                    annotation_row = ptm_metadata[,"group", drop = FALSE])
+# 
+# 
+# ptm_data2 <- limma::normalizeMedianValues(ptm_data)
+# boxplot(colSums(t(ptm_data)))
+# 
+# pheatmap::pheatmap(scale(as.matrix(ptm_data2)), show_colnames = FALSE, 
+#                    annotation_row = ptm_metadata[,"group", drop = FALSE])
+
+```
+
 
 ```{r}
 # lapply(ptm_data, function(x){boxplot(x ~ ptm_metadata$group)})
