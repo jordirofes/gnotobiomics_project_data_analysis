@@ -1044,30 +1044,6 @@ for(corr_method in corr_method_vect){
                                 variables_names = add_var_names,
                                 draw_cluster_scatter_plots = FALSE))
      )
-    # xfun::Rscript_call(rmarkdown::render,
-    #                             args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
-    #                               output_file = output_dir,
-    #                               params = list(
-    #                                 corr_threshold = 0,
-    #                                 corr_method = corr_method,
-    #                                 multi_omic_path = omic_dt,
-    #                                 group_metadata_var = "group",
-    #                                 sample_levels_2_correlate = c("CNT", "HFD", "INT"),
-    #                                 filter_variable_2_correlate = list(
-    #                                     "All" = NA
-    #                                 ),
-    #                                 omic_list_2_correlate = network_omics,
-    #                                 rowData_variable_name_list = variables_dicts,
-    #                                 draw_networks = FALSE,
-    #                                 draw_cytoscape = FALSE,
-    #                                 add_autocorrelations = FALSE,
-    #                                 keep_full_correlations = TRUE,
-    #                                 output_dir = corr_output_dir,
-    #                                 output_suffix = paste0("0_005_chi_", corr_method),
-    #                                 add_variables = TRUE,
-    #                                 variables_names = add_var_names,
-    #                                 draw_cluster_scatter_plots = FALSE))
-    #                    )
 }
 ```
 
@@ -6765,75 +6741,6 @@ mice_s
 
 
 
-<!-- ### MetaboAnalyst Mummichog analysis -->
-
-<!-- ```{r} -->
-<!-- library(MetaboAnalystR) -->
-<!-- library(SummarizedExperiment) -->
-
-<!-- unt_met_list <- lapply(seq_len(num_factors), function(factor_id){ -->
-<!--     unt_met_dt <- experiments(omic_dt)$Untargeted_Metabolomics -->
-
-<!--     list("All_Weights" = unt_met_dt, -->
-<!--         "Positive_Weights" = unt_met_dt[rowData(unt_met_dt)[[paste0("Factor_", factor_id, "_weights")]] >= 0,], -->
-<!--         "Negative_Weights" = unt_met_dt[rowData(unt_met_dt)[[paste0("Factor_", factor_id, "_weights")]] < 0,]) -->
-<!-- }) -->
-
-<!-- names(unt_met_list) <- paste0("Factor_", seq_len(num_factors)) -->
-
-<!-- unt_met_dt <- lapply(names(unt_met_list), function(factor_id){ -->
-<!--     factor_dt <- unt_met_list[[factor_id]] -->
-<!--     lapply(factor_dt, function(weight_dt){ -->
-<!--         feature_dt <- as.data.frame(rowData(weight_dt))[,c("mzmed", "rtmed", -->
-<!--                                                         paste0(factor_id, "_weights"))] -->
-<!--         feature_dt$p.value <- ifelse(rowData(weight_dt)[,paste0(factor_id,  -->
-<!--                                                                 "_weights_sig")], 0.05, 1) -->
-<!--         feature_dt$mode <- tolower(gsub("^.*_", "", gsub("\\..*$", "",  -->
-<!--                                                         rownames(feature_dt)))) -->
-<!--         feature_dt <- feature_dt[c("mzmed", "rtmed", paste0(factor_id, "_weights"),  -->
-<!--                                     "p.value", "mode")] -->
-<!--         colnames(feature_dt) <- c("mz", "rt", "t.score", "p.value", "mode") -->
-<!--         feature_dt$t.score <- abs(feature_dt$t.score) -->
-<!--         feature_dt -->
-<!--     }) -->
-<!-- }) -->
-<!-- names(unt_met_dt) <- names(unt_met_list) -->
-
-<!-- old_dir <- getwd() -->
-<!-- mummichog_dir <- paste0(output_dir, "mummichog_metaboanalyst/") -->
-
-<!-- if(!dir.exists(mummichog_dir)){dir.create(mummichog_dir)} -->
-
-<!-- for(factor_id in names(unt_met_dt)){ -->
-<!--     for(weight_id in names(unt_met_dt[[factor_id]])){ -->
-<!--         results_output <- paste0(mummichog_dir, factor_id, "_", weight_id, "/")     -->
-<!--         if(!dir.exists(results_output)){dir.create(results_output)} -->
-<!--         setwd(results_output) -->
-<!--         write.table(unt_met_dt[[factor_id]][[weight_id]], row.names = FALSE,  -->
-<!--                     file = "./mummichog_dt.txt", sep = ",") -->
-
-<!--         mSet <- InitDataObjects("mass_all", "mummichog", FALSE) -->
-
-<!--         mSet <- UpdateInstrumentParameters(mSet, 10.0, "mixed", "yes", 0.05) -->
-
-<!--         mSet <- Read.PeakListData(mSet, "mummichog_dt.txt") -->
-
-<!--         mSet <- SetRTincluded(mSet, "seconds") -->
-
-<!--         mSet <- SanityCheckMummichogData(mSet) -->
-
-<!--         mSet <- SetPeakEnrichMethod(mSet, "mum", "v2") -->
-
-<!--         mSet <- SetMummichogPval(mSet, cutoff = 0.05) -->
-
-<!--         mSet <- PerformPSEA(mSet, "mmu_kegg", "current", 3 , 100) -->
-
-<!--         mSet<-PlotPeaks2Paths(mSet, "peaks_to_paths_0_", "png", 72, width=NA) -->
-<!--         saveRDS(mSet, file = "./metaboanalyst_obj.rds") -->
-<!--         rm(mSet) -->
-<!--         setwd(old_dir) -->
-<!--     } -->
-<!-- } -->
 
 <!-- # setwd(old_dir) -->
 <!-- ``` -->

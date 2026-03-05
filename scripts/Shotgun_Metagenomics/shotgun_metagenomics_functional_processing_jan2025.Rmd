@@ -1,0 +1,730 @@
+---
+title: "Shotgun Functional Merged"
+output: html_document
+date: "2025-01-23"
+params:
+    input_dir: "../../inputs/Shotgun_Metagenomics/"
+    output_dir: "../../outputs/Shotgun_Metagenomics/"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading the data
+
+```{r}
+#library(ANCOMBC)
+library(DESeq2)
+library(SummarizedExperiment)
+library(mia)
+library(ggplot2)
+library(miaViz)
+library(scater)
+library(patchwork)
+library(TreeSummarizedExperiment)
+library(stringr)
+source("../../scripts/Utility_Functions/utilities.R")
+```
+
+
+```{r}
+functional_paths <- list.files(paste0(params$input_dir, "CNT_HFD_HFE_INT/P200045_NEW/report_functional/"), 
+                               recursive = TRUE, pattern = "counts_all", full.names = TRUE)
+
+shotgun_data <- lapply(functional_paths, function(func_tool_path){
+    shotgun_table <- read.table(func_tool_path, sep = "\t", header = TRUE, row.names = 1)
+    colnames(shotgun_table)[38] <- paste0(colnames(shotgun_table)[38], "I")
+    shotgun_table
+})
+names(shotgun_data) <- gsub("_counts_all.tsv", "", basename(functional_paths))
+```
+
+## Creating the metadata
+
+```{r}
+metadata_list <- lapply(shotgun_data, function(hierarchy){ 
+    hierarchy <- data.frame("samplename" = colnames(hierarchy))
+    
+
+    hierarchy$group <- sapply(strsplit(hierarchy$samplename, ""),function(x){x[length(x)]})
+    hierarchy$group <- factor(hierarchy$group, levels = c("C", "H", "I", "E"), 
+                                  labels = c("CNT", "HFD", "INT", "HFE"))
+    hierarchy$organ <- as.factor(ifelse(grepl("^CE", hierarchy$samplename), "Cecum", "Colon"))
+    hierarchy$group_organ <- paste(hierarchy$group, hierarchy$organ)
+    
+    hierarchy
+})
+```
+
+## Filter low abundance taxons
+
+```{r}
+# Filtering taxons not present in atleast 80% of one group
+shotgun_data_proc <- lapply(names(shotgun_data), function(hierarchy_name){
+    hierarchy <- shotgun_data[[hierarchy_name]]
+    hierarchy_metadata <- metadata_list[[hierarchy_name]]
+    hierarchy <- hierarchy[,hierarchy_metadata$group != "HFE"]
+    hierarchy_metadata <- hierarchy_metadata[hierarchy_metadata$group != "HFE",]
+
+    keep_vars <- apply(assay(hierarchy), 1, function(dt_var){
+        group_dt <- tapply(dt_var, INDEX = hierarchy_metadata$group_organ, function(var_group){
+            sum(var_group != 0)/length(var_group)
+        })
+        
+        any(group_dt >= 0.8)    
+    })
+    hierarchy <- hierarchy[keep_vars,]
+    hierarchy <- TreeSummarizedExperiment(assays = list("counts" = as.matrix(hierarchy)), 
+                                        colData = hierarchy_metadata)
+    rowData(hierarchy)$mean_abundance <- rowMeans(assay(hierarchy))
+    rowData(hierarchy)$mean_abundance_pc <- rowData(hierarchy)$mean_abundance/sum(rowMeans(assay(hierarchy)))
+    hierarchy
+})
+names(shotgun_data_proc) <- names(shotgun_data)
+```
+
+```{r}
+group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(colData(shotgun_data_proc$EC)$group))), 
+                                             name = "Set2")
+
+names(group_color_dict) <- levels(droplevels(factor(shotgun_data_proc$EC$group)))
+```
+
+```{r}
+library(ggpubr)
+p1_list <- lapply(names(shotgun_data_proc), function(hierarchy_name){
+    hierarchy <- shotgun_data_proc[[hierarchy_name]]
+    # hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", 
+    #                                 method = "relabundance")
+    # hierarchy <- hierarchy[grepl(hierarchy_name, rownames(hierarchy)),]
+    browser()
+    hierarchy <- hierarchy[,hierarchy$group != "HFE"]
+    hierarchy <- estimateDiversity(x = hierarchy, index = c("shannon"))
+    # hierarchy <- estimateFaith(x = hierarchy)
+    hierarchy <- estimateRichness(x = hierarchy, index = "observed")
+    hierarchy <- estimateEvenness(x = hierarchy, index = "simpson")
+    hierarchy <- estimateDominance(x = hierarchy, index = "relative")
+    hierarchy <- estimateDivergence(x = hierarchy, reference = "median", FUN = vegan::vegdist)
+    
+    colData(hierarchy)$group <- droplevels(colData(hierarchy)$group)
+    comp_list <- lapply(as.data.frame(combn(levels(colData(hierarchy)$group),
+                                            2)), function(x){x})
+    print(comp_list)
+    
+    plots <- lapply(c("observed", "shannon"), function(x){
+        ggplot(as.data.frame(colData(hierarchy)), 
+                aes(x = group, y = .data[[x]], 
+                    fill = group)) + 
+            geom_violin(color = "transparent",
+                        alpha = 0.5) + 
+            geom_jitter(width = 0.1, size = 1.8,
+                        aes(color = group)) +
+            theme_minimal() +
+            theme(legend.title = element_blank(),
+                axis.text.x = element_blank(), 
+                axis.title.x = element_blank(),
+                axis.ticks.x = element_blank(),
+                strip.text.x = element_text(size = 18), 
+                axis.title.y =  element_text(size = 18),
+                legend.text = element_text(size = 18)) +
+            scale_fill_manual(values = group_color_dict) +
+            scale_color_manual(values = group_color_dict) +
+            facet_grid(cols = vars(organ)) +
+            stat_compare_means(label = "p.signif", 
+                               comparisons = comp_list, 
+                               method = "wilcox", bracket.size = 0.6) + 
+            scale_y_continuous(breaks = seq(0, 1000, 250), limits = c(0,1400))
+    })
+    # (plots[[1]] | plots[[2]]) / (plots[[3]] | plot_spacer()) +
+    #     plot_layout(guides = "collect") +
+    #     plot_annotation(paste(hierarchy_name, "Scores"))
+    plots[[1]] + plot_annotation(paste(hierarchy_name, "Scores"))
+})
+```
+
+```{r}
+p1<- p1_list[[4]]
+p1
+```
+
+```{r, fig.width=8, fig.height=4}
+p1
+```
+
+```{r}
+ggsave(filename = "../../outputs/Paper_Figures/figure_18_a.svg", plot = p1, width = 8, height =4,
+       fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_18_a.png", plot = p1, width = 6, height = 4)
+```
+
+```{r}
+p1 <- p1_list[[2]]
+p1
+ggsave(filename = "../../outputs/Paper_Figures/figure_18_b.svg", plot = p1, width = 10, height = 10, 
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_18_b.png", plot = p1, width = 10, height = 10)
+```
+
+```{r}
+p1 <- p1_list[[3]]
+ggsave(filename = "../../outputs/Paper_Figures/figure_18_c.svg", plot = p1, width = 10, height = 10, 
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_18_c.png", plot = p1, width = 10, height = 10)
+```
+
+```{r}
+p1 <- p1_list[[4]]
+ggsave(filename = "../../outputs/Paper_Figures/figure_18_d.svg", plot = p1, width = 10, height = 10, 
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_18_d.png", plot = p1, width = 10, height = 10)
+```
+
+```{r}
+aov_res_list <- lapply(names(shotgun_data_proc), function(hierarchy_name){
+    hierarchy <- shotgun_data_proc[[hierarchy_name]]
+    # hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", 
+    #                                 method = "relabundance")
+    hierarchy <- hierarchy[grepl(hierarchy_name, rownames(hierarchy)),]
+     
+    hierarchy <- estimateDiversity(x = hierarchy, index = c("shannon"))
+    aov_res <- aov(colData(hierarchy)$shannon ~ group*organ, 
+                    data = as.data.frame(colData(hierarchy)))
+})
+names(aov_res_list) <- names(shotgun_data_proc)
+sapply(aov_res_list, summary)
+```
+
+
+```{r}
+lapply(names(shotgun_data_proc), function(hierarchy_name){
+    hierarchy <- shotgun_data_proc[[hierarchy_name]]
+    # hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", 
+    #                                 method = "relabundance")
+    # hierarchy <- hierarchy[grepl(hierarchy_name, rownames(hierarchy)),]
+     
+    hierarchy <- estimateDiversity(x = hierarchy, index = c("shannon"))
+    aov_res <- aov(colData(hierarchy)$shannon ~ group*organ, 
+                    data = as.data.frame(colData(hierarchy)))
+    plot(aov_res)
+})
+```
+
+## Beta-diversities
+
+```{r}
+p1_list <- lapply(names(shotgun_data_proc), function(hierarchy_id){
+    hierarchy <- shotgun_data_proc[[hierarchy_id]]
+    hierarchy <- hierarchy[,hierarchy$group != "HFE"]
+
+    hierarchy <- transformAssay(hierarchy, assay.type = "counts",
+                                        method = "clr", pseudocount = 1)
+    col_palette <- RColorBrewer::brewer.pal(n = 6, name = "Set2")
+    
+    
+    p1 <- data_pca(dt_list = t(scale(t(assay(hierarchy, "clr")))), 
+                    metadata = colData(hierarchy),
+                    stratificationVar = "group", plot_name = hierarchy_id,
+                    color_vect = col_palette) + theme_minimal()
+    p1
+})
+### EC
+p1 <- p1_list[[1]]
+p1
+ggsave(filename = "../../outputs/Paper_Figures/figure_19_a.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_19_a.png", plot = p1)
+
+### metaerg_kegg
+p1 <- p1_list[[2]]
+ggsave(filename = "../../outputs/Paper_Figures/figure_19_b.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_19_b.png", plot = p1)
+
+### metaerg_pathway
+p1 <- p1_list[[3]]
+ggsave(filename = "../../outputs/Paper_Figures/figure_19_c.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_19_c.png", plot = p1)
+
+### cogs
+p1 <- p1_list[[4]]
+ggsave(filename = "../../outputs/Paper_Figures/figure_19_d.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_19_d.png", plot = p1)
+```
+
+
+```{r}
+p1_list <- lapply(names(shotgun_data_proc), function(hierarchy_id){
+    hierarchy <- shotgun_data_proc[[hierarchy_id]]
+    hierarchy <- hierarchy[,hierarchy$group != "HFE"]
+    
+    hierarchy <- transformAssay(hierarchy, assay.type = "counts",
+                                        method = "clr", pseudocount = 1)
+    col_palette <- RColorBrewer::brewer.pal(n = 6, name = "Set2")
+    
+    
+    p1 <- data_pca(dt_list = t(scale(t(assay(hierarchy, "clr")))), 
+                    metadata = colData(hierarchy),
+                    stratificationVar = "organ", plot_name = hierarchy_id,
+                    color_vect = col_palette) + theme_minimal()
+    p1
+})
+### EC
+p1 <- p1_list[[1]]
+p1
+ggsave(filename = "../../outputs/Paper_Figures/figure_20_a.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_20_a.png", plot = p1)
+
+### metaerg_kegg
+p1 <- p1_list[[2]]
+ggsave(filename = "../../outputs/Paper_Figures/figure_20_b.svg", plot = p1, 
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_20_b.png", plot = p1)
+
+### metaerg_pathway
+p1 <- p1_list[[3]]
+ggsave(filename = "../../outputs/Paper_Figures/figure_20_c.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_20_c.png", plot = p1)
+
+### cogs
+p1 <- p1_list[[4]]
+ggsave(filename = "../../outputs/Paper_Figures/figure_20_d.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_20_d.png", plot = p1)
+```
+
+```{r}
+library(vegan)
+lapply(names(shotgun_data_proc), function(hierarchy_id){
+    hierarchy <- shotgun_data_proc[[hierarchy_id]]
+    hierarchy <- hierarchy[,hierarchy$group != "HFE"]
+    # hierarchy <- hierarchy[grepl(hierarchy_id, rownames(hierarchy)),]
+    
+    hierarchy <- transformAssay(hierarchy, assay.type = "counts",
+                                method = "clr", pseudocount = 1)
+    tse2 <- adonis2(data = colData(hierarchy), assay.type = "clr",
+                    formula = scale(t(assay(hierarchy))) ~ group*organ, 
+                    method = "euclidean", na.action = na.exclude)
+    tse2
+})
+```
+
+
+```{r}
+organ_names <- c("cecum", "colon")
+shotgun_data_proc_2 <- lapply(organ_names, function(organ_id){
+    lapply(shotgun_data_proc, function(hierarchy){
+        hierarchy$group <- droplevels(hierarchy$group)
+        if(organ_id == "colon"){
+            hierarchy <- hierarchy[,grep("CE", colnames(hierarchy), invert = TRUE)]    
+        } else{
+            hierarchy <- hierarchy[,grep("CE", colnames(hierarchy), invert = FALSE)]
+            colnames(hierarchy) <- gsub("CE", "X", colnames(hierarchy))
+            hierarchy$samplename <- gsub("CE", "X", hierarchy$samplename)
+        }
+        
+        
+        keep_vars <- apply(assay(hierarchy), 1, function(dt_var){
+            group_dt <- tapply(dt_var, INDEX = hierarchy$group, function(var_group){
+                sum(var_group != 0)/length(var_group)
+            })
+            
+            any(group_dt >= 0.8)    
+        })
+        hierarchy <- hierarchy[keep_vars,]
+        rowData(hierarchy)$mean_abundance <- rowMeans(assay(hierarchy))
+        rowData(hierarchy)$mean_abundance_pc <- rowData(hierarchy)$mean_abundance/sum(rowMeans(assay(hierarchy)))
+        hierarchy
+        # transformAssay(hierarchy, method = "clr", 
+        #                 assay.type = "counts", pseudocount = 0.1)
+    })
+})
+names(shotgun_data_proc_2) <- organ_names
+```
+
+
+```{r}
+p1_list <- lapply(shotgun_data_proc_2, function(organ_dt){
+    organ_res <- lapply(names(organ_dt), function(hierarchy_name){
+        hierarchy <- organ_dt[[hierarchy_name]]
+        
+        
+        # hierarchy_deseq <- DESeqDataSetFromMatrix(countData = as.data.frame(assay(hierarchy)),
+        #                                     colData = colData(hierarchy), 
+        #                                     design = ~ group + 0)
+        # hierarchy_deseq <- DESeq(hierarchy_deseq, test = "Wald")
+        # browser()
+        # assay(hierarchy) <- assay(varianceStabilizingTransformation(hierarchy_deseq))
+        
+        # hierarchy <- transformAssay(x = hierarchy, MARGIN = "samples", 
+        #                                 method = "relabundance")
+        # hierarchy <- hierarchy[grepl(hierarchy_name, rownames(hierarchy)),]
+        hierarchy <- hierarchy[,hierarchy$group != "HFE"]
+        hierarchy <- estimateDiversity(x = hierarchy,  
+                                       index = c("shannon"))
+        # hierarchy <- estimateFaith(x = hierarchy)
+        hierarchy <- estimateRichness(x = hierarchy, index = "observed")
+        # hierarchy <- estimateEvenness(x = hierarchy, index = "simpson")
+        # hierarchy <- estimateDominance(x = hierarchy, index = "relative")
+        # hierarchy <- estimateDivergence(x = hierarchy, reference = "median", FUN = vegan::vegdist)
+        
+        colData(hierarchy)$group <- droplevels(colData(hierarchy)$group)
+        comp_list <- lapply(as.data.frame(combn(levels(colData(hierarchy)$group),
+                                                2)), function(x){x})
+
+        plots <- lapply(c("observed", "shannon"), function(x){
+            ggplot(as.data.frame(colData(hierarchy)), 
+                   aes(x = group, y = .data[[x]])) + 
+                geom_violin(aes(fill = group), scale = "width", alpha = 0.5) + 
+                geom_point(aes(color = group), position = position_jitter()) +
+                theme_minimal() +
+                theme(legend.title = element_blank(), axis.text.x = element_blank(), 
+                    axis.title.x = element_blank(), axis.ticks.x = element_blank(),
+                    strip.text.x = element_text(size = 16), 
+                    axis.title.y =  element_text(size = 16),
+                    legend.text = element_text(size = 16)) +
+                scale_color_manual(values = group_color_dict) +
+                scale_fill_manual(values = group_color_dict) +
+                facet_grid(cols = vars(organ)) +
+                stat_compare_means(label = "p.signif", 
+                                   comparisons = comp_list, 
+                                   method = "wilcox", bracket.size = 0.6)
+        })
+        # (plots[[1]] | ) / (plots[[3]] | plots[[4]]) +
+        #     plot_layout(guides = "collect") +
+        #     plot_annotation(paste(hierarchy_name, "Scores"))
+        plots[[1]] + plot_annotation(paste(hierarchy_name, "Scores"))
+    })
+    names(organ_res) <- names(organ_dt)
+    organ_res
+})
+names(p1_list) <- organ_names
+
+p1 <- p1_list$colon$cogs
+
+p1
+ggsave(filename = "../../outputs/Paper_Figures/figure_16_cogs_colon.svg", plot = p1, 
+        width = 6, height = 4, 
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_16_cogs_colon.png", plot = p1,
+       width = 6, height = 4)
+```
+
+## Statistics
+
+```{r}
+
+results_list <- lapply(shotgun_data_proc_2, function(organ){
+    lapply(organ, function(hierarchy){
+    
+        hierarchy_meta <- colData(hierarchy)
+    
+        # hierarchy <- transformAssay(x = hierarchy, method = "clr", pseudocount = 1)
+        # 
+        # tk <- apply(as.matrix(assay(hierarchy, "clr")), 1, function(x){
+        #     kruskal.test(x, g = colData(hierarchy)$organ)$p.value    
+        # })
+        # tk_adj <- p.adjust(tk, method = "fdr")
+        # sum(tk_adj <= 0.05)
+        # tk_adj[tk_adj <= 0.05]
+        names_comp <- apply(t(combn(levels(as.factor(hierarchy$group)), 
+                                    m = 2))[,2:1], 1, 
+                            paste, collapse = "-")
+        
+        hierarchy_deseq <- DESeqDataSetFromMatrix(countData = as.data.frame(assay(hierarchy)),
+                                                colData = hierarchy_meta, 
+                                                design = ~ group + 0)
+        hierarchy_deseq <- DESeq(hierarchy_deseq, test = "Wald")
+        
+        res_list <- lapply(names_comp, function(comp_name){
+            comp_vec <- c("group", strsplit(comp_name, "-")[[1]])
+            results(hierarchy_deseq, contrast = comp_vec, pAdjustMethod = "fdr")
+        })
+        names(res_list) <- names_comp
+        
+        res_list <- do.call(cbind, res_list)
+    
+        colnames(res_list) <- gsub("log2FoldChange", "log2FC", colnames(res_list))
+        colnames(res_list) <- gsub("pvalue", "p.value", colnames(res_list))
+        colnames(res_list) <- gsub("padj", "adj.p.value", colnames(res_list))
+        rowData(hierarchy) <- cbind(rowData(hierarchy), res_list)
+        hierarchy
+    })
+})
+names(results_list) <- names(shotgun_data_proc_2)
+
+lapply(results_list[[1]], summary)
+lapply(results_list[[2]], summary)
+lapply(results_list[[3]], summary)
+lapply(results_list[[4]], summary)
+lapply(results_list[[4]], summary)
+
+# saveRDS(results_list, paste0(params$output_dir, "Shotgun_Metagenomics_Functional_exp_lima.rds"))
+```
+
+##### Annotations
+
+```{r}
+annotation_list <- list.files(params$input_dir, pattern = "\\.txt$", full.names = TRUE)
+
+annotation_list <- annotation_list[c(5, 1, 3)]
+names(annotation_list) <- c("EC", "metaerg_pathway", "cogs")
+
+# annotation_dt <- lapply(annotation_list, function(x){
+#     read.table(x, header = TRUE, sep = "\t", row.names = NULL)
+# })
+#### EC
+ec_dt <- readLines(annotation_list["EC"])
+ec_dt <- ec_dt[25:length(ec_dt)]
+ec_dt_list <- list()
+
+for(ec_line in ec_dt){
+    found_id <- grep("^ID", x = ec_line, value = TRUE)
+    
+    if(length(found_id)){
+        ec_found <- data.frame("ID" = gsub("ID *", "", found_id))
+    }
+    found_de <- grep("^DE", x = ec_line, value = TRUE)
+    
+    if(length(found_de)){
+        ec_found$Description <- gsub("DE *", "", found_de)
+    }
+    
+    found_next <- grep(pattern = "^//", x = ec_line, value = TRUE)
+    
+    if(length(found_next)){
+        ec_dt_list <- c(ec_dt_list, list(ec_found))
+    }
+}
+ec_dt_list <- do.call(rbind, ec_dt_list)
+###### COGs
+cog_dt <- readLines(annotation_list["cogs"])
+# cog_dt <- gsub('"', "", cog_dt)
+cog_dt <- strsplit(cog_dt, "\t")
+
+cog_dt <- lapply(cog_dt, function(x){
+    x <- c(x, rep("", 7 - length(x)))
+})
+
+cog_dt <- do.call(rbind, cog_dt)
+colnames(cog_dt) <- cog_dt[1,]
+cog_dt <- cog_dt[-1,]
+
+cog_dt <- as.data.frame(cog_dt)
+
+cog_category <- readLines("../../inputs/Shotgun_Metagenomics/cog-24.fun.tab.txt")
+cog_category <- strsplit(cog_category, "\t")
+
+cog_type <- cog_category[lengths(cog_category) == 2]
+cog_type <- do.call(rbind, cog_type)
+colnames(cog_type) <- c("COG_Type_ID", "Type_Info")
+cog_type <- as.data.frame(cog_type)
+
+cog_fun <- cog_category[lengths(cog_category) != 2]
+cog_fun[[16]] <- c(cog_fun[[16]][1:2], "", cog_fun[[16]][3])
+
+cog_fun <- do.call(rbind, cog_fun)
+colnames(cog_fun) <- c("COG_functional_category", "COG_Type_ID", 
+                        "Color_ID", "Functional_Description")
+cog_fun <- as.data.frame(cog_fun)
+cog_fun$Type_Info <- cog_type$Type_Info[match(cog_fun$COG_Type_ID, cog_type$COG_Type_ID)]
+
+cog_info_dt <- lapply(strsplit(cog_dt$COG_functional_category, ""), function(x){
+    
+    cog_fun_found <- cog_fun[cog_fun$COG_functional_category %in% x,]
+    
+    cog_desc_found <- paste(cog_fun_found$Functional_Description,
+                            collapse = " / ")
+    cog_info_found <- paste(unique(cog_fun_found$Type_Info), collapse = " / ")
+    data.frame("COG_Functional_Category" = cog_desc_found, 
+                "COG_Type_Info" = cog_info_found)
+})
+cog_info_dt <- do.call(rbind, cog_info_dt)
+
+cog_dt <- cbind(cog_dt, cog_info_dt)
+
+######
+metacyc_dt <- read.table(annotation_list[2], sep = "\t", header = TRUE, row.names = NULL)
+
+metacyc_dt3 <- readLines("../../inputs/Shotgun_Metagenomics/pwy.hierarchy")
+metacyc_dt3 <- strsplit(metacyc_dt3, "\t")
+metacyc_dt3 <- do.call(rbind, metacyc_dt3)
+metacyc_dt3 <- as.data.frame(metacyc_dt3)
+
+# metacyc_dt2 <- readLines("../../inputs/Shotgun_Metagenomics/ec.to.pwy")
+# metacyc_dt2 <- strsplit(metacyc_dt2, "\t")
+# metacyc_dt2 <- do.call(rbind, metacyc_dt2)
+# metacyc_dt2 <- as.data.frame(metacyc_dt2)
+
+#### metaerg_kegg
+metaerg_dt <- readLines("../../inputs/Shotgun_Metagenomics/ecoli/27.5/data/pathways.dat")
+metaerg_dt <- metaerg_dt[28:length(metaerg_dt)]
+metaerg_dt_list <- list()
+
+for(meta_line in metaerg_dt){
+    found_id <- grep("^UNIQUE-ID", x = meta_line, value = TRUE)
+    
+    if(length(found_id)){
+        meta_found <- data.frame("ID" = gsub("UNIQUE-ID - ", "", found_id))
+    }
+    found_de <- grep("^COMMON-NAME", x = meta_line, value = TRUE)
+    
+    if(length(found_de)){
+        meta_found$Description <- gsub("COMMON-NAME - ", "", found_de)
+    }
+    
+    found_next <- grep(pattern = "^//", x = meta_line, value = TRUE)
+    
+    if(length(found_next)){
+        metaerg_dt_list <- c(metaerg_dt_list, list(meta_found))
+    }
+}
+metaerg_dt_list_ecoli <- as.data.frame(do.call(rbind, metaerg_dt_list))
+
+####
+metaerg_dt <- readLines("../../inputs/Shotgun_Metagenomics/aplat/27.5/data/pathways.dat")
+metaerg_dt <- metaerg_dt[21:length(metaerg_dt)]
+metaerg_dt_list <- list()
+
+for(meta_line in metaerg_dt){
+    found_id <- grep("^UNIQUE-ID", x = meta_line, value = TRUE)
+    
+    if(length(found_id)){
+        meta_found <- data.frame("ID" = gsub("UNIQUE-ID - ", "", found_id))
+    }
+    found_de <- grep("^COMMON-NAME", x = meta_line, value = TRUE)
+    
+    if(length(found_de)){
+        meta_found$Description <- gsub("COMMON-NAME - ", "", found_de)
+    }
+    
+    found_next <- grep(pattern = "^//", x = meta_line, value = TRUE)
+    
+    if(length(found_next)){
+        metaerg_dt_list <- c(metaerg_dt_list, list(meta_found))
+    }
+}
+metaerg_dt_list_aplat <- as.data.frame(do.call(rbind, metaerg_dt_list))
+
+
+metacyc_sel <- metacyc_dt[,c("Geneid", "MetaCyc_id")]
+colnames(metacyc_sel) <-  c("ID", "Description")
+
+metacyc_2_sel <- metacyc_dt3[,c("V1", "V2")]
+colnames(metacyc_2_sel) <- c("ID", "Description")
+
+annotation_dt <- rbind(metacyc_sel, metacyc_2_sel, metaerg_dt_list_aplat, metaerg_dt_list_ecoli)
+annotation_dt <- distinct(annotation_dt)
+annotation_dt$Description <- gsub("^;|;$|<i>|</i>|<sub>|</sub>", "", annotation_dt$Description)
+annotation_dt$Description <- gsub("; ", ";", annotation_dt$Description)
+# annotation_list <- list("EC" = ec_dt_list, "cogs" = cog_dt, "metaerg_pathway" = annotation_dt)
+```
+
+```{r}
+results_list <- lapply(results_list, function(organ){
+    organ_res <- lapply(names(organ), function(dt_name){
+        switch(dt_name, "EC" = {
+            dt <- organ[[dt_name]]
+            
+            rowData(dt)$Old_Name <- rownames(dt)
+            ids <- rownames(dt)
+            ids_tr <- sapply(ids, function(id){
+                
+                id_vect <- strsplit(id, ";")[[1]]
+                id_vect <- gsub("EC:", "", id_vect)
+                
+                found_id <- which(ec_dt_list$ID %in% id_vect)
+                
+                found_de <- ec_dt_list$Description[found_id]
+                if(length(found_id) & all(found_de != "") & !any(is.na(found_de))){
+                    return(paste(found_de[!is.na(found_de)], collapse = ";"))  
+                } else{
+                    return(id)
+                }
+            })
+            if(all(!duplicated(ids_tr))){
+                rownames(dt) <- ids_tr
+            } 
+            rowData(dt)$Description <- ids_tr
+            
+            return(dt)
+        }, "cogs" = {
+            dt <- organ[[dt_name]]
+            ids <- rownames(dt)
+            rowData(dt)$Old_Name <- rownames(dt)
+            
+            ids_df <- lapply(ids, function(id){
+                id_vect <- strsplit(id, ";")[[1]]
+                
+                found_id <- which(cog_dt$COG_ID %in% id_vect)
+                found_de <- cog_dt[found_id,]
+                if(nrow(found_de)){
+                    cog_info <- sapply(found_de, function(x){
+                        paste(x, collapse = ";")
+                    })
+                    return(as.data.frame(t(cog_info)))
+                } else{
+                    return(id)
+                }
+            })
+            ids_df <- do.call(rbind, ids_df)
+            ids_df$Description <- ids_df$COG_Name
+            if(all(!duplicated(ids_df$Description))){
+                rownames(dt) <- ids_df$Description
+            } 
+            rowData(dt) <- cbind(rowData(dt), ids_df)
+            
+            return(dt)
+        }, "metaerg_pathway" = {
+            dt <- organ[[dt_name]]
+            ids <- rownames(dt)
+            rowData(dt)$Old_Name <- rownames(dt)
+            
+            ids_tr <- sapply(ids, function(id){
+                id_vect <- strsplit(id, ";")[[1]]
+                found_id <- which(annotation_dt$ID %in% id_vect)
+                found_de <- annotation_dt$Description[found_id]
+                if(length(found_id) & any(found_de != "") & !all(is.na(found_de))){
+                    return(paste(found_de[!is.na(found_de)], collapse = ";"))    
+                } else{
+                    return(id)
+                }
+                
+            })
+            if(all(!duplicated(ids_tr))){
+                rownames(dt) <- ids_tr
+            } 
+            rowData(dt)$Description <- ids_tr
+            
+            return(dt)
+        }, "metaerg_kegg" = {
+            
+            rowData(organ[[dt_name]])$Description <- rownames(rowData(organ[[dt_name]]))  
+            
+            return(organ[[dt_name]])
+        })
+    })
+    names(organ_res) <- names(organ)
+    organ_res
+})
+
+results_list <- lapply(names(results_list), function(organ_name){
+    organ <- results_list[[organ_name]]
+    organ_res <- lapply(organ, function(dt){
+        rowData(dt)$readable_name <- str_replace(paste(organ_name, rowData(dt)$Description),
+                                                "^\\w{1}", toupper)
+        return(dt)
+    })
+    names(organ_res) <- names(organ)
+    organ_res
+})
+
+names(results_list) <- names(shotgun_data_proc_2)
+
+saveRDS(results_list, paste0(params$output_dir, "Shotgun_Metagenomics_Functional_exp_lima.rds"))
+```
+

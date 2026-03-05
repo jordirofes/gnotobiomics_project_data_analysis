@@ -51,6 +51,35 @@ histone_names <- sapply(strsplit(colnames(ptm_data), "_"), function(x){
             not_used)
 })
 
+histone_rd <- lapply(strsplit(colnames(ptm_data), "_"), function(x){
+    histone_residues <- x[4]
+    histone_residues <- stringr::str_extract_all(string = histone_residues, 
+                            pattern = "[K][[:digit:]]{1,5}|[M][[:digit:]]{1,5}|[M]{1,5}")[[1]]
+    histone_modifications <- x[5]
+    not_used <- ifelse(grepl("NOT", ignore.case = TRUE, 
+                            histone_modifications), 
+                        "_Not.Used", "")
+    
+    histone_modifications <- gsub("\\.Not.*", replacement = "", 
+                                x = histone_modifications, ignore.case = TRUE)
+    
+    histone_modifications <- stringr::str_extract_all(string = histone_modifications,
+                                                    pattern = "ox[[:digit:]]?|p[[:digit:]]?|ac[[:digit:]]?|m[[:digit:]]?")[[1]]
+    
+    histone_3.3 <- grepl("3.3", x[1])
+    histone_residues_K <- grep(x = histone_residues, pattern = "K", 
+                                value = TRUE)
+    
+    data.frame("Histone_Name" = gsub("\\.3$", "", x[1]), 
+               "isHistone3.3" = histone_3.3, 
+               "Histone_Residues" = paste0(histone_residues, collapse = "/"),
+               "Histone_Residues_K" = paste0(histone_residues_K, collapse = "/"),
+               "Histone_Modifications" = paste0(histone_modifications, 
+                                                collapse = "/"))
+})
+histone_rd <- do.call(rbind, histone_rd)
+
+colnames(ptm_data) <- histone_names
 # ptm_data <- ptm_data[,!grepl("NOT", colnames(ptm_data), ignore.case = TRUE)]
 
 # saveRDS(list("LIMA"= list("PTM_Data" = ptm_data, "PTM_Metadata" = ptm_metadata)),"./ptm_data_list.rds")
@@ -189,8 +218,8 @@ ptm_results$readable_name <- gsub("_|\\.", "-", gsub("\\.[^_]+$|\\.$", "", rowna
 
 ptm_exp <- SummarizedExperiment(assays = as.data.frame(t(ptm_data)), 
                                  colData = ptm_metadata,
-                                 rowData = ptm_results)
-rownames(ptm_exp)
+                                 rowData = cbind(histone_rd, ptm_results))
+
 
 saveRDS(ptm_exp, paste0(params$output_dir, "Histone_Modifications_Proteomics_exp_lima.rds"))
 ```

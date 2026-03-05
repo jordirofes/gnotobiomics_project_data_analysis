@@ -1,0 +1,4449 @@
+---
+title: "GFCV Paper analysis"
+output: html_document
+date: "2025-03-24"
+params:
+    input_dir: "../../inputs/"
+    output_dir: "../../outputs/Multi_Omics_Analysis_GFCV/"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Required Packages
+
+```{r, }
+library(MOFA2)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(MultiAssayExperiment)
+library(grDevices)
+library(rGREAT)
+library(msigdbr)
+library(DT)
+library(TxDb.Mmusculus.UCSC.mm39.refGene)
+source("../Utility_Functions/utilities.R")
+library(TreeSummarizedExperiment)
+library(GGally)
+library(igraph)
+library(survcomp)
+library(org.Mm.eg.db)
+
+```
+
+
+
+## Loaded matrices
+
+```{r}
+multi_omics_raw <- readRDS(paste0(params$output_dir, "Multi_Omics_Analysis_exp_gfcv.rds"))
+multi_omics_full <- readRDS(paste0(params$output_dir, "Multi_Omics_Analysis_MA_exp_gfcv.rds"))
+
+
+colnames(rowData(multi_omics_raw@ExperimentList$WGB_DNA_Methylation)) <- gsub("-", "_", colnames(rowData(multi_omics_raw@ExperimentList$WGB_DNA_Methylation))) 
+
+colnames(rowData(multi_omics_full@ExperimentList$WGB_DNA_Methylation)) <- gsub("-", "_", colnames(rowData(multi_omics_full@ExperimentList$WGB_DNA_Methylation)))
+```
+
+## Metalomics correlation with the diet
+
+```{r}
+omic_dt <- multi_omics_full
+
+diet_metals <- openxlsx::read.xlsx("../../inputs/Metallomics/metallomics_raw.xlsx",
+                                    sheet = "diets", rowNames = TRUE)
+rownames(diet_metals) <- gsub("CTR", "CNT", rownames(diet_metals))
+
+dt_metals <- experiments(omic_dt[,,c("Metallomics.cecum", "Metallomics.liver")])
+```
+
+```{r}
+lapply(names(dt_metals), function(organ_name){
+    organ_dt <- dt_metals[[organ_name]]    
+    lapply(rownames(organ_dt), function(var_name){
+        plot_dt <- data.frame("Intensity" = as.numeric(assay(organ_dt[var_name,])), 
+                            "group" = organ_dt$group)
+        ggplot(plot_dt, aes(x = group, y = Intensity, fill = group)) + 
+            geom_boxplot() + ggtitle(paste(organ_name, var_name)) + 
+            theme_minimal()
+    })
+})
+```
+
+```{r}
+# cor_mat <- lapply(dt_metals, function(exp_dt){
+#     browser()
+#     diet_metals_long <- diet_metals[as.character(exp_dt$group), rownames(exp_dt)]
+#     # plotly::plot_ly(z = cor(t(assay(exp_dt)), diet_metals_long))
+#     return(diag(cor(t(assay(exp_dt)), diet_metals_long)))
+# })
+# names(cor_mat) <- names(dt_metals)
+# cor_dt <- lapply(names(cor_mat), function(x){
+#     data.frame("cor" = abs(cor_mat[[x]]), "organ" = x)
+# })
+# cor_dt <- do.call(rbind, cor_dt)
+# 
+# pdf(paste0(params$output_dir, "diet_metals_correlations_boxplot.pdf"))
+# boxplot(cor ~ organ, cor_dt)
+# dev.off()
+```
+
+
+## Multi-Omics Overview
+
+```{r}
+multi_omics_names <- names(experiments(multi_omics_full))
+
+multi_omics_selected <- multi_omics_names[grepl("WGB|RNA|Untargeted|Metallomics|Histone|X16S.*Specie|Targeted",
+                                                multi_omics_names)]
+multi_omics_selected
+```
+
+```{r}
+# filtered_exps <- lapply(names(multi_omics_raw), function(multi_omics_names){
+#     multi_omics_exp <- experiments(multi_omics_raw)[[multi_omics_names]]
+#     p_val_dt <- rowData(multi_omics_exp)[,grepl("adj.p.value", colnames(rowData(multi_omics_exp)))]
+#     p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+#     multi_omics_exp <- multi_omics_exp[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+#     
+#     # if(nrow(multi_omics_exp) == 0){return(NA)}
+#     
+#     multi_omics_exp
+# })
+# names(filtered_exps) <- names(multi_omics_raw)
+# filtered_exps[is.na(filtered_exps)] <- NULL
+# 
+# experiments(multi_omics_raw) <- ExperimentList(filtered_exps)
+# multi_omics_selected <- multi_omics_selected[multi_omics_selected %in% names(multi_omics_raw)]
+```
+
+
+```{r}
+multi_omics <- multi_omics_full
+filtered_exps <- lapply(names(multi_omics_full), function(multi_omics_names){
+    multi_omics_exp <- experiments(multi_omics_full)[[multi_omics_names]]
+    p_val_dt <- rowData(multi_omics_exp)[,grepl("adj.p.value", colnames(rowData(multi_omics_exp)))]
+    # p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+    multi_omics_exp <- multi_omics_exp[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+    
+    # if(nrow(multi_omics_exp) == 0){return(NA)}
+    
+    multi_omics_exp
+})
+names(filtered_exps) <- names(multi_omics)
+filtered_exps[is.na(filtered_exps)] <- NULL
+
+experiments(multi_omics) <- ExperimentList(filtered_exps)
+multi_omics_selected <- multi_omics_selected[multi_omics_selected %in% names(multi_omics)]
+```
+
+```{r}
+multi_omics_ordered <- names(multi_omics)[c(16, 22, 13, 21, 19, 14, 
+                                            20, 17, 15, 6, 18, 12)]
+
+omic_names_dict <- c("Liver RNA Sequencing", "Liver DNA Methylation", 
+                    "Liver Histone Modifications", 
+                    "Liver Untargeted Metabolomics", 
+                    "Liver Targeted Metabolomics", "Liver Metallomics",
+                    "Serum Targeted Metabolomics",
+                    "Cecum Targeted Metabolomics", "Cecum Metallomics",    
+                    "Cecum 16S Metagenomics", "Colon Targeted Metabolomics", 
+                    "Colon 16S Metagenomics")
+
+names(omic_names_dict) <- multi_omics_ordered
+    
+group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(multi_omics$group))), 
+                                             name = "Set2")
+names(group_color_dict) <- levels(droplevels(multi_omics$group))
+
+```
+ 
+
+```{r}
+omic_names_dup <- sapply(strsplit(multi_omics_ordered, "\\."), 
+                        function(x){x[[1]]})
+omic_names_dup[grep("cogs", multi_omics_ordered)] <- "cogs"
+omic_names_dup[grep("EC", multi_omics_ordered)] <- "EC"
+omic_names_dup[grep("metaerg_kegg", multi_omics_ordered)] <- "metaerg_kegg"
+omic_names_dup[grep("metaerg_pathway", multi_omics_ordered)] <- "metaerg_pathway"
+
+names(omic_names_dup) <- multi_omics_ordered
+
+unique_omics <- unique(omic_names_dup)
+
+omic_colors <- RColorBrewer::brewer.pal(n = length(unique_omics), name = "Set3")
+
+
+col_list <- lapply(seq_along(unique_omics), function(omic_id){
+    omic_name <- unique_omics[omic_id]
+    
+    colors_found <- names(omic_names_dup)[omic_names_dup == omic_name]
+    
+    omic_num <- length(colors_found)
+    omic_col <- omic_colors[omic_id]
+    
+    col_ramp <- colorRampPalette(colors = c(omic_col, "white"))(omic_num + 1)[seq_len(omic_num)]
+    names(col_ramp) <- colors_found
+    return(col_ramp)
+})
+
+color_vect <- unlist(col_list)
+omic_color_dict <- color_vect
+```
+
+
+```{r}
+group_var <- "group"
+sample_var <- "samplename"
+
+# multi_omics_selected <- multi_omics_names[grepl("WGB|RNA|Untargeted",
+#                                                 multi_omics_names)]
+
+selected_exps <- multi_omics[,colData(multi_omics)$group != "HFE", multi_omics_selected]
+
+plot_dt <- lapply(names(experiments(selected_exps)), function(omic_name){
+    omic_cd <- data.frame("sample_name" = colnames(experiments(selected_exps)[[omic_name]]))
+    omic_cd$var_name <- omic_name
+    omic_cd$value <- 1
+    omic_cd
+})
+plot_dt <- do.call(rbind, plot_dt)
+plot_dt$sample_name <- factor(plot_dt$sample_name)
+
+group_var_dict <- colData(multi_omics)[[group_var]]
+names(group_var_dict) <- colData(multi_omics)[[sample_var]]
+
+sample_levels <- levels(plot_dt$sample_name)
+reordered_sample_levels <- sample_levels[order(group_var_dict[as.character(sample_levels)])]
+
+plot_dt$sample_name <- factor(x = plot_dt$sample_name, 
+                               levels = reordered_sample_levels)
+
+omic_color_dict_mod <- omic_color_dict
+names(omic_color_dict_mod) <- omic_names_dict[as.character(names(omic_color_dict))]
+
+    
+plot_dt$var_id <- factor(omic_names_dict[as.character(plot_dt$var_name)])
+
+plot_dt$var_id <- factor(plot_dt$var_id, 
+                        levels = levels(plot_dt$var_id)[match(rev(omic_names_dict[omic_names_dict %in%
+                                                                levels(plot_dt$var_id)]),
+                                            levels(plot_dt$var_id))])
+
+plot_dt_lab <- data.frame("omic_names" = unique(plot_dt$var_name), 
+                          "num_vars_raw" = sapply(unique(plot_dt$var_name),
+                                                  function(x){nrow(multi_omics_raw@ExperimentList[[x]])}),
+                          "num_vars" = sapply(unique(plot_dt$var_name), function(x){nrow(multi_omics@ExperimentList[[x]])}))
+plot_dt_lab$var_id <- factor(omic_names_dict[as.character(unique(plot_dt$var_name))])
+plot_dt_lab$num_vars_plot <- paste0("n = ", plot_dt_lab$num_vars_raw, " / ", plot_dt_lab$num_vars)
+
+x_colors <- group_color_dict[as.character(group_var_dict[levels(plot_dt$sample_name)])]
+
+fig_dir <- paste0(params$output_dir, "../Paper_Figures_GFCV/")
+
+if(!dir.exists(fig_dir)){dir.create(fig_dir)}
+
+# plot_nw_term(omic_dt = plot_dt)
+fig1 <- ggplot(plot_dt, aes(x = sample_name, fill = var_id, y = var_id)) + 
+    geom_tile() + 
+    theme_void() + 
+    theme(axis.text.x = element_text(angle = 90, 
+                                     colour = x_colors),
+        axis.text.y = element_text(size = 10),
+        legend.position = "none", 
+        legend.justification = "top", 
+        legend.title = element_blank(), 
+        plot.title = element_text(hjust = 0.5),
+        legend.spacing.y = unit(0.1, "cm"), 
+        legend.text = element_text(size = 6), 
+        legend.key.size = unit(1, "line")) + 
+    xlab(NULL) + ylab(NULL) +
+    scale_fill_manual(values = omic_color_dict_mod) + 
+    geom_text(data = plot_dt_lab, aes(x = 41, y = var_id, label = num_vars_plot), hjust = 0) +
+    expand_limits(x = 52)
+fig1
+ggsave(filename = paste0(fig_dir, "figure_1_panel_c.svg"), plot = fig1, 
+        width = 12, fix_text_size = FALSE)
+
+omic_color_dict_mod
+```
+
+
+## Enrich information
+
+```{r}
+# omic_enrich <- c("Untargeted_Metabolomics", "RNA_Sequencing", "WGB_DNA_Methylation")
+# ids_enrich_names <- c("compounds_kegg_merged", "entrezID", "geneId")
+
+omic_enrich <- c("Untargeted_Metabolomics", 
+                 "RNA_Sequencing", 
+                 "WGB_DNA_Methylation")
+ids_enrich_names <- c("compounds_kegg_merged", 
+                      "entrezID", "geneId")
+
+library(SummarizedExperiment)
+
+## Enrich IDs dictionary
+omic_dict_list <- mapply(function(omic_id, enrich_var){
+    
+    omic_data <- omic_dt[[omic_id]]
+    omic_dict <- strsplit(rowData(omic_data)[[enrich_var]], ";")
+    
+    names(omic_dict) <- paste0(omic_id, ".", rownames(omic_data))
+    
+    omic_dict
+    
+}, omic_id = omic_enrich, enrich_var = ids_enrich_names)
+
+rna_seq_rd <- lapply(experiments(omic_dt)[omic_enrich], rowData)
+num_factors <- 2
+## Universe IDs mapped
+universe_list_ids <- lapply(names(rna_seq_rd), function(omic_name){
+    omic_ids <- omic_dict_list[[omic_name]][paste0(omic_name, ".", rownames(rna_seq_rd[[omic_name]]))]
+    omic_ids <- omic_ids[!is.null(omic_ids)]
+    omic_ids <- unlist(omic_ids)
+    omic_ids[!is.na(omic_ids)]
+
+})
+names(universe_list_ids) <- names(rna_seq_rd)
+```
+
+
+```{r}
+## ORA IDs
+clu_ids_enrich <- lapply(seq_len(num_factors), function(factor_id){
+    omic_names <- c("Untargeted_Metabolomics", "WGB_DNA_Methylation", "RNA_Sequencing")
+    clu_ids <- lapply(omic_names, function(omic_id){
+        omic_exp <- experiments(omic_dt)[[omic_id]]
+        features_factor <- rownames(rowData(omic_exp))[rowData(omic_exp)[[paste0("Factor_", 
+                                                            factor_id, "_weights_sig")]]]
+        paste0(omic_id, ".", features_factor)
+    })
+    names(clu_ids) <- omic_names
+    
+    metabo_dt <- omic_dict_list[["Untargeted_Metabolomics"]][clu_ids$Untargeted_Metabolomics]
+    metabo_dt <- metabo_dt[!is.null(metabo_dt)]
+    metabo_dt <- metabo_dt[!is.na(metabo_dt)]
+
+    wgb_dt <- omic_dict_list[["WGB_DNA_Methylation"]][clu_ids$WGB_DNA_Methylation]
+    wgb_dt <- wgb_dt[!is.null(wgb_dt) & !is.na(wgb_dt)]
+    
+    rna_dt <- omic_dict_list[["RNA_Sequencing"]][clu_ids$RNA_Sequencing]
+    rna_dt <- rna_dt[!is.null(rna_dt) & !is.na(rna_dt)]
+    
+    return(list(
+        "Untargeted_Metabolomics" = metabo_dt,
+        "RNA_Sequencing" = rna_dt, 
+        "WGB_DNA_Methylation" = wgb_dt))
+})
+names(clu_ids_enrich) <- paste0("Factor_", seq_len(num_factors))
+```
+
+```{r}
+## GSEA FCs
+col_names <- paste0("Factor_", seq_len(num_factors))
+
+omic_enrich <- c("Untargeted_Metabolomics",
+                "RNA_Sequencing",
+                "WGB_DNA_Methylation")
+ids_enrich_names <- c("compounds_kegg_merged",
+                      "entrezID", "geneId")
+
+fc_dict <- lapply(col_names, function(col_name){
+    col_name <- paste0(col_name, "_weights")
+    # 
+    omic_fc_dict <- mapply(function(omic_id, enrich_var){
+        omic_data <- omic_dt[[omic_id]]
+        omic_dict <- rowData(omic_data)[[enrich_var]]
+        
+        fc_dt <- rowData(omic_data)[[col_name]]
+        
+        names(omic_dict) <- paste0(omic_id, ".", rownames(omic_data))
+        
+        omic_fc <- mapply(function(var_names, fc_vect){
+            var_names_split <- strsplit(var_names, ";")[[1]]
+            var_names_split <- var_names_split[!is.na(var_names_split)]
+            if(!length(var_names_split)){return(NULL)}
+            fc_vect_dict <- rep(fc_vect, length(var_names_split))
+            names(fc_vect_dict) <- var_names_split
+            fc_vect_dict
+        }, var_names = omic_dict, fc_vect = fc_dt, USE.NAMES = FALSE)
+        
+        unlist(omic_fc)
+    }, omic_id = omic_enrich, enrich_var = ids_enrich_names)
+    
+    omic_fc_dict
+})
+names(fc_dict) <- col_names
+```
+
+```{r}
+library(clusterProfiler)
+kegg_db_enrich_path <- paste0(params$output_dir, "kegg_enrich_db_red.rds")
+kegg_db_list <- readRDS(kegg_db_enrich_path)
+term2name_dt <- kegg_db_list$term2name
+integ_enrich_db <- kegg_db_list$term2gene
+membership_attribute <- "cluster_ids"
+min_n <- 10
+
+kegg_pathway_list_genes <- lapply(kegg_db_list$term2name$term, function(x){
+    kegg_db_list$term2gene$gene[kegg_db_list$term2gene$term == x & kegg_db_list$term2gene$type == "gene_id"]
+})
+names(kegg_pathway_list_genes) <- kegg_db_list$term2name$term
+kegg_description_vect <- kegg_db_list$term2name$name
+names(kegg_description_vect) <- kegg_db_list$term2name$term
+# enrich_name <- "gsea_part_kegg"
+# enrich_nw_dir <- paste0(corr_output_dir, enrich_name, "/")
+# 
+# if(!dir.exists(enrich_nw_dir)){dir.create(enrich_nw_dir)}
+```
+
+
+## Gene analysis
+
+```{r}
+exp_id <- "RNA_Sequencing"
+
+dt_exp <- multi_omics[[exp_id]]
+dt_exp_raw <- multi_omics_raw[[exp_id]]
+dt_exp_raw <- dt_exp_raw[,dt_exp_raw$group != "HFE"]
+```
+
+```{r}
+p_val_dt_g <- rowData(dt_exp)[,grepl("adj.p.value",
+                                colnames(rowData(dt_exp)))]
+# p_val_dt_g <- p_val_dt_g[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt_g))]
+
+fc_dt_g <- rowData(dt_exp)[,grepl("FC",
+                                colnames(rowData(dt_exp)))]
+# fc_dt_g <- fc_dt_g[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(fc_dt_g))]
+
+p_val_sum <- lapply(p_val_dt_g, function(x){
+    sum(x <= 0.05)
+})
+
+fc_dir <- lapply(seq_along(fc_dt_g), function(x_id){
+    sig_vars <- fc_dt_g[[x_id]][p_val_dt_g[[x_id]] <= 0.05]
+    fc_dir <- ifelse(sig_vars <= 0, "Down-regulated", "Up-regulated")
+    table(fc_dir)
+})
+names(fc_dir) <- names(fc_dt_g)
+fc_dir
+
+fc_dir
+
+
+lapply(seq_along(fc_dt_g), function(x_id){
+    sig_vars <- fc_dt_g[[x_id]][p_val_dt_g[[x_id]] <= 0.05]
+    summary(abs(sig_vars))
+})
+
+
+comp_dt <- lapply(seq_along(fc_dt_g), function(x_id){
+    sig_vars <- fc_dt_g[[x_id]][p_val_dt_g[[x_id]] <= 0.05]
+    summary(sig_vars)
+    data.frame("fc" = sig_vars, "comparison" = names(fc_dt_g)[[x_id]])
+})
+comp_dt <- do.call(rbind, comp_dt)
+ggplot(comp_dt) + geom_histogram(aes(x = abs(fc), fill = comparison), bins = 60) +
+    theme_minimal()
+
+tapply(abs(comp_dt$fc), INDEX = comp_dt$comparison, summary)
+```
+
+```{r}
+set.seed(1234)
+
+svg("../../outputs/Paper_Figures_GFCV/figure_2_a.svg")
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp),
+            stratificationVar = "group", 
+            clustering_method = "complete",
+            clustering_distance_rows = "euclidean", 
+            show_colnames = FALSE, plot_name = "Significant genes", 
+            show_rownames = FALSE)
+dev.off()
+
+png("../../outputs/Paper_Figures_GFCV/figure_2_a.png")
+par(bg=NA)
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp),
+            stratificationVar = "group", 
+            clustering_method = "complete",
+            clustering_distance_rows = "euclidean",
+            show_colnames = FALSE, plot_name = "Significant genes", 
+            show_rownames = FALSE)
+dev.off()
+
+# ggsave(filename = , 
+#         plot = plot_g_h)
+p1 <- data_pca(dt_list = t(scale(t(assay(dt_exp)))), metadata = colData(dt_exp),
+        stratificationVar = "group", plot_name = "Gene expression PCA",
+        color_vect = group_color_dict) + 
+        theme(legend.title = element_blank(), 
+              legend.position = "bottom")
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_2_b.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_2_b.png", plot = p1)
+```
+
+```{r}
+plot_dt <- assay(dt_exp)
+
+plot_dt <- t(apply(plot_dt, 1, function(x){
+    tapply(x, INDEX = droplevels(dt_exp$group), FUN = mean)}))
+plot_dt <- reshape2::melt(plot_dt)
+# plot_dt$group <- colData(wgb_dt)[plot_dt$variable, "group"]
+library(ggplot2)
+
+# pdf(paste0(output_dir, "mean_zscore_rna_seq_expression.pdf"))
+p1 <- ggplot(plot_dt) + geom_histogram(aes(x = value, fill = Var2)) + 
+    theme_minimal() + xlab("Mean gene group expression (vst Z score)") + 
+    ylab(NULL) + theme(legend.position = "none") + 
+    facet_grid(vars(Var2)) + scale_fill_manual(values = group_color_dict) + 
+    theme(axis.title.x = element_text(size = 16),
+          strip.text.y = element_text(size = 16))
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_2_c.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_2_c.png", plot = p1)
+# dev.off()
+```
+
+
+
+```{r}
+# mice_dt <- readRDS("../../outputs/Mice_Data/processed_mice_dt.rds")
+# mice_found <- mice_dt[match(colnames(dt_exp), mice_dt$samplename),]
+# rownames(mice_found) <- mice_found$samplename
+# 
+# print("Body weight (sd)")
+# tapply(mice_found$`BW(g)`, INDEX = mice_found$group, sd)
+# print("Liver weight (sd)")
+# tapply(mice_found$`Liver(g)`, INDEX = mice_found$group, sd)
+# print("WAT weight (sd)")
+# tapply(mice_found$`WATep(g)`, INDEX = mice_found$group, sd)
+```
+
+
+```{r}
+# #
+# # cor(assay(dt_exp))
+# #
+# 
+# #
+
+# 
+# dt_exp$group <- droplevels(dt_exp$group)
+# 
+# cor_dt <- apply(assay(dt_exp), 1, function(x){
+#     cor(x, mice_found["BW(g)"])
+# })
+# hist(cor_dt)
+# 
+# 
+# cor_dt <- apply(assay(dt_exp), 1, function(x){
+#     cor(x, mice_found["Liver(g)"])
+# })
+# hist(cor_dt)
+# 
+# cor_dt <- apply(assay(dt_exp), 1, function(x){
+#     cor(x, mice_found["WATep(g)"])
+# })
+# hist(cor_dt)
+# 
+# 
+# 
+# data_pca(dt_list = t(scale(t(cb_corrected))), metadata = colData(dt_exp),
+#         stratificationVar = "group", plot_name = "",
+#         color_vect = group_color_dict)
+# 
+# heatMapFun(dt_list =  t(scale(t(cb_corrected))), metadata = colData(dt_exp),
+#            stratificationVar = "group",
+#            clustering_method = "complete",
+#            clustering_distance_rows = "euclidean",
+#            show_colnames = FALSE, plot_name = "", show_rownames = TRUE)
+# 
+# plotly::ggplotly(data_pca(dt_list = t(scale(t(assay(dt_exp)))), metadata = colData(dt_exp),  
+#         stratificationVar = "samplename", plot_name = ""))
+# 
+# data_pca(dt_list = t(scale(t(assay(dt_exp)))), metadata = mice_found,  
+#         stratificationVar = "WATep(g)", plot_name = "", 
+#         color_vect = group_color_dict)
+# data_pca(dt_list = t(scale(t(assay(dt_exp)))), metadata = mice_found,  
+#         stratificationVar = "Liver(g)", plot_name = "", 
+#         color_vect = group_color_dict)
+# 
+# boxplot(mice_found$`WATep(g)` ~ mice_found$group)
+# test_bw <- boxplot(mice_found$`BW(g)` ~ mice_found$group)
+# boxplot(mice_found$`WATep(g)` ~ mice_found$group)
+
+```
+
+```{r}
+## Variable variance tests
+library(DESeq2)
+dt_exp_raw_DESeq <- DESeqDataSetFromMatrix(countData = assay(dt_exp_raw),
+                                      colData = colData(dt_exp_raw),
+                                      design= ~ 0 + group)
+dt_exp_raw_DESeq <- estimateSizeFactors(dt_exp_raw_DESeq)
+normalized_counts <- counts(dt_exp_raw_DESeq, normalized = TRUE)
+
+## Without filtering
+group_sds <- lapply(levels(dt_exp_raw_DESeq$group), function(x){
+    group_dt <- normalized_counts[,dt_exp_raw_DESeq$group == x]
+    data.frame("sd" = rowSds(as.matrix(assay(group_dt))), "group" = x)
+})
+group_sds <- do.call(rbind, group_sds)
+
+ggplot(group_sds) + geom_density(aes(x = log(sd), fill = group))
+
+tapply(X = group_sds$sd, INDEX = group_sds$group, FUN = summary)
+
+kruskal.test(formula = sd ~ group, data = group_sds)
+DescTools::ConoverTest(x = group_sds$sd, g = group_sds$group, 
+                        method = "fdr", alternative = "two.sided")
+
+# conover.test::conover.test(x = group_sds$sd, g = group_sds$group)
+
+## With filtering
+p_val_dt_g <- rowData(dt_exp_raw)[,grepl("adj.p.value",
+                                        colnames(rowData(dt_exp_raw)))]
+# p_val_dt_g <- p_val_dt_g[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt_g))]
+normalized_counts_f <- normalized_counts[apply(as.matrix(p_val_dt_g) <= 0.05, 1, any),]
+
+group_sds_f <- lapply(levels(dt_exp_raw_DESeq$group), function(x){
+    group_dt <- normalized_counts_f[,dt_exp_raw_DESeq$group == x]
+    data.frame("sd" = rowSds(as.matrix(assay(group_dt))), "group" = x)
+})
+group_sds_f <- do.call(rbind, group_sds_f)
+
+ggplot(group_sds_f) + geom_density(aes(x = sd, fill = group))
+ggplot(group_sds_f) + geom_boxplot(aes(x = group, y = log(sd)))
+
+kruskal.test(formula = sd ~ group, data = group_sds_f)
+DescTools::ConoverTest(x = group_sds_f$sd, g = group_sds_f$group, 
+                        method = "fdr", alternative = "two.sided")
+
+summary(aov(formula = log(sd) ~ group, data = group_sds_f))
+TukeyHSD(aov(formula = log(sd) ~ group, data = group_sds_f))
+
+# conover.test::conover.test(x = group_sds_f$sd, g = group_sds_f$group, 
+#                            method = "bh", altp = T)
+
+###
+```
+
+```{r}
+table(rowData(dt_exp)$gene_biotype)
+```
+
+
+## Epigenetics analysis
+
+### DNA Methylation
+
+```{r}
+exp_id <- "WGB_DNA_Methylation"
+dt_exp <- multi_omics[[exp_id]]
+
+dt_exp_raw <- multi_omics_raw[[exp_id]]
+dt_exp_raw <- dt_exp_raw[,dt_exp_raw$group != "HFE"]
+
+svg("../../outputs/Paper_Figures_GFCV/figure_3_a.svg")
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp), 
+           stratificationVar = "group", 
+           clustering_method = "complete", plot_name = "DNA Methylation",
+           clustering_distance_rows = "euclidean", 
+           show_colnames = FALSE)
+dev.off()
+
+png("../../outputs/Paper_Figures_GFCV/figure_3_a.png")
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp), 
+           stratificationVar = "group", 
+           clustering_method = "complete", plot_name = "DNA Methylation",
+           clustering_distance_rows = "euclidean", 
+           show_colnames = FALSE)
+dev.off()
+
+
+png("../../outputs/Paper_Figures_GFCV/figure_3_c.png")
+heatMapFun(dt_list =  assay(dt_exp_raw), metadata = colData(dt_exp), 
+           stratificationVar = "group", 
+           clustering_method = "complete", plot_name = "DNA Methylation",
+           clustering_distance_rows = "euclidean", 
+           show_colnames = FALSE)
+dev.off()
+
+p1 <- data_pca(dt_list = assay(dt_exp), metadata = colData(dt_exp),  
+        stratificationVar = "group", plot_name = "DNA Methylation PCA", 
+        color_vect = group_color_dict) +  
+        theme(legend.title = element_blank(), 
+              legend.position = "bottom")
+p1
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_3_b.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_3_b.png", plot = p1)
+
+```
+
+```{r}
+p_val_dt <- rowData(dt_exp)[,grepl("adj.p.value",
+                                colnames(rowData(dt_exp)))]
+# p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+
+fc_dt <- rowData(dt_exp)[,grepl("FC",
+                                colnames(rowData(dt_exp)))]
+# fc_dt <- fc_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(fc_dt))]
+
+p_val_sum <- lapply(p_val_dt, function(x){
+    sum(x <= 0.05)
+})
+
+fc_dir <- lapply(seq_along(fc_dt), function(x_id){
+    sig_vars <- fc_dt[[x_id]][p_val_dt[[x_id]] <= 0.05]
+    fc_dir <- ifelse(sig_vars <= 0, "Down-regulated", "Up-regulated")
+    table(fc_dir)
+})
+names(fc_dir) <- names(fc_dt)
+fc_dir
+
+
+summary_fc <- lapply(seq_along(fc_dt), function(x_id){
+    sig_vars <- fc_dt[[x_id]][p_val_dt[[x_id]] <= 0.05]
+    summary(abs(sig_vars))
+})
+names(summary_fc) <- names(fc_dt)
+
+# summary_fc
+
+comp_dt <- lapply(seq_along(fc_dt), function(x_id){
+    sig_vars <- fc_dt[[x_id]][p_val_dt[[x_id]] <= 0.05]
+    summary(sig_vars)
+    data.frame("fc" = sig_vars, "comparison" = names(fc_dt)[[x_id]])
+})
+comp_dt <- do.call(rbind, comp_dt)
+ggplot(comp_dt) + geom_histogram(aes(x = abs(fc), fill = comparison), bins = 60) +
+    theme_minimal()
+
+tapply(abs(comp_dt$fc), INDEX = comp_dt$comparison, summary)
+```
+
+
+
+```{r, height = 12, width = 6}
+plot_dt <- assay(dt_exp)
+
+plot_dt <- t(apply(plot_dt, 1, function(x){
+    tapply(x, INDEX = droplevels(dt_exp$group), FUN = mean)}))
+plot_dt <- reshape2::melt(plot_dt)
+# plot_dt$group <- colData(wgb_dt)[plot_dt$variable, "group"]
+library(ggplot2)
+
+# pdf(paste0(output_dir, "mean_zscore_rna_seq_expression.pdf"))
+
+p1 <- ggplot(plot_dt) + geom_histogram(aes(x = value, fill = Var2)) + 
+        theme_minimal() + xlab("Mean DMR group methylation (vst Z score)") + 
+        ylab(NULL) + theme(legend.position = "none") + 
+        facet_grid(vars(Var2)) + scale_fill_manual(values = group_color_dict) + 
+        theme(axis.title.x = element_text(size = 16),
+              strip.text.y = element_text(size = 16))
+p1
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_3_c.svg", plot = p1,
+        fix_text_size = FALSE, width = 6)
+
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_3_c.png", plot = p1, width = 6)
+```
+
+
+```{r}
+group_sds_f <- lapply(levels(droplevels(dt_exp_raw$group)), function(x){
+    group_dt <- assay(dt_exp_raw)[,dt_exp_raw$group == x]
+    data.frame("sd" = rowSds(as.matrix(assay(group_dt))), "group" = x)
+})
+group_sds_f <- do.call(rbind, group_sds_f)
+
+ggplot(group_sds_f) + geom_density(aes(x = sd, fill = group)) + theme_minimal()
+ggplot(group_sds_f) + geom_boxplot(aes(x = group, y = log(sd)))
+
+kruskal.test(formula = sd ~ group, data = group_sds_f)
+DescTools::ConoverTest(x = group_sds_f$sd, g = group_sds_f$group, 
+                        method = "fdr", alternative = "two.sided")
+```
+
+
+
+
+### Histone Modifications
+
+```{r}
+exp_id <- "Histone_Modifications_Proteomics"
+dt_exp <- multi_omics[[exp_id]]
+
+dt_exp_raw <- multi_omics_raw[[exp_id]]
+assayNames(dt_exp_raw) <- "dt1"
+
+dt_exp_raw <- dt_exp_raw[,dt_exp_raw$group != "HFE"]
+
+
+unique_res <- unique(rowData(dt_exp)$Histone_Residues)
+rownames(rowData(dt_exp))
+# dt_exp_raw <- multi_omics_raw[[exp_id]]
+melted_dt <- reshape2::melt(data = as.matrix(assay(dt_exp_raw)))
+melted_dt$Histone_Residues <- rowData(dt_exp_raw)[melted_dt$Var1,]$Histone_Residues_K
+
+melted_dt$group <- colData(dt_exp_raw)[melted_dt$Var2,]$group
+
+
+sample_order <- rownames(colData(dt_exp_raw))[order(colData(dt_exp_raw)$group)]
+
+levels(melted_dt$Var2) <- sample_order
+```
+
+
+```{r}
+p_val_dt <- rowData(dt_exp_raw)[,grepl("adj.p.value",
+                                colnames(rowData(dt_exp_raw)))]
+# p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+
+sig_mods <- lapply(p_val_dt, function(x){
+    rownames(p_val_dt)[x <= 0.05]
+})
+
+library(VennDiagram)
+# venn.diagram(x = sig_mods, filename = "test.diagram.png")
+ggVennDiagram::ggVennDiagram(x = sig_mods) + scale_x_continuous(expand = expansion(mult = .2)) +
+    scale_fill_gradient(low = "#F4FAFE", high = "#4981BF")
+ 
+fc_dt <- rowData(dt_exp_raw)[,grepl("FC",
+                                colnames(rowData(dt_exp_raw)))]
+# fc_dt <- fc_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(fc_dt))]
+
+lapply(p_val_dt, function(x){sum(x <= 0.05)})
+
+fc_dir <- lapply(seq_along(fc_dt), function(x_id){
+    sig_vars <- fc_dt[[x_id]][p_val_dt[[x_id]] <= 0.05]
+    fc_dir <- ifelse(sig_vars <= 0, "Down-regulated", "Up-regulated")
+    table(fc_dir)
+})
+names(fc_dir) <- names(fc_dt)
+fc_dir
+
+
+```
+
+```{r}
+# plot_dt <- data.frame("Histone_Lysine" = rowData(dt_exp_raw)$Histone_Residues_K,
+#            "Any_Significant" = ifelse(rownames(rowData(dt_exp_raw)) %in% rownames(dt_exp), "Any Significant", "Unchanged"))
+# 
+# p1 <- ggplot(plot_dt) + geom_bar(aes(x = Histone_Lysine, fill = Any_Significant), 
+#                                  width = 0.6, position = "fill") + 
+#     scale_fill_brewer(palette = "Set2") + theme_minimal() + 
+#     theme(legend.title = element_blank()) + ylab("Frequency") + xlab(NULL) + 
+#     annotate(geom = "text", x = unique(plot_dt$Histone_Lysine), y= 1.05, label = tapply(plot_dt$Any_Significant, plot_dt$Histone_Lysine, length))
+# p1
+# 
+# ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_4_c.svg", plot = p1,
+#         fix_text_size = FALSE)
+# ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_4_c.png", plot = p1)
+```
+
+
+```{r}
+# t_his <- table(rowData(dt_exp_raw)$Histone_Residues_K, rownames(dt_exp_raw) %in% rownames(dt_exp))
+# 
+# chi_t_his <- chisq.test(t_his)
+# chi_t_his
+# chi_t_his$observed
+# chi_t_his$expected
+
+```
+
+```{r}
+dt_exp_raw_scaled <- t(scale(t(assay(dt_exp_raw))))
+
+sds_list <- lapply(levels(droplevels(dt_exp_raw$group)), function(x){
+    data.frame("SD" = matrixStats::rowSds(as.matrix(assay(dt_exp_raw)[dt_exp_raw$group == x,])), 
+                "group" = x)
+})
+sds_list <- do.call(rbind, sds_list)
+ggplot(sds_list) + geom_boxplot(aes(x = group, y = SD))
+DescTools::ConoverTest(x = sds_list$SD, g = sds_list$group)
+```
+
+
+```{r}
+svg("../../outputs/Paper_Figures_GFCV/figure_4_a.svg")
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp), 
+           stratificationVar = "group", 
+           clustering_method = "average", 
+           clustering_distance_rows = "euclidean", 
+           show_colnames = TRUE)
+dev.off()
+table(rowData(dt_exp)$Histone_Residues_K)
+
+png("../../outputs/Paper_Figures_GFCV/figure_4_a.png")
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp), 
+           stratificationVar = "group", 
+           clustering_method = "average", 
+           clustering_distance_rows = "euclidean", 
+           show_colnames = FALSE)
+dev.off()
+table(rowData(dt_exp)$Histone_Residues_K)
+
+p1 <- data_pca(dt_list = assay(dt_exp), metadata = colData(dt_exp),  
+        stratificationVar = "group", plot_name = "Histone Modifications Proteomics", 
+        color_vect = group_color_dict) + 
+        theme(legend.title = element_blank(), 
+                legend.position = "bottom")
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_4_b.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_4_b.png", plot = p1)
+
+```
+
+```{r}
+lapply(unique(melted_dt$Histone_Residues), function(histone_id){
+    plot_dt <- melted_dt[melted_dt$Histone_Residues == histone_id,]
+    ggplot(plot_dt) + 
+        geom_col(aes(x = Var2, y = value, fill = Var1)) + 
+        facet_grid(rows = vars(Histone_Residues)) +
+        theme(axis.text.x = element_text(angle = 90))    
+})
+```
+
+## Explaining gene expression 
+
+```{r}
+rna_seq_all <- multi_omics_full[["RNA_Sequencing"]]
+assayNames(rna_seq_all) <- "dt1"
+
+histone_all <- multi_omics_full[["Histone_Modifications_Proteomics"]]
+assayNames(histone_all) <- "dt1"
+
+rna_seq_dt <- multi_omics[["RNA_Sequencing"]]
+assayNames(rna_seq_dt) <- "dt1"
+
+dna_met_dt <- multi_omics[["WGB_DNA_Methylation"]]
+assayNames(dna_met_dt) <- "dt1"
+
+histone_dt <- multi_omics[["Histone_Modifications_Proteomics"]]
+assayNames(histone_dt) <- "dt1"
+
+corr_output_name <- "gene_tf_histone_analysis"
+corr_output_dir <- paste0(params$output_dir, corr_output_name, "/")
+
+corr_methods <- c("pearson", "spearman")
+
+rowData(dna_met_dt)$ensemblId <- mapIds(x = org.Mm.eg.db, 
+                                        keys = rowData(dna_met_dt)$geneId,
+                                        column = "ENSEMBL", keytype = "ENTREZID")
+
+if(!dir.exists(corr_output_dir)){dir.create(corr_output_dir)}
+```
+
+```{r}
+simplified_DMR_annotation <- sapply(rowData(dna_met_dt)$annotation, function(dmr_an){
+            if(grepl("Promoter", dmr_an)){return("Promoter")
+            } else if(grepl("Intron", dmr_an)){return("Intron")
+            } else if(grepl("Exon", dmr_an)){return("Exon")
+            } else if(grepl("Downstream", dmr_an)){return("Downstream")
+            } else if(grepl("Distal Intergenic", dmr_an)){return("Distal Intergenic")
+            } else if(grepl("Upstream", dmr_an)){return("Upstream")
+            } else if(grepl("3' UTR", dmr_an)){return("3' UTR")
+            } else if(grepl("5' UTR", dmr_an)){return("5' UTR")
+            } else{"Other"}
+        })
+names(simplified_DMR_annotation) <- rownames(dna_met_dt)
+
+RNA_chromosomes <- rowData(rna_seq_dt)$chromosome_name
+names(RNA_chromosomes) <- rownames(rna_seq_dt)
+
+DMR_chromosomes <- as.character(rowData(dna_met_dt)$geneChr)
+names(DMR_chromosomes) <- rownames(dna_met_dt)
+
+
+
+DMR_ensembl <- rowData(dna_met_dt)$ensemblId
+names(DMR_ensembl) <- rownames(dna_met_dt)
+```
+
+```{r}
+annotation_dt <- rowData(dna_met_dt)$annotation
+annotation_regions <- sapply(annotation_dt, function(dmr_an){
+    if(grepl("Promoter", dmr_an)){return("Promoter")
+    } else if(grepl("Intron", dmr_an)){return("Intron")
+    } else if(grepl("Exon", dmr_an)){return("Exon")
+    } else if(grepl("Downstream", dmr_an)){return("Downstream")
+    } else if(grepl("Distal Intergenic", dmr_an)){return("Distal Intergenic")
+    } else if(grepl("Upstream", dmr_an)){return("Upstream")
+    } else if(grepl("3' UTR", dmr_an)){return("3' UTR")
+    } else if(grepl("5' UTR", dmr_an)){return("5' UTR")
+    } else{"Other"}
+})
+table(annotation_regions)
+
+
+overlap_1 <- list("DMR IDs" = rowData(dna_met_dt)$geneId, 
+                "All Gene IDs" = rowData(rna_seq_all)$entrezID[!is.na(rowData(rna_seq_all)$entrezID)])
+
+overlap_2 <- list("DMR IDs" = rowData(dna_met_dt)$geneId, 
+                "Gene IDs" = rowData(rna_seq_dt)$entrezID[!is.na(rowData(rna_seq_dt)$entrezID)])
+
+ggVennDiagram::ggVennDiagram(overlap_1) + scale_x_continuous(expand = expansion(mult = .2)) +
+    scale_fill_gradient(low = "#F4FAFE", high = "#4981BF") 
+ggVennDiagram::ggVennDiagram(overlap_2, ) + 
+    scale_x_continuous(expand = expansion(mult = .4)) +
+    scale_fill_gradient(low = "#F4FAFE", high = "#4981BF") 
+library(RColorBrewer)
+myCol <- brewer.pal(2, "Set1")[1:2]
+venn.diagram(x = overlap_2, filename = "../../outputs/Paper_Figures_GFCV/figure_5_a.png", 
+             height = 3200,
+             width = 3200, disable.logging = TRUE,
+             cex = 0.6,
+            fontface = "bold",
+            fontfamily = "arial",
+            
+            lwd = 2,
+            lty = 'blank',
+            fill = myCol,
+            print.mode=c("raw","percent"),
+            cat.cex = 0.6,
+            cat.fontface = "bold",
+            cat.default.pos = "outer",
+            cat.fontfamily = "arial")
+
+print("Overlapping geneID between DMRs and changing gene expression")
+
+print(paste0("With all genes: ", 
+             length(Reduce(f = intersect, overlap_1))))
+print(paste0("With significant genes: ", 
+            length(Reduce(f = intersect, overlap_2))))
+
+
+
+rowData(dna_met_dt)$annotation
+
+
+colnames(rowData(dna_met_dt))
+rowData(dna_met_dt)
+```
+
+```{r}
+length(intersect(rowData(dna_met_dt)$geneId, rowData(rna_seq_dt)$entrezID))
+
+dmr_other <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_005/WGB_DNA_Methylation_exp_lima.rds")
+
+length(intersect(rowData(dmr_other)$geneId, rowData(rna_seq_dt)$entrezID))/nrow((rna_seq_dt))
+
+```
+
+### Reg regions - Genes Correlations
+
+```{r}
+reg_regions_dt <- readRDS("../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements_GFCV_MA.rds")
+contrasts_results <- rowData(reg_regions_dt)
+
+p_val_mat <- contrasts_results[,grep("adj.p.value", colnames(contrasts_results))]
+p_val_mat <- as.matrix(p_val_mat[,!grepl("Group", colnames(p_val_mat))])
+
+keep_dmrs <- rowSums(!is.na(p_val_mat) & p_val_mat <= 0.05) != 0
+
+reg_regions_dt_filt <- reg_regions_dt[keep_dmrs,]
+
+gfm_cvm_reg_regions <- reg_regions_dt[!is.na(rowData(reg_regions_dt)$`GFM-CVM.adj.p.value`) &
+                                        (rowData(reg_regions_dt)$`GFM-CVM.adj.p.value` <= 0.05),]
+
+gfm_cvm_reg_regions
+```
+
+```{r}
+corr_vect <- c("pearson", "spearman")
+
+list_overlaps <- lapply(rownames(rna_seq_dt), function(gene_id){
+    gene_rd <- rowData(rna_seq_dt[gene_id,])
+    
+    start_gene <- as.numeric(gene_rd$start_position) - 1000000
+    end_gene <- as.numeric(gene_rd$end_position) + 1000000
+    
+    if(!is.na(start_gene)){
+        chr_id <- gene_rd$chromosome_id
+        chr_dmrs_id <- as.character(seqnames(rowRanges(reg_regions_dt_filt)))
+        
+        gene_gr <- GRanges(seqnames = chr_id, ranges = IRanges(start = start_gene, 
+                                                               end = end_gene))
+        
+        chr_dmrs <- reg_regions_dt_filt[chr_dmrs_id == chr_id,]
+    
+        dmr_overlap <- findOverlaps(query = gene_gr, rowRanges(chr_dmrs), type = "any")
+        chr_dmrs[dmr_overlap@to,]    
+    } else{
+        return(reg_regions_dt_filt[rowData(reg_regions_dt_filt)$ensemblId %in%
+                                         gene_id,])    
+    }
+})
+names(list_overlaps) <- rownames(rna_seq_dt)
+
+intersect_samples <- intersect(colnames(rna_seq_dt),
+                               colnames(reg_regions_dt_filt))
+
+assayNames(rna_seq_dt) <- "dt1"
+corr_vect <- c("pearson", "spearman")
+
+corr_dt_list_reg_regions_2 <- lapply(corr_vect, function(corr_name){
+    
+    list_prom <- lapply(rownames(rna_seq_dt), function(gene_id){
+        rna_seq_gene <- rna_seq_dt[gene_id,]
+        
+        own_dmrs <- list_overlaps[[gene_id]]
+        # entrez_id <- rownames(rna_seq_gene)
+        # if(is.na(entrez_id)){return(NULL)}
+        
+        if(!nrow(own_dmrs)){return(NULL)}
+        
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene[,intersect_samples], 
+                                            experiment2 = own_dmrs[,intersect_samples],
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE, 
+                                            verbose = FALSE)
+    })
+    do.call(rbind, list_prom)
+})
+
+corr_dt_list_reg_regions_2 <- lapply(corr_dt_list_reg_regions_2, function(x){
+    x$adj.p.value <- p.adjust(x$pval, "fdr")
+    x
+})
+names(corr_dt_list_reg_regions_2) <- corr_vect
+
+saveRDS(corr_dt_list_reg_regions_2, "../../outputs/Multi_Omics_Analysis/test_reg_regions_1MB_cors.rds")
+
+
+reg_regions_gfcv <- list("Full_dt" = reg_regions_dt_filt,
+                         "GFCV_sig" = gfm_cvm_reg_regions,
+                         "Correlations_1MB" = corr_dt_list_reg_regions_2)
+
+saveRDS(reg_regions_gfcv, "../../outputs/Multi_Omics_Analysis/test_reg_regions_gfcv.rds")
+```
+
+
+### Correlations Genes-Associated DMRS
+
+```{r}
+rna_seq_dt_found <- rna_seq_dt[rownames(rna_seq_dt) %in%
+                                rowData(dna_met_dt)$ensemblId,]
+rna_seq_dt_found
+
+overlap_samples <- intersect(colnames(rna_seq_dt), colnames(dna_met_dt))
+overlap_samples
+
+gene_dmr_cors_list <- lapply(corr_methods, function(corr_name){
+    corr_dt <- lapply(rownames(rna_seq_dt_found), function(x){
+        rna_seq_gene <- rna_seq_dt_found[x, overlap_samples]
+        dna_met_dmr <- dna_met_dt[!is.na(rowData(dna_met_dt)$ensemblId) & 
+                                    rowData(dna_met_dt)$ensemblId %in% x, overlap_samples]
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene, 
+                                            experiment2 = dna_met_dmr,
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE)
+
+    })
+    corr_dt <- do.call(rbind, corr_dt)
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt
+})
+names(gene_dmr_cors_list) <- corr_methods
+
+saveRDS(gene_dmr_cors_list, paste0(corr_output_dir, "sig_genes_own_dmr_corr.rds"))
+```
+
+
+```{r}
+gene_dmr_cors_list <- readRDS(paste0(corr_output_dir, "sig_genes_own_dmr_corr.rds"))
+
+colnames(rowData(dna_met_dt))
+
+gene_dmr_cors_list <- lapply(names(gene_dmr_cors_list), function(cor_id){
+    gene_dmr_cors <- gene_dmr_cors_list[[cor_id]]
+    gene_dmr_cors <- gene_dmr_cors[gene_dmr_cors$p_adj <= 0.05,]
+    gene_dmr_cors$isNeg <- ifelse(gene_dmr_cors$cor <= 0, "Negative", "Positive")
+    gene_dmr_cors$type <- cor_id
+    gene_dmr_cors$DMR_annotation <- simplified_DMR_annotation[as.character(gene_dmr_cors$Var2)]
+    gene_dmr_cors
+})
+names(gene_dmr_cors_list) <- corr_methods
+```
+
+
+```{r}
+lapply(gene_dmr_cors_list, function(gene_dmr_cors){
+    table(gene_dmr_cors$isNeg)
+})
+lapply(gene_dmr_cors_list, function(gene_dmr_cors){
+    chisq.test(table(gene_dmr_cors$isNeg))
+})
+```
+
+
+```{r}
+plot_dt <- do.call(rbind, gene_dmr_cors_list)
+p1 <- ggplot(plot_dt)+ 
+    geom_bar(aes(x = DMR_annotation, 
+                  fill = isNeg), position = "dodge") + 
+    theme_minimal() + scale_fill_brewer(palette = "Set2") +
+    theme(axis.text.x = element_text(angle = 45), 
+          legend.title = element_blank()) +
+    xlab("DMR Annotation") + ylab("Count") + facet_grid(cols = vars(type)) 
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a.svg", plot = p1,
+        fix_text_size = FALSE)
+
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a.png", plot = p1)
+
+p1 <- ggplot(plot_dt)+ 
+    geom_bar(aes(x = DMR_annotation, 
+                  fill = isNeg), width = 0.6) + 
+    theme_minimal() + scale_fill_brewer(palette = "Set2") +
+    theme(axis.text.x = element_text(angle = 45), 
+          legend.title = element_blank()) +
+    xlab("DMR Annotation") + ylab("Count") + facet_grid(cols = vars(type))
+p1
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_1.svg", plot = p1,
+        fix_text_size = FALSE)
+
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_1.png", plot = p1)
+
+
+p1 <- ggplot(plot_dt)+ 
+    geom_bar(aes(x = DMR_annotation, 
+                  fill = isNeg), width = 0.6, position = "fill") + 
+    theme_minimal() + scale_fill_brewer(palette = "Set2") +
+    theme(axis.text.x = element_text(angle = 45), 
+          legend.title = element_blank()) +
+    xlab("DMR Annotation") + ylab("Count") + facet_grid(cols = vars(type))
+p1
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_2.svg", plot = p1,
+        fix_text_size = FALSE)
+
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_2.png", plot = p1)
+
+
+```
+
+
+```{r}
+lapply(names(gene_dmr_cors_list), function(gene_dmr_cors_id){
+    gene_dmr_cors <- gene_dmr_cors_list[[gene_dmr_cors_id]]
+    ggplot(gene_dmr_cors) + geom_boxplot(aes(x = isNeg, fill = isNeg)) + 
+        theme_minimal() + ggtitle(paste0(gene_dmr_cors_id)) + 
+        xlab("Type of correlation") + ylab("Absolute correlation") + 
+        theme(legend.position = "none") + 
+        scale_fill_manual(values = list("Positive" = "lightcoral", 
+                                        "Negative" = "lightblue"))
+})
+
+lapply(names(gene_dmr_cors_list), function(gene_dmr_cors_id){
+    gene_dmr_cors <- gene_dmr_cors_list[[gene_dmr_cors_id]]
+    ggplot(gene_dmr_cors) + geom_boxplot(aes(x = isNeg, y = abs(cor), fill = isNeg)) + 
+        theme_minimal() + ggtitle(paste0(gene_dmr_cors_id)) + 
+        xlab("Type of correlation") + ylab("Absolute correlation") + 
+        theme(legend.position = "none") + 
+        scale_fill_manual(values = list("Positive" = "lightcoral", 
+                                        "Negative" = "lightblue"))
+})
+
+lapply(gene_dmr_cors_list, function(gene_dmr_cors){
+    gene_dmr_cors$isNeg <- ifelse(gene_dmr_cors$cor <= 0, "Negative", "Positive")
+    wilcox.test(abs(gene_dmr_cors$cor) ~ gene_dmr_cors$isNeg) 
+})
+  
+lapply(gene_dmr_cors_list, function(gene_dmr_cors){
+    gene_dmr_cors$isNeg <- ifelse(gene_dmr_cors$cor <= 0, "Negative", "Positive")
+    tapply(abs(gene_dmr_cors$cor), gene_dmr_cors$isNeg, summary) 
+})  
+
+dmr_associated_list <- lapply(gene_dmr_cors_list, function(gene_dmr_cors){
+    dmr_associated <- tapply(gene_dmr_cors$Var2, 
+                        INDEX = gene_dmr_cors$Var1, 
+                        function(x){x})
+    dmr_associated <- dmr_associated[lengths(dmr_associated) != 0]
+    dmr_associated
+})
+
+dmr_regulated <- union(names(dmr_associated_list$pearson),
+                        names(dmr_associated_list$spearman))
+
+table(rowData(rna_seq_all)[dmr_regulated,]$`HFD-CNT.log2FC` < 0)
+
+reg_genes <- rowData(omic_dt[["RNA_Sequencing"]])[dmr_regulated,]
+```
+
+
+```{r}
+
+gfm_cvm_exp <- lapply(names(multi_omics_full), function(multi_omics_names){
+    multi_omics_exp <- experiments(multi_omics_full)[[multi_omics_names]]
+    p_val_dt <- rowData(multi_omics_exp)[,grepl("adj.p.value", colnames(rowData(multi_omics_exp)))]
+    p_val_dt <- p_val_dt[,grepl("GFM_CVM", colnames(p_val_dt)), drop = FALSE]
+    multi_omics_exp <- multi_omics_exp[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+    
+    # if(nrow(multi_omics_exp) == 0){return(NA)}
+    
+    multi_omics_exp
+})
+names(gfm_cvm_exp) <- names(multi_omics_full)
+
+gfcv_keep_vars <- list("DMRregulated" = dmr_regulated,
+                        "GFM-CVM" = gfm_cvm_exp,
+                       "Full_dt" = multi_omics,
+                       "Correlations" = gene_dmr_cors_list)
+
+saveRDS(gfcv_keep_vars, 
+        "../../outputs/Multi_Omics_Analysis_GFCV/gfcv_interesting_vars.rds")
+```
+
+
+```{r}
+# fc_dt_g$total_gene_fc <- abs(fc_dt_g$GF_CV.log2FC) 
+
+for(corr_id in corr_methods){
+    
+    corr_column <- paste0("DMR_Reg.", corr_id)
+    
+    
+    fc_dt_g[[corr_column]] <- rownames(fc_dt_g) %in% 
+        unique(gene_dmr_cors_list[[corr_id]]$Var1)    
+    
+    
+    print(lapply(fc_dt_g[1:4], function(x){
+        wilcox.test(abs(x) ~ fc_dt_g[[corr_column]])
+    }))
+    
+
+    print(lapply(fc_dt_g[1:4], function(x){
+        tapply(abs(x), fc_dt_g[[corr_column]], FUN = summary)
+    }))
+    
+    bp_dt <- reshape2::melt(as.data.frame(fc_dt_g))
+    print(ggplot(bp_dt) + geom_boxplot(aes(x =variable , y = abs(value), 
+                                    fill = .data[[corr_column]])) +
+        theme_minimal())
+    
+    
+    print(wilcox.test(abs(bp_dt$value) ~ bp_dt[[corr_column]]))
+    print(ggplot(bp_dt) + geom_boxplot(aes(x = .data[[corr_column]], y = abs(value),
+                                    fill = .data[[corr_column]])) +
+        theme_minimal() + ylab("Absolute log2 fold-change"))
+
+}
+
+
+lapply(gene_dmr_cors_list, function(x){
+    length(unique(x$Var1))
+})
+
+lapply(gene_dmr_cors_list, function(x){
+    length(unique(x$Var1))/length(Reduce(f = intersect, 
+                                        overlap_2))
+})
+lapply(gene_dmr_cors_list, function(x){
+    length(unique(x$Var1))/nrow(rna_seq_dt)
+})
+
+overlap_gene <- lapply(gene_dmr_cors_list, function(x){
+    unique(x$Var1)
+})
+
+ggVennDiagram::ggVennDiagram(overlap_gene) + 
+    scale_x_continuous(expand = expansion(mult = .4)) +
+    scale_fill_gradient(low = "#F4FAFE", high = "#4981BF")
+
+dmr_associated <- lapply(gene_dmr_cors_list, function(x){
+    dmr_associated <- tapply(x$Var2, 
+                            INDEX = x$Var1, 
+                            function(y){y})
+    dmr_associated[lengths(dmr_associated) != 0]
+})
+```
+
+#### Gene Correlations
+
+```{r}
+enrich_dir <- paste0(params$output_dir, "gene_dmr_analysis/")
+if(!dir.exists(enrich_dir)){dir.create(enrich_dir)}
+enrich_file <- paste0(enrich_dir, "correlated_gene_enrich_all_universe.html")
+rna_omic_id <- "RNA_Sequencing"
+enrich_exp_list <- lapply(names(gene_dmr_cors_list), function(score_id){
+    score_dt <- gene_dmr_cors_list[[score_id]]
+    rowData(experiments(multi_omics)[[rna_omic_id]][as.character(unique(score_dt$Var1)),])
+})
+names(enrich_exp_list) <- names(gene_dmr_cors_list)
+enrich_exp_list$combined <- rowData(experiments(multi_omics)[[rna_omic_id]][union(gene_dmr_cors_list$pearson$Var1,                                                  gene_dmr_cors_list$spearman$Var1),])
+xfun::Rscript_call(rmarkdown::render,
+    args = list(
+        input = "../Multi_Omics_Analysis/RNA_Sequencing_Enrichments.Rmd",
+        output_file = enrich_file,
+        params = list(
+            exp_list = enrich_exp_list,
+            output_dir = enrich_dir,
+            ora_filter = NULL,
+            gsea_cols_list = NULL,
+            gsea = FALSE,
+            custom_gene_set = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",],
+            custom_descriptions = kegg_db_list$term2name,
+            custom_name = "custom",
+            universe = NULL,
+            order_column = "HFD-CNT.adj.p.value",
+            results_name = "correlated_gene_enrich",
+            legend_name = "Fold Change (log2)",
+            random_seed = 1234
+        )
+    )
+)
+
+enrich_file <- paste0(enrich_dir, "correlated_gene_enrich_sig_universe.html")
+xfun::Rscript_call(rmarkdown::render,
+    args = list(
+        input = "../Multi_Omics_Analysis/RNA_Sequencing_Enrichments.Rmd",
+        output_file = enrich_file,
+        params = list(
+            exp_list = enrich_exp_list,
+            output_dir = enrich_dir,
+            ora_filter = NULL,
+            gsea_cols_list = NULL,
+            gsea = FALSE,
+            custom_gene_set = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",],
+            custom_descriptions = kegg_db_list$term2name,
+            custom_name = "custom",
+            universe = rownames(rna_seq_dt),
+            order_column = "HFD-CNT.adj.p.value",
+            results_name = "correlated_gene_enrich_detected_universe",
+            legend_name = "Fold Change (log2)",
+            random_seed = 1234
+        )
+    )
+)
+
+```
+
+```{r}
+enrich_res_dmrreg <- readRDS(paste0(enrich_dir, "correlated_gene_enrich_rna_seq_enrich_results.rds"))
+p1 <- dotplot(enrich_res_dmrreg$ORA$combined$custom_ora) + theme_minimal() + 
+    theme(axis.text.y = element_text(size = 16))
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_12_d.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_12_d.png", plot = p1)
+```
+
+
+### Correlations All Gene-Associated DMR correlations
+
+```{r}
+rna_seq_dt_found <- rna_seq_all[rownames(rna_seq_all) %in%
+                                    rowData(dna_met_dt)$ensemblId,]
+rna_seq_dt_found
+
+overlap_samples <- intersect(colnames(rna_seq_all), colnames(dna_met_dt))
+overlap_samples
+
+all_gene_dmr_cors_list <- lapply(corr_methods, function(corr_name){
+    corr_dt <- lapply(rownames(rna_seq_dt_found), function(x){
+        rna_seq_gene <- rna_seq_dt_found[x, overlap_samples]
+        dna_met_dmr <- dna_met_dt[!is.na(rowData(dna_met_dt)$ensemblId) & 
+                                    rowData(dna_met_dt)$ensemblId %in% x, overlap_samples]
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene, 
+                                            experiment2 = dna_met_dmr,
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE)
+
+    })
+    corr_dt <- do.call(rbind, corr_dt)
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt
+})
+names(all_gene_dmr_cors_list) <- corr_methods
+
+saveRDS(all_gene_dmr_cors_list, paste0(corr_output_dir, "all_genes_own_dmr_corr.rds"))
+```
+
+```{r}
+all_gene_dmr_cors_list <- readRDS(paste0(corr_output_dir, "all_genes_own_dmr_corr.rds"))
+dmr_associated <- list()
+
+all_gene_dmr_cors_list <- lapply(all_gene_dmr_cors_list, function(x){
+    x[x$p_adj <= 0.05,]
+})
+
+lapply(all_gene_dmr_cors_list, function(x){
+    sum(unique(x$Var1) %in% rownames(rna_seq_dt))/length(unique(x$Var1))
+})
+
+
+lapply(all_gene_dmr_cors_list, function(x){
+    length(unique(x$Var1))
+})
+
+lapply(all_gene_dmr_cors_list, function(x){
+    length(unique(x$Var1))/length(Reduce(f = intersect, 
+                                        overlap_1))
+})
+
+lapply(all_gene_dmr_cors_list, function(x){
+    length(unique(x$Var1))/nrow(rna_seq_all)
+})
+
+overlap_gene <- lapply(all_gene_dmr_cors_list, function(x){
+    unique(x$Var1)
+})
+
+ggVennDiagram::ggVennDiagram(overlap_gene) + 
+    scale_x_continuous(expand = expansion(mult = .4)) +
+    scale_fill_gradient(low = "#F4FAFE", high = "#4981BF")
+
+dmr_associated_list_all_gene <- lapply(all_gene_dmr_cors_list, function(x){
+    dmr_associated <- tapply(x$Var2, 
+                            INDEX = x$Var1, 
+                            function(y){y})
+    dmr_associated[lengths(dmr_associated) != 0]
+})
+```
+
+### ALL Gene-DMR correlations
+
+```{r}
+overlap_samples <- intersect(colnames(rna_seq_all), 
+                            colnames(dna_met_dt))
+overlap_samples
+
+all_gene_all_dmr_cors_list <- lapply(corr_methods, function(corr_name){
+    corr_dt <- mia::getExperimentCrossCorrelation(x = rna_seq_all[,overlap_samples],
+                                                experiment2 = dna_met_dt[,overlap_samples],
+                                                method = corr_name,
+                                                assay.type1 = "dt1",
+                                                assay.type2 = "dt1",
+                                                test_significance = TRUE)
+
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt
+})
+names(all_gene_all_dmr_cors_list) <- corr_methods
+
+saveRDS(all_gene_all_dmr_cors_list, paste0(corr_output_dir, "all_genes_all_dmr_corr.rds"))
+```
+
+```{r}
+all_gene_all_dmr_cors_list <- readRDS(paste0(corr_output_dir, "all_genes_all_dmr_corr.rds"))
+
+all_gene_all_dmr_cors_list <- lapply(names(all_gene_all_dmr_cors_list), function(corr_id){
+    all_gene_all_dmr_cors <- all_gene_all_dmr_cors_list[[corr_id]]
+    
+    all_gene_all_dmr_cors$type <- corr_id
+    all_gene_all_dmr_cors$isNeg <- ifelse(all_gene_all_dmr_cors$cor < 0,
+                                        "Negative", "Positive")
+    
+    all_gene_all_dmr_cors <- all_gene_all_dmr_cors[all_gene_all_dmr_cors$p_adj <= 0.05,]
+    
+    all_gene_all_dmr_cors$chrom_gene <- RNA_chromosomes[as.character(all_gene_all_dmr_cors$Var1)]
+    all_gene_all_dmr_cors$chrom_dmr <- DMR_chromosomes[as.character(all_gene_all_dmr_cors$Var2)]
+    all_gene_all_dmr_cors$dmr_ensembl <- DMR_ensembl[as.character(all_gene_all_dmr_cors$Var2)]
+    
+    all_gene_all_dmr_cors <- all_gene_all_dmr_cors[!is.na(all_gene_all_dmr_cors$dmr_ensembl),]
+    
+    all_gene_all_dmr_cors$equal_chromosome <- all_gene_all_dmr_cors$chrom_gene == all_gene_all_dmr_cors$chrom_dmr 
+    all_gene_all_dmr_cors$equal_ensembl <- ifelse(all_gene_all_dmr_cors$Var1 == all_gene_all_dmr_cors$dmr_ensembl, 
+                                                "Own DMRs", "Other DMRs")
+    
+    all_gene_all_dmr_cors$DMR_annotation <- simplified_DMR_annotation[as.character(all_gene_all_dmr_cors$Var2)]
+    
+    all_gene_all_dmr_cors
+})
+names(all_gene_all_dmr_cors_list) <- corr_methods
+
+plot_dt2 <- do.call(rbind, all_gene_all_dmr_cors_list)
+```
+
+```{r, fig.height=4, fig.width=10}
+region_t <- table(plot_dt2$DMR_annotation)
+plot_dt2$DMR_annotation <- factor(plot_dt2$DMR_annotation, levels = names(sort(region_t)))
+
+
+p1 <- ggplot(plot_dt2)+ 
+    geom_bar(aes(x = DMR_annotation, fill = isNeg), position = "dodge") + 
+    theme_minimal() + scale_fill_brewer(palette = "Set2") +
+    labs(fill = "Correlation type") + 
+    theme(axis.text.x = element_text(angle = 90), 
+          legend.title = element_blank()) +
+    xlab("DMR Annotation") + ylab("Count") + 
+    facet_grid(paste(type, equal_ensembl) ~., scales = "free")
+p1
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_alt3.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_alt3.png", plot = p1)
+
+
+p1 <- ggplot(plot_dt2)+ 
+    geom_bar(aes(x = DMR_annotation, fill = isNeg)) + 
+    theme_minimal() + scale_fill_brewer(palette = "Set2") +
+    labs(fill = "Correlation type") + 
+    theme(axis.text.x = element_text(angle = 90), 
+          legend.title = element_blank()) +
+    xlab("DMR Annotation") + ylab("Count") + 
+    facet_grid(paste(type, equal_ensembl) ~., scales = "free")
+p1
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_alt4.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_alt4.png", plot = p1)
+
+
+p1 <- ggplot(plot_dt2)+ 
+    geom_bar(aes(y = DMR_annotation, fill = isNeg), position = "fill") + 
+    theme_minimal() + scale_fill_brewer(palette = "Set2") +
+    labs(fill = "Correlation type") + 
+    theme(axis.text.x = element_text(angle = 0), 
+          legend.title = element_blank()) + scale_x_continuous(breaks = c(0,0.5, 1), labels = c("0", "0.5", "1")) + 
+    ylab("DMR Annotation") + xlab("Proportion") +  
+    facet_grid(cols = vars(type, equal_ensembl))
+p1
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_alt5.svg", plot = p1,
+        fix_text_size = FALSE, height=4, width=10)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_alt5.png", plot = p1, 
+        height=4, width=10)
+
+```
+
+```{r}
+lapply(all_gene_all_dmr_cors_list, function(all_gene_all_dmr_cors){
+    all_gene_all_dmr_cors <- all_gene_all_dmr_cors[all_gene_all_dmr_cors$p_adj <= 0.05,]
+    sum(unique(all_gene_all_dmr_cors$Var1) %in%
+            rownames(rna_seq_dt))/length(unique(all_gene_all_dmr_cors$Var1))
+})
+lapply(all_gene_all_dmr_cors_list, function(all_gene_all_dmr_cors){
+    all_gene_all_dmr_cors <- all_gene_all_dmr_cors[all_gene_all_dmr_cors$p_adj <= 0.05,]
+    length(unique(all_gene_all_dmr_cors$Var1))
+})
+
+
+chi_res_list <- lapply(all_gene_all_dmr_cors_list, function(all_gene_all_dmr_cors){
+    all_gene_all_dmr_cors$gene_isSig <- all_gene_all_dmr_cors$Var1 %in%
+        rownames(rna_seq_dt)
+    
+    t1 <- table(all_gene_all_dmr_cors$gene_isSig, 
+                all_gene_all_dmr_cors$p_adj <= 0.05)
+    chisq.test(t1)
+})
+chi_res_list$pearson
+chi_res_list$pearson$observed
+chi_res_list$pearson$expected
+
+chi_res_list$spearman
+chi_res_list$spearman$observed
+chi_res_list$spearman$expected
+
+
+```
+
+
+
+### ALL Gene-DMRseq correlations
+
+```{r}
+library(impute)
+dna_met_dmrseq <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/dmrseq.group.non_smoothed/dna_met_exp_non_smoothed.reduced.group.reduced.rds")
+dna_met_dmrseq <- impute_knn_assay(dna_met_dmrseq)
+dna_met_dmrseq <- scale_assay(dna_met_dmrseq)
+
+assayNames(dna_met_dmrseq) <- "dt1"
+
+dna_met_dmrseq_p_vals <- rowData(dna_met_dmrseq)[grep("adj", colnames( rowData(dna_met_dmrseq)))]
+dna_met_dmrseq_p_vals <- dna_met_dmrseq_p_vals[grep("HFD-CNT|INT-CNT|INT-HFD", colnames(dna_met_dmrseq_p_vals))]
+
+dna_met_dmrseq_sig <- dna_met_dmrseq[apply(as.matrix(dna_met_dmrseq_p_vals), 1, function(x){any(x <= 0.05)}),]
+
+overlap_samples <- intersect(colnames(rna_seq_all), 
+                            colnames(dna_met_dmrseq))
+overlap_samples
+
+all_gene_all_dmrseq_cors_list <- lapply(corr_methods, function(corr_name){
+    corr_dt <- mia::getExperimentCrossCorrelation(x = rna_seq_all[,overlap_samples],
+                                                experiment2 = dna_met_dmrseq[,overlap_samples],
+                                                method = corr_name,
+                                                assay.type1 = "dt1",
+                                                assay.type2 = "dt1",
+                                                test_significance = TRUE)
+
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt
+})
+names(all_gene_all_dmrseq_cors_list) <- corr_methods
+
+saveRDS(all_gene_all_dmrseq_cors_list, paste0(corr_output_dir, "all_genes_all_dmrseq_corr.rds"))
+```
+
+```{r}
+all_gene_all_dmrseq_cors_list <- readRDS(paste0(corr_output_dir, 
+                                                "all_genes_all_dmrseq_corr.rds"))
+
+lapply(all_gene_all_dmrseq_cors_list, function(all_gene_all_dmrseq_cors){
+    all_gene_all_dmrseq_cors <- all_gene_all_dmrseq_cors[all_gene_all_dmrseq_cors$p_adj <= 0.05,]
+    sum(unique(all_gene_all_dmrseq_cors$Var1) %in%
+            rownames(rna_seq_dt))/length(unique(all_gene_all_dmrseq_cors$Var1))
+})
+lapply(all_gene_all_dmrseq_cors_list, function(all_gene_all_dmrseq_cors){
+    all_gene_all_dmrseq_cors <- all_gene_all_dmrseq_cors[all_gene_all_dmrseq_cors$p_adj <= 0.05,]
+    length(unique(all_gene_all_dmrseq_cors$Var1))
+})
+
+
+chi_res_list <- lapply(all_gene_all_dmrseq_cors_list, function(all_gene_all_dmrseq_cors){
+    all_gene_all_dmrseq_cors$both_isSig <- ifelse((all_gene_all_dmrseq_cors$Var1 %in%
+        rownames(rna_seq_dt)) & (all_gene_all_dmrseq_cors$Var2 %in% rownames(dna_met_dmrseq_sig)), "Gene/DMR Sig", "Gene/DMR Not Sig")
+    
+    t1 <- table(all_gene_all_dmrseq_cors$both_isSig, 
+                all_gene_all_dmrseq_cors$p_adj <= 0.05)
+    chisq.test(t1)
+})
+chi_res_list$pearson
+chi_res_list$pearson$observed
+chi_res_list$pearson$expected
+
+chi_res_list$spearman
+chi_res_list$spearman$observed
+chi_res_list$spearman$expected
+
+
+```
+
+```{r}
+chi_res_list2 <- lapply(all_gene_all_dmrseq_cors_list, function(all_gene_all_dmrseq_cors){
+    all_gene_all_dmrseq_cors <- all_gene_all_dmrseq_cors[all_gene_all_dmrseq_cors$p_adj <= 0.05,]
+    
+    t1 <- table(ifelse(all_gene_all_dmrseq_cors$Var1 %in% rownames(rna_seq_dt), "Gene Sig", "Gene not Sig"), 
+                ifelse(all_gene_all_dmrseq_cors$Var2 %in% rownames(dna_met_dmrseq_sig), "DMR Sig", "DMR not Sig"))
+    chisq.test(t1)
+})
+
+chi_res_list2$pearson
+chi_res_list2$pearson$observed
+chi_res_list2$pearson$expected
+
+chi_res_list2$spearman
+chi_res_list2$spearman$observed
+chi_res_list2$spearman$expected
+
+```
+
+### Gene-ownDMRseq correlations
+
+```{r}
+dna_met_ensembl <- mapIds(x = org.Mm.eg.db, keys = rowData(dna_met_dmrseq_sig)$geneId, 
+                        column = "ENSEMBL", keytype = "ENTREZID")
+rowData(dna_met_dmrseq_sig)$ensemblId <- dna_met_ensembl
+
+rna_seq_dt_found <- rna_seq_dt[rownames(rna_seq_dt) %in% rowData(dna_met_dmrseq_sig)$ensemblId,]
+rna_seq_dt_found
+
+overlap_samples <- intersect(colnames(rna_seq_dt), colnames(dna_met_dmrseq_sig))
+overlap_samples
+
+gene_dmrseq_cors_list <- lapply(corr_methods, function(corr_name){
+    corr_dt <- lapply(rownames(rna_seq_dt_found), function(x){
+        rna_seq_gene <- rna_seq_dt_found[x, overlap_samples]
+        dna_met_dmr <- dna_met_dmrseq_sig[!is.na(rowData(dna_met_dmrseq_sig)$ensemblId) & 
+                                            rowData(dna_met_dmrseq_sig)$ensemblId %in% x, overlap_samples]
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene, 
+                                            experiment2 = dna_met_dmr,
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE)
+    })
+    corr_dt <- do.call(rbind, corr_dt)
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt
+})
+names(gene_dmrseq_cors_list) <- corr_methods
+
+saveRDS(gene_dmrseq_cors_list, paste0(corr_output_dir, "sig_genes_own_dmrseq_corr.rds"))
+```
+
+
+        
+### Gene-DMR correlations
+
+```{r}
+overlap_samples <- intersect(colnames(rna_seq_dt), colnames(dna_met_dt))
+overlap_samples
+
+sig_gene_all_dmr_cors_list <- lapply(corr_methods, function(corr_name){
+    corr_dt <- mia::getExperimentCrossCorrelation(x = rna_seq_dt[,overlap_samples],
+                                                experiment2 = dna_met_dt[,overlap_samples],
+                                                method = corr_name,
+                                                assay.type1 = "dt1",
+                                                assay.type2 = "dt1",
+                                                test_significance = TRUE)
+
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt
+})
+names(sig_gene_all_dmr_cors_list) <- corr_methods
+
+saveRDS(sig_gene_all_dmr_cors_list, paste0(corr_output_dir, "sig_genes_dmr_corr.rds"))
+```
+
+
+### Gene-DMR correlations 1MB
+
+```{r}
+overlap_samples <- intersect(colnames(rna_seq_dt), colnames(dna_met_dt))
+overlap_samples
+
+rowData(rna_seq_dt)$chromosome_id <- paste0("chr", rowData(rna_seq_dt)$chromosome_name)
+rna_seq_dt_clean <- rna_seq_dt[!is.na(rowData(rna_seq_dt)$start_position),]
+
+rna_seq_rr <- GenomicRanges::GRanges(seqnames = rowData(rna_seq_dt_clean)$chromosome_id, 
+                                     ranges = IRanges(start = as.numeric(rowData(rna_seq_dt_clean)$start_position) - 1e6, 
+                                                      end = as.numeric(rowData(rna_seq_dt_clean)$start_position) + 1e6, 
+                                                    names = rownames(rna_seq_dt_clean)))
+
+dna_met_dt_1mb <- lapply(rownames(rna_seq_dt_clean), function(gene_id){
+    ov_dt <- findOverlaps(query = rowRanges(dna_met_dt), subject = rna_seq_rr[gene_id,])
+    dna_met_dt[ov_dt@from,]
+})
+names(dna_met_dt_1mb) <- rownames(rna_seq_dt_clean)
+
+sig_gene_1MB_dmr_cors_list <- lapply(corr_methods, function(corr_name){
+    
+    lapply(rownames(rna_seq_dt_clean), function(gene_id){
+        
+        print(gene_id)
+        
+        dna_met_found <- dna_met_dt_1mb[[gene_id]]
+        
+        if(!nrow(dna_met_found)){return(NULL)}
+        
+        corr_dt <- mia::getExperimentCrossCorrelation(x = rna_seq_dt_clean[gene_id, overlap_samples],
+                                                    experiment2 = dna_met_found[,overlap_samples],
+                                                    method = corr_name,
+                                                    assay.type1 = "dt1",
+                                                    assay.type2 = "dt1",
+                                                    test_significance = TRUE)
+
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt
+    })
+})
+names(sig_gene_1MB_dmr_cors_list) <- corr_methods
+
+saveRDS(sig_gene_1MB_dmr_cors_list, paste0(corr_output_dir, "sig_genes_1MB_dmr_corr.rds"))
+```
+
+
+
+```{r}
+dmr_gene_corr_dt <- readRDS("../../outputs/Multi_Omics_Analysis_GFCV/gene_tf_histone_analysis/sig_genes_dmr_corr.rds")
+
+dmr2ensembl <- rowData(multi_omics[["WGB_DNA_Methylation"]])$ensemblId
+names(dmr2ensembl) <- rownames(multi_omics[["WGB_DNA_Methylation"]])
+
+ensembl_2_chr_dmr <- paste0("Chr", rowData(multi_omics[["WGB_DNA_Methylation"]])$geneChr)
+names(ensembl_2_chr_dmr) <- rowData(multi_omics[["WGB_DNA_Methylation"]])$ensemblId
+
+ensembl_2_chr_gene <- paste0("Chr", rowData(multi_omics[["RNA_Sequencing"]])$chromosome_name) 
+names(ensembl_2_chr_gene) <- rownames(multi_omics[["RNA_Sequencing"]])
+ensembl_2_chr <- c(ensembl_2_chr_dmr, ensembl_2_chr_gene)
+
+ensembl_2_chr <- ensembl_2_chr[!duplicated(names(ensembl_2_chr))]
+ensembl_2_chr <- ensembl_2_chr[!ensembl_2_chr %in% c("ChrGL456233.1", "ChrNA")]
+
+# dmr_2_tssdist <- rowData(multi_omics[["WGB_DNA_Methylation"]])$distanceToTSS
+# names(dmr_2_tssdist) <- rownames(rowData(multi_omics[["WGB_DNA_Methylation"]]))
+
+ensembl_2_start <- rowData(multi_omics[["RNA_Sequencing"]])$start_position
+names(ensembl_2_start) <- rownames(multi_omics[["RNA_Sequencing"]])
+
+dmr_2_start <- start(rowRanges(multi_omics[["WGB_DNA_Methylation"]]))
+names(dmr_2_start) <- rownames(multi_omics[["WGB_DNA_Methylation"]])
+
+dmr_2_end <- end(rowRanges(multi_omics[["WGB_DNA_Methylation"]]))
+names(dmr_2_end) <- rownames(multi_omics[["WGB_DNA_Methylation"]])
+
+
+dmr_gene_corr_dt <- lapply(dmr_gene_corr_dt, function(score_dt){
+    
+    score_dt$DMR_ensembl <- dmr2ensembl[as.character(score_dt$Var2)]
+    score_dt$Own_DMR <- !is.na(score_dt$DMR_ensembl) & (score_dt$DMR_ensembl == score_dt$Var1)
+    
+    score_dt$DMR_region <- simplified_DMR_annotation[as.character(score_dt$Var2)]
+    
+    score_dt$Gene_chr <- ensembl_2_chr[as.character(score_dt$Var1)]
+    score_dt$DMR_chr <- ensembl_2_chr[as.character(score_dt$DMR_ensembl)]
+    score_dt$sig_corr <- abs(score_dt$cor) > 0.6 & score_dt$p_adj <= 0.05
+    # score_dt$DMR_tss <- dmr_2_tssdist[as.character(score_dt$Var2)]
+    score_dt$Own_chr <- !is.na(score_dt$Gene_chr) & !is.na(score_dt$DMR_chr) & (score_dt$Gene_chr == score_dt$DMR_chr) 
+    
+    dist_to_start <- abs(as.numeric(ensembl_2_start[as.character(score_dt$Var1)]) - as.numeric(dmr_2_start[as.character(score_dt$Var2)]))
+    dist_to_end <- abs(as.numeric(ensembl_2_start[as.character(score_dt$Var1)]) - as.numeric(dmr_2_end[as.character(score_dt$Var2)]))
+    
+    score_dt$dist_to_tss <- apply(cbind(dist_to_start, dist_to_end), 1, min)
+    score_dt$corr_type <- cut(abs(score_dt$cor), breaks = seq(0, 1, 0.2), 
+                             labels = c("Very Low","Low", "Medium", 
+                                        "High", "Very High"))
+    
+    score_dt
+})
+
+# dmr_gene_corr_dt_filt <- lapply(dmr_gene_corr_dt, function(score_dt){
+#     score_dt[score_dt$p_adj <= 0.05,]    
+# })
+dmr_gene_corr_dt_filt <- lapply(dmr_gene_corr_dt, function(score_dt){
+    score_dt[abs(score_dt$cor) > 0.6 & score_dt$p_adj <= 0.05,]    
+})
+
+dmr_gene_corr_dt_chr <- lapply(dmr_gene_corr_dt, function(score_dt){
+    score_dt[abs(score_dt$cor) > 0.6 & score_dt$p_adj <= 0.05 & score_dt$Own_chr,]
+})
+
+dmr_gene_corr_dt_chr_1MB <- lapply(dmr_gene_corr_dt, function(score_dt){
+    score_dt[abs(score_dt$cor) > 0.6 & score_dt$p_adj <= 0.05 & 
+                 score_dt$Own_chr & score_dt$dist_to_tss < 1e6,]
+})
+
+dmr_gene_corr_dt_filt_08 <- lapply(dmr_gene_corr_dt, function(score_dt){
+    score_dt[abs(score_dt$cor) > 0.8 & score_dt$p_adj <= 0.05,]    
+})
+```
+
+## ##############
+
+
+```{r}
+corr_output_name <- "full_gene_dmr_analysis"
+corr_output_dir <- paste0(params$output_dir, corr_output_name, "/")
+
+if(!dir.exists(corr_output_dir)){dir.create(corr_output_dir)}
+
+network_omics <- list("Pairwise full liver" = matrix(c("RNA_Sequencing",
+                    "WGB_DNA_Methylation"), nrow = 2, ncol = 1))
+```
+
+```{r}
+# network_omics <- list("All Omics" = names(assays(omic_dt)))
+variables_dicts <- lapply(unique(unlist(network_omics[[1]])), function(omic_name){
+    if(omic_name == "RNA_Sequencing"){
+        return("gene_lab")
+    } else if(omic_name == "Untargeted_Metabolomics"){
+        return("compounds_merged_readable")
+        #return("HFD-CNT.formula")
+    } else if(grepl("DNA_Methylation", omic_name)){
+        return("geneName")
+    } else if(grepl("Shotgun|Metallomics|16S|Targeted|Histone", omic_name)){
+        return("readable_name")  
+    } else{
+        return(NA)
+    }
+})
+names(variables_dicts) <- unique(unlist(network_omics[[1]]))
+variables_dicts[is.na(variables_dicts)] <- NULL
+
+add_var_names <- grep("weights|FC", colnames(rowData(omic_dt@ExperimentList$RNA_Sequencing)), value = T)
+
+# corr_method_vect <- c("kendall", "spearman", "pearson")
+corr_method_vect <- c("pearson", "spearman")
+
+for(corr_method in corr_method_vect){
+    xfun::Rscript_call(rmarkdown::render,
+                            args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
+                              output_file = params$output_dir,
+                              params = list(
+                                corr_threshold = 0,
+                                corr_method = corr_method,
+                                multi_omic_path = multi_omics,
+                                group_metadata_var = "group",
+                                sample_levels_2_correlate = c("CNT", "HFD", "INT"),
+                                filter_variable_2_correlate = list(
+                                    "All" = NA
+                                ),
+                                p_adj_thr = 1,
+                                omic_list_pairs = network_omics,
+                                rowData_variable_name_list = variables_dicts,
+                                draw_networks = FALSE,
+                                draw_cytoscape = FALSE,
+                                add_autocorrelations = FALSE,
+                                keep_full_correlations = TRUE,
+                                output_dir = corr_output_dir,
+                                output_suffix = paste0("0_005_chi_f1f2_", corr_method),
+                                add_variables = TRUE,
+                                variables_names = add_var_names,
+                                draw_cluster_scatter_plots = FALSE))
+     )
+}
+```
+
+#### Correlation Analysis
+
+```{r}
+library(ProteoNet)
+library(igraph)
+library(dplyr)
+library(org.Mm.eg.db)
+
+corr_output_dir <- paste0(params$output_dir, corr_output_name ,"/")
+
+# omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
+# omic_dt <- readRDS(paste0(params$output_dir, "multi_omics_filtered_mod.rds"))
+
+nw_paths <- list.files(corr_output_dir, 
+                        pattern = "network_results_0_005_chi_f1f2_.*\\.rds$", 
+                        full.names = T)
+nw_graphs <- lapply(nw_paths, readRDS)
+
+nw_graphs <- lapply(nw_graphs, function(score_dt){
+    lapply(score_dt, function(weight_dt){
+        weight_dt[["Pairwise full liver"]]
+    })
+})
+
+score_names <- gsub("\\.rds", "", sapply(strsplit(grep("network_results", 
+                                                        basename(nw_paths), 
+                                                        value = TRUE), "_"),
+                                            function(x){x[length(x)]}))
+score_filters <- c(0.8, 0.8)
+names(score_filters) <- score_names
+names(nw_graphs) <- score_names
+
+
+```
+
+```{r}
+nw_graphs <- lapply(names(nw_graphs), function(score_id){
+    score_dt <- nw_graphs[[score_id]]
+    score_res <- lapply(names(score_dt), function(graph_id){
+        graph_dt <- score_dt[[graph_id]]
+
+        graph_weights <- abs(edge_attr(graph_dt,
+                        name = "weight"))
+        graph_adj.p.val <- edge_attr(graph_dt, name = "adj.p.value")
+        # subgraph.edges(graph_dt,
+        #             E(graph_dt)[graph_weights >= score_filters[score_id] & graph_adj.p.val <= 0.05],
+        #             delete.vertices = FALSE)
+        subgraph.edges(graph_dt,
+                    E(graph_dt)[graph_adj.p.val <= 0.05],
+                    delete.vertices = FALSE)
+    })
+    names(score_res) <- names(score_dt)
+    score_res
+})
+names(nw_graphs) <- score_names
+```     
+
+```{r}
+rna_omic_id <- "RNA_Sequencing"
+dna_omic_id <- "WGB_DNA_Methylation"
+rna_node_total <- nrow(experiments(multi_omics)[[rna_omic_id]]) 
+dna_node_total <- nrow(experiments(multi_omics)[[dna_omic_id]])
+
+ids_to_map <- rowData(experiments(multi_omics)[[rna_omic_id]])[,"entrezID", drop = FALSE]
+```
+
+
+```{r}
+nw_plot_list <- lapply(nw_graphs, function(score_dt){
+    
+    lapply(score_dt, function(factor_dt){
+    
+        test <- igraph::as_long_data_frame(factor_dt)
+        rna_dna_omics <- c("RNA_Sequencing", "WGB_DNA_Methylation")
+        
+        rna_nodes <- names(V(factor_dt))[vertex_attr(factor_dt, name = "Node_Omic") == rna_omic_id]
+        dna_nodes <- names(V(factor_dt))[vertex_attr(factor_dt, name = "Node_Omic") == dna_omic_id]
+        
+        test_dna_rna <- test[(test$to_Node_Omic %in% rna_dna_omics) & 
+                 (test$from_Node_Omic %in% rna_dna_omics),]
+
+        gene_col <- ifelse(test_dna_rna$to_Node_Omic == rna_omic_id, 
+                            "to_name", "from_name")
+        gene_node <- sapply(seq_len(nrow(test_dna_rna)),
+                            function(x){test_dna_rna[x,gene_col[x]]})
+        gene_id <- gsub(paste0(rna_omic_id, "."), "", gene_node)
+        
+        dmr_col <- ifelse(test_dna_rna$to_Node_Omic == dna_omic_id, 
+                        "to_name", "from_name")
+        dmr_node <- sapply(seq_len(nrow(test_dna_rna)),
+                            function(x){test_dna_rna[x,dmr_col[x]]})
+        dmr_id <- gsub(paste0(dna_omic_id, "."), "", dmr_node)
+        
+        nw_dt <- data.frame("DMR_node" = dmr_node, "Gene_node" = gene_node, 
+                    "DMR_ID" = dmr_id, "Gene_ID" = gene_id, 
+                    "DMR_omic" = dna_omic_id, "Gene_omic" = rna_omic_id,
+                    "weight" = test_dna_rna[["weight"]])
+        
+        nw_dt$DMR_annotation <- rowData(experiments(multi_omics)[[dna_omic_id]])[nw_dt$DMR_ID,]$annotation
+        nw_dt$DMR_region <- sapply(nw_dt$DMR_annotation, function(dmr_an){
+            if(grepl("Promoter", dmr_an)){return("Promoter")
+            } else if(grepl("Intron", dmr_an)){return("Intron")
+            } else if(grepl("Exon", dmr_an)){return("Exon")
+            } else if(grepl("Downstream", dmr_an)){return("Downstream")
+            } else if(grepl("Distal Intergenic", dmr_an)){return("Distal Intergenic")
+            } else if(grepl("Upstream", dmr_an)){return("Upstream")
+            } else if(grepl("3' UTR", dmr_an)){return("3' UTR")
+            } else if(grepl("5' UTR", dmr_an)){return("5' UTR")
+            } else{"Other"}
+        })
+        
+        nw_dt$DMR_chromosome <-  as.character(seqnames(rowRanges(experiments(multi_omics)[[dna_omic_id]])[nw_dt$DMR_ID]))
+        nw_dt$Gene_chromosome <- ids_to_map[nw_dt$Gene_ID, "chromosome_name"]
+        
+        nw_dt$DMR_Gene_ID <- mapIds(x = org.Mm.eg.db, 
+                                    keys = rowData(experiments(multi_omics)[[dna_omic_id]])[nw_dt$DMR_ID,]$geneId, column = "ENSEMBL", keytype = "ENTREZID", multiVals = "first")
+        nw_dt$Same_Gene <- ifelse(nw_dt$Gene_ID == nw_dt$DMR_Gene_ID & 
+                                      !is.na(nw_dt$Gene_ID) & !is.na(nw_dt$DMR_Gene_ID), 
+                                  "Same Gene", "Other Regions")
+        nw_dt$Same_Gene_bool <- nw_dt$Same_Gene == "Same Gene"
+        nw_dt$Same_Chromosome <- ifelse(nw_dt$Gene_chromosome == nw_dt$DMR_chromosome &
+                                            !is.na(nw_dt$Gene_chromosome) & !is.na(nw_dt$DMR_chromosome), 
+                                  "Same Chromosome", "Other Chromosomes")
+        nw_dt$Same_Chromosome_bool <- nw_dt$Same_Chromosome == "Same Chromosome"
+        
+        nw_dt
+    })
+})
+```
+
+
+```{r}
+
+plot_list <- lapply(nw_plot_list, function(score_dt){
+    
+    lapply(score_dt, function(factor_dt){
+    
+        rna_table <- table(factor_dt$Gene_node)
+        dna_table <- table(factor_dt$DMR_node)
+        
+        rna_count_dt <- data.frame("value" = as.numeric(rna_table),
+                                   "value_perc" = as.numeric(rna_table)/dna_node_total,
+                                    "name" = names(rna_table),
+                                    "omic" = "RNA_Sequencing",
+                                    "n_vars" = paste("Nt = ", rna_node_total,
+                                                     "/ N = ", length(rna_table))
+                                )
+        
+        dna_count_dt <- data.frame("value" = as.numeric(dna_table),
+                                    "value_perc" = as.numeric(dna_table)/rna_node_total,
+                                    "name" = names(dna_table),
+                                    "omic" = "WGB_DNA_Methylation",
+                                        "n_vars" = paste("Nt =", dna_node_total,
+                                                     "/ N = ", length(dna_table))
+                                   )
+        count_merged_dt <- rbind(rna_count_dt, dna_count_dt)
+        
+        count_merged_dt$omic <- omic_names_dict[as.character(count_merged_dt$omic)]
+        count_merged_dt
+    })
+})
+
+```
+
+What we see makes sense as we have smaller differences in DNA methylation data than in RNA-Seq data, from 602 significant DMRs to around ~10000 significant genes.
+
+```{r}
+pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig.pdf"))
+lapply(names(plot_list), function(score_id){
+    score_dt <- plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        line_dt <- plot_dt %>% group_by(omic) %>% 
+            summarise(mean_dt = mean(value), 
+                    median_dt = median(value))
+        
+        ggplot(plot_dt) + 
+            geom_histogram(aes(x = value, fill = omic)) +
+            geom_text(aes(x = Inf, y = Inf, label = n_vars), hjust = 1.05, vjust = 1.5, size = 3.5) + 
+            theme_minimal() + facet_grid(rows = vars(omic)) + 
+            theme(legend.position = "none") + xlab("Number of significant correlations") + 
+            scale_fill_manual(values = omic_color_dict_mod) + ggtitle(paste(score_id, factor_id,
+                                                                            "DNA-RNA correlations")) + 
+            geom_vline(data = line_dt, aes(xintercept = mean_dt)) + 
+            geom_vline(data = line_dt, aes(xintercept = median_dt), 
+                       color = "royalblue")
+    })
+})
+dev.off()
+```
+
+```{r}
+pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig_density.pdf"))
+lapply(names(plot_list), function(score_id){
+    score_dt <- plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        line_dt <- plot_dt %>% group_by(omic) %>% 
+            summarise(mean_dt = mean(value), 
+                    median_dt = median(value))
+        ggplot(plot_dt) + 
+            geom_density(aes(x = value, fill = omic)) +
+            geom_text(aes(x = Inf, y = Inf, label = n_vars), 
+                      hjust = 1.05, vjust = 1.5, size = 3.5) + 
+            theme_minimal() + facet_grid(rows = vars(omic)) + 
+            theme(legend.position = "none") + xlab("Number of significant correlations") + 
+            scale_fill_manual(values = omic_color_dict_mod) + ggtitle(paste(score_id, factor_id,
+                                                                            "DNA-RNA correlations")) + 
+            geom_vline(data = line_dt, aes(xintercept = mean_dt)) +
+            geom_vline(data = line_dt, aes(xintercept = median_dt), 
+                       color = "royalblue")
+    })
+})
+dev.off()
+```
+
+
+```{r}
+pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig_density_perc.pdf"))
+lapply(names(plot_list), function(score_id){
+    score_dt <- plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        plot_dt <- score_dt[[factor_id]]    
+        
+        line_dt <- plot_dt %>% group_by(omic) %>% 
+            summarise(mean_dt = mean(value_perc), 
+                    median_dt = median(value_perc))
+        
+        ggplot(plot_dt) + 
+            geom_density(aes(x = value_perc, fill = omic)) +
+            geom_text(aes(x = Inf, y = Inf, label = n_vars), 
+                      hjust = 1.05, vjust = 1.5, size = 3.5) + 
+            theme_minimal() + facet_grid(rows = vars(omic)) + 
+            theme(legend.position = "none") + xlab("Number of significant correlations") + 
+            scale_fill_manual(values = omic_color_dict_mod) + ggtitle(paste(score_id, factor_id,
+                                                                            "DNA-RNA correlations")) + 
+            geom_vline(data = line_dt, aes(xintercept = mean_dt)) + 
+            geom_vline(data = line_dt, aes(xintercept = median_dt), 
+                       color = "royalblue")
+    })
+})
+dev.off()
+```
+
+```{r}
+lapply(names(nw_graphs), function(score_id){
+    score_dt <- nw_graphs[[score_id]]
+    score_res <- lapply(names(score_dt), function(graph_id){
+        graph_dt <- score_dt[[graph_id]]
+
+        graph_weights <- edge_attr(graph_dt,
+                        name = "weight")
+        
+        hist(graph_weights)
+        prop.table(table(graph_weights > 0))
+    })
+})
+```
+
+##### Pos-Neg correlations
+
+```{r}
+plot_list <- lapply(nw_plot_list, function(score_dt){
+    
+    lapply(score_dt, function(factor_dt){
+        
+        rna_seq_corr_p <- factor_dt$Gene_node[factor_dt$weight > 0]
+        rna_seq_corr_n <- factor_dt$Gene_node[factor_dt$weight < 0]
+        
+        dna_seq_corr_p <- factor_dt$DMR_node[factor_dt$weight > 0]
+        dna_seq_corr_n <- factor_dt$DMR_node[factor_dt$weight < 0]
+        
+        rna_table_p <- table(rna_seq_corr_p)
+        dna_table_p <- table(dna_seq_corr_p)
+        rna_table_n <- table(rna_seq_corr_n)
+        dna_table_n <- table(dna_seq_corr_n)
+        
+        rna_count_dt <- data.frame("value" = c(as.numeric(rna_table_p), 
+                                               as.numeric(rna_table_n)*-1),
+                                    "name" = c(names(rna_table_p),
+                                               names(rna_table_n)),
+                                    "omic" = "RNA_Sequencing",
+                                    "n_vars" = paste("Nt = ", rna_node_total,
+                                                     "/ N = ", length(unique(c(names(rna_table_p)),
+                                                                             names(rna_table_n))))
+                                )
+        rna_count_dt$value_perc <- abs(rna_count_dt$value)/dna_node_total
+            
+        dna_count_dt <- data.frame("value" = c(as.numeric(dna_table_p),
+                                               as.numeric(dna_table_n)*-1),
+                                    "name" = c(names(dna_table_p),
+                                               names(dna_table_n)),
+                                    "omic" = "WGB_DNA_Methylation",
+                                    "n_vars" = paste("Nt =", dna_node_total,
+                                                     "/ N = ", length(unique(c(names(dna_table_p),
+                                                                               names(dna_table_n)))))
+                                   )
+        dna_count_dt$value_perc <- abs(dna_count_dt$value)/rna_node_total
+        
+        count_merged_dt <- rbind(rna_count_dt, dna_count_dt)
+        
+        count_merged_dt$omic <- omic_names_dict[as.character(count_merged_dt$omic)]
+        count_merged_dt
+    })
+})
+
+```
+
+```{r}
+pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig_pn.pdf"))
+lapply(names(plot_list), function(score_id){
+    score_dt <- plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        
+        nw_dt <- nw_plot_list[[score_id]][[factor_id]]
+        ids_keep <- unique(nw_dt$Gene_node[nw_dt$Gene_ID == nw_dt$DMR_Gene_ID])
+        line_dt <- plot_dt[plot_dt$name %in% ids_keep,]
+        
+        ids_keep <- unique(nw_dt$DMR_node[nw_dt$Gene_ID == nw_dt$DMR_Gene_ID])
+        line_dt_dmr <- plot_dt[plot_dt$name %in% ids_keep,]
+        
+        
+        ggplot(plot_dt) + 
+            geom_histogram(aes(x = value, fill = omic), color = "grey", binwidth = 100) +
+            geom_text(aes(x = Inf, y = Inf, label = n_vars), hjust = 1.05, vjust = 1.5, size = 3.5) + 
+            theme_minimal() + facet_grid(rows = vars(omic)) + 
+            theme(legend.position = "none") + xlab("Number of significant correlations") + 
+            scale_fill_manual(values = omic_color_dict_mod) + ggtitle(paste(score_id, factor_id,
+                                                                            "DNA-RNA correlations")) + 
+            geom_vline(aes(xintercept = 0)) +
+            geom_segment(data = line_dt, 
+                         aes(x =  value, xend = value, 
+                             y = -1000, yend = 0), alpha =0.4) +
+            geom_segment(data = line_dt_dmr, 
+                         aes(x =  value, xend = value, 
+                             y = -1000, yend = 0), alpha =0.4)
+    })
+})
+dev.off()
+```
+
+```{r, fig.height= 8, fig.width=6}
+pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig_unique_pn.pdf"))
+lapply(names(plot_list), function(score_id){
+    score_dt <- plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        line_dt <- plot_dt %>% group_by(omic) %>% 
+            summarise(mean_dt = mean(value), 
+                    median_dt = median(value))
+        rna_seq_dt <- plot_dt[plot_dt$omic == "Liver RNA Sequencing",]
+        
+        unique_order <- sapply(unique(rna_seq_dt$name), function(x){
+            corr_val <- rna_seq_dt$value[rna_seq_dt$name == x]
+            corr_val <- corr_val[corr_val < 0]
+            ifelse(length(corr_val), corr_val, 0)
+        })
+        
+        rna_seq_dt$name <- factor(rna_seq_dt$name, names(sort(unique_order, decreasing = TRUE)))
+        rna_seq_dt$color_c <- ifelse(rna_seq_dt$value < 0, "royalblue", "red")
+        
+        
+        dna_seq_dt <- plot_dt[plot_dt$omic == "Liver DNA Methylation",]
+        
+        unique_order <- sapply(unique(dna_seq_dt$name), function(x){
+            corr_val <- dna_seq_dt$value[dna_seq_dt$name == x]
+            corr_val <- corr_val[corr_val < 0]
+            ifelse(length(corr_val), corr_val, 0)
+        })
+        
+        dna_seq_dt$name <- factor(dna_seq_dt$name, names(sort(unique_order, decreasing = TRUE)))
+        dna_seq_dt$color_c <- ifelse(dna_seq_dt$value < 0, "royalblue", "red")
+        
+        p1 <- ggplot(rna_seq_dt) + 
+            geom_col(aes(x = value, y = name, fill = color_c)) +
+            geom_text(aes(x = Inf, y = Inf, label = n_vars), hjust = 1.05, vjust = 1.5, size = 3.5) + 
+            theme_minimal() + 
+            theme(legend.position = "none", axis.text.y = element_blank()) + 
+            xlab("Negative/Positive correlations") + ylab("Unique gene") +
+            ggtitle(paste(score_id, factor_id, "DNA-RNA correlations")) + 
+            geom_vline(xintercept = 0)
+        p2 <- ggplot(dna_seq_dt) + 
+            geom_col(aes(x = value, y = name, fill = color_c)) +
+            geom_text(aes(x = Inf, y = Inf, label = n_vars), hjust = 1.05, vjust = 1.5, size = 3.5) + 
+            theme_minimal() + 
+            theme(legend.position = "none", axis.text.y = element_blank()) + 
+            xlab("Negative/Positive correlations") + ylab("Unique DMR") +
+            ggtitle(paste(score_id, factor_id, "DNA-RNA correlations")) + 
+            geom_vline(xintercept = 0)
+        sapply(list(p1, p2), print)
+    })
+})
+dev.off()
+```
+
+##### Region plots
+
+Equivalent region correlations
+
+```{r}
+lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
+        ggplot(plot_dt, aes(x = abs(weight), fill = DMR_region)) + 
+            geom_density(alpha = 0.4) + 
+            theme_minimal() + theme(axis.text.x = element_text(angle = 90))
+    })
+})
+
+lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
+        ggplot(plot_dt, aes(x = DMR_region, y = abs(weight), fill = DMR_region)) +
+            geom_boxplot() +
+            theme_minimal() + theme(axis.text.x = element_text(angle = 90))
+    })
+})
+
+lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
+        
+        plot_dt %>% group_by(DMR_region) %>% summarise("mean" = mean(abs(weight)), "median" = median(abs(weight)))
+    })
+})
+
+lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
+        
+        TukeyHSD(aov(abs(plot_dt$weight) ~ plot_dt$DMR_region))
+    })
+})
+```
+
+
+
+
+```{r}
+plot_list <- lapply(nw_plot_list, function(score_dt){
+    
+    lapply(score_dt, function(factor_dt){
+        
+        
+        dna_seq_corr_p <- factor_dt$DMR_region[factor_dt$weight > 0]
+        dna_seq_corr_n <- factor_dt$DMR_region[factor_dt$weight < 0]
+        
+        dna_table_p <- table(dna_seq_corr_p)
+        dna_table_n <- table(dna_seq_corr_n)
+        
+        dna_count_dt <- data.frame("value" = c(as.numeric(dna_table_p),
+                                               as.numeric(dna_table_n)),
+                                    "name" = c(names(dna_table_p),
+                                               names(dna_table_n)),
+                                   "type" = c(rep("positive", length(dna_table_p)),
+                                              rep("negative", length(dna_table_n))),
+                                    "omic" = "WGB_DNA_Methylation",
+                                    "n_vars" = paste("Nt =", length(dna_node_total),
+                                                     "/ N = ", length(unique(c(names(dna_table_p),
+                                                                               names(dna_table_n)))))
+                                   )
+        count_merged_dt <- dna_count_dt
+        count_merged_dt$omic <- omic_names_dict[as.character(count_merged_dt$omic)]
+        count_merged_dt
+    })
+})
+
+```
+
+```{r}
+# pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig_pn.pdf"))
+lapply(names(plot_list), function(score_id){
+    score_dt <- plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        plot_dt$group <- paste(plot_dt$name, plot_dt$type)
+        ggplot(plot_dt, aes(x = name, y = value, fill = type)) + 
+            geom_col(stat = "identity", position = "dodge") + 
+            theme_minimal() + theme(axis.text.x = element_text(angle = 90)) +
+            scale_fill_manual(values = list(negative = "royalblue",
+                                            positive = "red")) + ylab("Number of correlations")
+    })
+})
+
+# lapply(names(plot_list), function(score_id){
+#     score_dt <- plot_list[[score_id]]
+#     lapply(names(score_dt), function(factor_id){
+#           
+#         plot_dt <- score_dt[[factor_id]]    
+#         plot_dt$group <- paste(plot_dt$name, plot_dt$type)
+#         ggplot(plot_dt, aes(x = name, y = value, fill = type)) + 
+#             geom_col(stat = "identity", position = "dodge") + 
+#             theme_minimal() + theme(axis.text.x = element_text(angle = 90)) +
+#             scale_fill_manual(values = list(negative = "royalblue",
+#                                             positive = "red"))
+#     })
+# })
+# dev.off()
+```
+
+```{r}
+annotation_dt <- rowData(experiments(multi_omics)[[dna_omic_id]])$annotation
+annotation_regions <- sapply(annotation_dt, function(dmr_an){
+            if(grepl("Promoter", dmr_an)){return("Promoter")
+            } else if(grepl("Intron", dmr_an)){return("Intron")
+            } else if(grepl("Exon", dmr_an)){return("Exon")
+            } else if(grepl("Downstream", dmr_an)){return("Downstream")
+            } else if(grepl("Distal Intergenic", dmr_an)){return("Distal Intergenic")
+            } else if(grepl("Upstream", dmr_an)){return("Upstream")
+            } else if(grepl("3' UTR", dmr_an)){return("3' UTR")
+            } else if(grepl("5' UTR", dmr_an)){return("5' UTR")
+            } else{"Other"}
+        })
+table(annotation_regions)
+maxim_correlations <- table(annotation_regions)*rna_node_total
+
+cor(table(nw_plot_list$pearson$All$DMR_region), maxim_correlations) 
+```
+
+```{r}
+t1 <- chisq.test(table(nw_plot_list$pearson$All$DMR_region), p = prop.table(maxim_correlations))
+t1
+t1$observed
+t1$expected
+chisq.test(table(nw_plot_list$pearson$All$Gene_ID), nw_plot_list$pearson$All$DMR_region)
+
+gene_correlations_regions <- table(nw_plot_list$pearson$All$Gene_ID, nw_plot_list$pearson$All$DMR_region)
+
+annotation_regions_table <- table(annotation_regions)
+
+chisq.test(gene_correlations_regions[1,], annotation_regions_table)
+res_lis <- apply(gene_correlations_regions, 1, function(x){
+    chisq.test(x, p = annotation_regions_table/sum(annotation_regions_table))
+})
+
+res_pvals <- p.adjust(sapply(res_lis, function(x){x$p.value}),method = "fdr")
+sig_genes <- names(res_pvals)[res_pvals <= 0.05]
+gene_correlations_regions[sig_genes,]
+
+res_lis[sig_genes][[2]]$expected
+res_lis[sig_genes][[2]]$observed
+
+```
+
+```{r}
+plot_list <- lapply(nw_plot_list, function(score_dt){
+    
+    lapply(score_dt, function(factor_dt){
+        dna_seq_corr_p <- factor_dt[factor_dt$weight > 0,]
+        dna_seq_corr_n <- factor_dt[factor_dt$weight < 0,]
+        
+        pos_sum <- dna_seq_corr_p %>% group_by(DMR_region) %>% 
+            summarise(perc = length(unique(Gene_ID))/rna_node_total, type = "positive")
+        
+        neg_sum <- dna_seq_corr_p %>% group_by(DMR_region) %>% 
+            summarise(perc = length(unique(Gene_ID))/rna_node_total, type = "negative")
+        
+        rbind(pos_sum, neg_sum)
+    })
+})
+
+plot_list <- lapply(nw_plot_list, function(score_dt){
+    lapply(score_dt, function(factor_dt){
+        factor_dt %>% group_by(DMR_region) %>% 
+            summarise(perc = length(unique(Gene_ID))/rna_node_total, type = "positive")
+    })
+})
+```
+
+
+```{r}
+plot_list <- lapply(nw_plot_list, function(score_dt){
+    
+    lapply(score_dt, function(factor_dt){
+        dna_seq_corr_p <- factor_dt[factor_dt$weight > 0,]
+        dna_seq_corr_n <- factor_dt[factor_dt$weight < 0,]
+        
+        pos_sum <- dna_seq_corr_p %>% group_by(DMR_region) %>% 
+            summarise(perc = length(unique(Gene_ID))/rna_node_total, type = "positive")
+        
+        neg_sum <- dna_seq_corr_p %>% group_by(DMR_region) %>% 
+            summarise(perc = length(unique(Gene_ID))/rna_node_total, type = "negative")
+        
+        rbind(pos_sum, neg_sum)
+    })
+})
+
+```
+
+```{r}
+lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        plot_dt$type <- ifelse(plot_dt$weight > 0, "positive", "negative")
+        plot_dt$group <- paste(plot_dt$DMR_region, plot_dt$type)
+        
+        plot_dt <- plot_dt %>% group_by(Gene_ID, type, DMR_region) %>% summarise("num" = length(DMR_annotation))
+        plot_dt <- plot_dt %>% group_by(Gene_ID) %>% summarise("num" = num, 
+                                                               "type" = type,
+                                                               "DMR_region" = DMR_region)
+        
+        neg_sum <- plot_dt %>% group_by(Gene_ID, type) %>% summarise("num" = sum(num)) 
+        neg_sum <- neg_sum %>% group_by(Gene_ID) %>% summarise("num" = num/sum(num), Gene_ID = Gene_ID, 
+                                                               type = type)    
+        order_vect <- sapply(unique(as.character(neg_sum$Gene_ID)), function(x){
+            found <- neg_sum$num[neg_sum$Gene_ID %in% x & neg_sum$type %in% "positive"]
+                if(!length(found)){
+                    return(0)
+                } else{
+                    return(found)
+                }
+        })
+        
+        neg_sum$Gene_ID <- factor(neg_sum$Gene_ID, 
+                                  levels = unique(neg_sum$Gene_ID)[order(order_vect, decreasing = TRUE)])
+        
+        
+        order_vect2 <- sapply(unique(as.character(plot_dt$Gene_ID)), function(x){
+            sum(abs(plot_dt$num[plot_dt$Gene_ID %in% x]))
+        })
+        
+        plot_dt$Gene_ID <- factor(plot_dt$Gene_ID, 
+                                  levels = unique(plot_dt$Gene_ID)[order(order_vect2, decreasing = TRUE)])
+        
+        
+        plot_dt2 <- reshape2::dcast(plot_dt, formula = )
+        
+        ggplot(plot_dt, aes(x = Gene_ID, y = num, fill = type)) +
+            geom_col() +
+            theme_minimal() +
+            theme(axis.text.x = element_blank()) +
+            scale_fill_manual(values = list(negative = "royalblue",
+                                            positive = "red"))
+        
+        ggplot(plot_dt, aes(x = group, y = perc, fill = type)) +
+            geom_col() +
+            theme_minimal() +
+            theme(axis.text.x = element_blank())
+        
+        ggplot(neg_sum, aes(x = Gene_ID, y = num, fill = type)) +
+            geom_col() +
+            theme_minimal() +
+            theme(axis.text.x = element_blank()) +
+            scale_fill_manual(values = list(negative = "royalblue",
+                                            positive = "red"))
+    })
+})
+```
+
+
+##### Same gene-DMRgene / same cromosome
+
+```{r}
+lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
+        plot_dt$group <- paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome)
+        plot_sum <- plot_dt %>% group_by(group, DMR_region) %>% 
+            summarise("Num" = length(weight))
+        # datatable(plot_sum)
+        
+    })
+})
+```
+
+
+```{r}
+lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
+        plot_dt$group <- paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome)
+        ggplot(plot_dt, aes(x = abs(weight), fill = group)) + 
+            geom_density(alpha = 0.4) + 
+            theme_minimal() + theme(axis.text.x = element_text(angle = 90))
+    })
+})
+
+lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
+        plot_dt$group <- paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome)
+        ggplot(plot_dt, aes(x = group, y = abs(weight), fill = group)) +
+            geom_boxplot() +
+            theme_minimal() + theme(axis.text.x = element_text(angle = 90), legend.position = "none")
+    })
+})
+
+lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
+        table(paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome))
+    })
+})
+
+```
+
+
+```{r, fig.height=10}
+lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
+        plot_dt$group <- paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome)
+        ggplot(plot_dt, aes(x = abs(weight), fill = group)) + 
+            geom_density(alpha = 0.4) + facet_grid(rows = vars(DMR_region)) + 
+            theme_minimal() + theme(axis.text.x = element_text(angle = 90))
+    })
+})
+
+lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
+        plot_dt$group <- paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome)
+        ggplot(plot_dt, aes(x = DMR_region, y = abs(weight), fill = group)) +
+            geom_boxplot() +
+            theme_minimal() + theme(axis.text.x = element_text(angle = 90))
+    })
+})
+
+```
+
+```{r}
+plot_list <- lapply(nw_plot_list, function(score_dt){
+    
+    lapply(score_dt, function(factor_dt){
+        factor_dt <- factor_dt[factor_dt$DMR_chromosome == factor_dt$Gene_chromosome,]
+        
+        dna_seq_corr_p <- factor_dt$DMR_region[factor_dt$weight > 0]
+        dna_seq_corr_n <- factor_dt$DMR_region[factor_dt$weight < 0]
+        
+        dna_table_p <- table(dna_seq_corr_p)
+        dna_table_n <- table(dna_seq_corr_n)
+        
+        dna_count_dt <- data.frame("value" = c(as.numeric(dna_table_p),
+                                               as.numeric(dna_table_n)),
+                                    "name" = c(names(dna_table_p),
+                                               names(dna_table_n)),
+                                   "type" = c(rep("positive", length(dna_table_p)),
+                                              rep("negative", length(dna_table_n))),
+                                    "omic" = "WGB_DNA_Methylation",
+                                    "n_vars" = paste("Nt =", length(dna_node_total),
+                                                     "/ N = ", length(unique(c(names(dna_table_p),
+                                                                               names(dna_table_n)))))
+                                   )
+        count_merged_dt <- dna_count_dt
+        count_merged_dt$omic <- omic_names_dict[as.character(count_merged_dt$omic)]
+        count_merged_dt
+    })
+})
+
+```
+
+
+```{r}
+lapply(names(plot_list), function(score_id){
+    score_dt <- plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        plot_dt$group <- paste(plot_dt$name, plot_dt$type)
+        ggplot(plot_dt, aes(x = name, y = value, fill = type)) + 
+            geom_col(stat = "identity", position = "dodge") + 
+            theme_minimal() + theme(axis.text.x = element_text(angle = 90)) +
+            scale_fill_manual(values = list(negative = "royalblue",
+                                            positive = "red")) + ylab("Number of correlations") + xlab("Genes and the regions in the same chromosome")
+    })
+})
+```
+
+```{r}
+plot_list <- lapply(nw_plot_list, function(score_dt){
+    
+    lapply(score_dt, function(factor_dt){
+        factor_dt <- factor_dt[factor_dt$Same_Gene_bool,]
+        
+        dna_seq_corr_p <- factor_dt$DMR_region[factor_dt$weight > 0]
+        dna_seq_corr_n <- factor_dt$DMR_region[factor_dt$weight < 0]
+        
+        dna_table_p <- table(dna_seq_corr_p)
+        dna_table_n <- table(dna_seq_corr_n)
+        
+        dna_count_dt <- data.frame("value" = c(as.numeric(dna_table_p),
+                                               as.numeric(dna_table_n)),
+                                    "name" = c(names(dna_table_p),
+                                               names(dna_table_n)),
+                                   "type" = c(rep("positive", length(dna_table_p)),
+                                              rep("negative", length(dna_table_n))),
+                                    "omic" = "WGB_DNA_Methylation",
+                                    "n_vars" = paste("Nt =", length(dna_node_total),
+                                                     "/ N = ", length(unique(c(names(dna_table_p),
+                                                                               names(dna_table_n)))))
+                                   )
+        count_merged_dt <- dna_count_dt
+        count_merged_dt$omic <- omic_names_dict[as.character(count_merged_dt$omic)]
+        count_merged_dt
+    })
+})
+
+```
+
+
+```{r}
+lapply(names(plot_list), function(score_id){
+    score_dt <- plot_list[[score_id]]
+    lapply(names(score_dt), function(factor_id){
+        
+        plot_dt <- score_dt[[factor_id]]    
+        plot_dt$group <- paste(plot_dt$name, plot_dt$type)
+        ggplot(plot_dt, aes(x = name, y = value, fill = type)) + 
+            geom_col(stat = "identity", position = "dodge") + 
+            theme_minimal() + theme(axis.text.x = element_text(angle = 90)) +
+            scale_fill_manual(values = list(negative = "royalblue",
+                                            positive = "red")) + ylab("Number of correlations") + xlab("Genes and their direct DMRs correlations")
+    })
+})
+```
+
+
+###### Gene Enrichments
+
+```{r}
+enrich_exp_list <- lapply(names(nw_plot_list), function(score_id){
+    score_dt <- nw_plot_list[[score_id]]
+    score_res <- lapply(names(score_dt), function(factor_id){
+    sheet_name <- paste0(score_id, ".", factor_id)
+        plot_dt <- score_dt[[factor_id]]
+        rowData(experiments(multi_omics)[[rna_omic_id]][unique(plot_dt$Gene_ID[plot_dt$Same_Gene_bool & !is.na(plot_dt$Same_Gene)]),])
+    })
+    score_res[[1]]
+})
+names(enrich_exp_list) <- names(nw_plot_list)
+enrich_exp_list$combined <- rowData(experiments(multi_omics)[[rna_omic_id]][union(rownames(enrich_exp_list$pearson),                                                                        rownames(enrich_exp_list$spearman)),])
+xfun::Rscript_call(rmarkdown::render,
+    args = list(
+        input = "../Multi_Omics_Analysis/RNA_Sequencing_Enrichments.Rmd",
+        output_file = enrich_file,
+        params = list(
+            exp_list = enrich_exp_list,
+            output_dir = enrich_dir,
+            ora_filter = NULL,
+            gsea_cols_list = NULL,
+            gsea = FALSE,
+            custom_gene_set = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",],
+            custom_descriptions = kegg_db_list$term2name,
+            custom_name = "custom",
+            universe = NULL,
+            order_column = "HFD-CNT.adj.p.value",
+            results_name = "correlated_gene_enrich",
+            legend_name = "Fold Change (log2)",
+            random_seed = 1234
+        )
+    )
+)
+
+enrich_dir <- corr_output_dir
+enrich_file <- paste0(enrich_dir, "correlated_gene_enrich_detected_universe.html")
+xfun::Rscript_call(rmarkdown::render,
+    args = list(
+        input = "../Multi_Omics_Analysis/RNA_Sequencing_Enrichments.Rmd",
+        output_file = enrich_file,
+        params = list(
+            exp_list = enrich_exp_list,
+            output_dir = enrich_dir,
+            ora_filter = NULL,
+            gsea_cols_list = NULL,
+            gsea = FALSE,
+            custom_gene_set = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",],
+            custom_descriptions = kegg_db_list$term2name,
+            custom_name = "custom",
+            universe = universe_list_ids$RNA_Sequencing,
+            order_column = "HFD-CNT.adj.p.value",
+            results_name = "correlated_gene_enrich_detected_universe",
+            legend_name = "Fold Change (log2)",
+            random_seed = 1234
+        )
+    )
+)
+
+```
+
+### Correlations Genes-TF
+
+```{r}
+library(org.Mm.eg.db)
+tf_db <- read.table("../../inputs/RNA_Sequencing/export_tfcheckpoint.txt", 
+                    sep = "\t", header = TRUE)
+mouse_tf_ids <- tf_db$Mouse_entrez[!is.na(tf_db$Mouse_entrez)]
+mouse_tf_ensembl <- mapIds(org.Mm.eg.db, keys = as.character(mouse_tf_ids), 
+                        column = "ENSEMBL", keytype = "ENTREZID", 
+                        multiVals = "first")
+mouse_tf_ensembl <- mouse_tf_ensembl[mouse_tf_ensembl %in% rownames(rna_seq_dt)]
+
+# t1 <- AnnotationDbi::select(org.Mm.eg.db, keys = rownames(rna_seq_dt),
+#                             columns = "GOALL", keytype = "ENSEMBL")
+# 
+# t1_genes <- unique(t1$ENSEMBL[!is.na(t1$GOALL) & 
+#         t1$GOALL %in% c("GO:0003700")])
+# 
+# t2_genes <- unique(t1$ENSEMBL[!is.na(t1$GOALL) & 
+#         t1$GOALL %in% c("GO:0010468")])
+# 
+# tf_name <- rownames(rna_seq_dt)[grep("transcription", 
+#                         rowData(rna_seq_dt)$gene_name)]
+
+# tplink_tfs <- unique(found_int_tplink$TF_ensembl)
+# 
+# plot_ov <- list("Checkpoint" = mouse_tf_ensembl, "GO_4" = t1_genes, "TPlink" = tplink_tfs)
+# ggVennDiagram::ggVennDiagram(x = plot_ov)
+# 
+# 
+# test_tf_name <- setdiff(plot_ov$TPlink, 
+#                         unlist(plot_ov[names(plot_ov) != "TPlink"]))
+# 
+# rowData(rna_seq_dt)$gene_name[rownames(rna_seq_dt) %in% test_tf_name]
+# 
+# 
+# sum(test_tf_name %in% mouse_tf_ensembl)
+
+nw_ids_tfs <- paste0("RNA_Sequencing.", mouse_tf_ensembl)
+
+sum(rownames(rna_seq_all) %in% mouse_tf_ensembl)
+sum(rownames(rna_seq_dt) %in% mouse_tf_ensembl)
+
+sum(unique(gene_dmr_cors_list$pearson$Var1) %in% mouse_tf_ensembl)
+sum(unique(gene_dmr_cors_list$spearman$Var1) %in% mouse_tf_ensembl)
+
+tf_genes <- rna_seq_dt[rownames(rna_seq_dt) %in% mouse_tf_ensembl,]
+```
+
+```{r}
+table(rowData(rna_seq_dt)$gene_biotype)
+
+proc_biotype <- sapply(rownames(rna_seq_dt), function(gene_id){
+    gene_type <- rowData(rna_seq_dt[gene_id,])$gene_biotype
+    
+    if(grepl("pseudogene", gene_type)){return("Pseudogenes")
+    } else if(is.na(gene_type) | grepl("TEC|_gene$", gene_type)){return("Other genes/Unknown")
+    } else if(grepl("protein_coding", gene_type)){
+        if(gene_id %in% rownames(tf_genes)){return("Protein TF")} else{
+            return("Protein Coding")    
+        }
+    } else if(grepl("lncRNA", gene_type)){return("lncRNA")
+    } else if(grepl("RNA", gene_type)){return("Other RNAs")
+    } else{return(gene_type)}
+})
+plot_dt <- data.frame("Gene_Type" = proc_biotype, 
+                    "DMR_Regulated" = ifelse(rownames(rna_seq_dt) %in% dmr_regulated, 
+                                            "Yes", "No"))
+
+p1 <- ggplot(plot_dt) + geom_bar(aes(x = DMR_Regulated, fill = Gene_Type), width = 0.5) +
+    theme_minimal() + labs(fill = "Gene Type") + 
+    annotate(geom = "text", x = c("No", "Yes"), y = max(table(plot_dt$DMR_Regulated))+200, 
+             label = tapply(plot_dt$Gene_Type, INDEX = plot_dt$DMR_Regulated, FUN = length)) +
+    xlab("DMR Regulated") + ylab("Counts") + theme(legend.title = element_blank()) + scale_fill_brewer(palette = "Pastel1")
+p1
+ggsave(filename = paste0(fig_dir, "figure_8_a.svg"), plot = p1, 
+        fix_text_size = FALSE)
+ggsave(filename = paste0(fig_dir, "figure_8_a.png"), plot = p1)
+
+
+p1 <- ggplot(plot_dt) + geom_bar(aes(x = DMR_Regulated, fill = Gene_Type), width = 0.4, 
+                                position = "fill") + theme_minimal() + 
+    xlab("DMR Regulated") + ylab("Proportions") + labs(fill = "Gene Type") + 
+    scale_fill_brewer(palette = "Pastel1") + 
+    annotate(geom = "text", x = c("No", "Yes"), y = 1.05, 
+    label = tapply(plot_dt$Gene_Type, INDEX = plot_dt$DMR_Regulated, FUN = length))
+p1
+ggsave(filename = paste0(fig_dir, "figure_8_b.svg"), plot = p1, 
+        fix_text_size = FALSE)
+ggsave(filename = paste0(fig_dir, "figure_8_b.png"), plot = p1, height = 6, width = 6)
+
+library(RColorBrewer)
+
+protein_coding_genes <- rownames(rna_seq_dt)[rowData(rna_seq_dt)$gene_biotype == "protein_coding"]
+
+svg("../../outputs/Paper_Figures_GFCV/figure_8_b.svg")
+pie(table(ifelse(protein_coding_genes %in% rownames(tf_genes), 
+                 "Transcription Factors", "Protein Genes")),
+    border="white",
+    col = brewer.pal(n = 3, name = "Set2")[1:2])
+dev.off()
+```
+
+```{r}
+# rna_seq_dt_dmrreg <- rna_seq_dt[rownames(rna_seq_dt) %in% dmr_regulated]
+# 
+# proc_biotype <- sapply(rowData(rna_seq_dt_dmrreg)$gene_biotype, function(gene_type){
+#     if(grepl("pseudogene", gene_type)){return("Pseudogenes")
+#     } else if(is.na(gene_type) | grepl("TEC|_gene$", gene_type)){return("Other genes/Unknown")
+#     } else if(grepl("protein_coding", gene_type)){return("Protein Coding")
+#     } else if(grepl("lncRNA", gene_type)){return("lncRNA")
+#     } else if(grepl("RNA", gene_type)){return("Other RNAs")
+#     } else{return(gene_type)}
+# })
+# 
+# p1 <- ggplot() + geom_bar(aes(x = "Gene Type", fill = proc_biotype), position = "fill") +
+#         theme_minimal() + 
+#         xlab(NULL) + ylab("Frequency") + theme(legend.title = element_blank()) +
+#         scale_fill_brewer(palette = "Pastel1")
+# p1
+# ggsave(filename = paste0(fig_dir, "figure_8_c.svg"), plot = p1, 
+#         fix_text_size = FALSE)
+# 
+# 
+# library(RColorBrewer)
+# 
+# protein_coding_genes <- rownames(rna_seq_dt_dmrreg)[rowData(rna_seq_dt_dmrreg)$gene_biotype == "protein_coding"]
+# 
+# svg("../../outputs/Paper_Figures_GFCV/figure_8_d.svg")
+# pie(table(ifelse(protein_coding_genes %in% rownames(tf_genes), 
+#                  "Transcription Factors", "Protein Genes")),
+#     border="white",
+#     col = brewer.pal(n = 3, name = "Set2")[1:2])
+# dev.off()
+# 
+# 
+# svg("../../outputs/Paper_Figures_GFCV/figure_8_alt.svg")
+# ggplot() + geom_bar(aes(x = "", fill = ifelse(protein_coding_genes %in% rownames(tf_genes), 
+#                  "Transcription Factors", "Protein Genes")), position = "fill") + scale_fill_brewer("Set2") + ggtitle("Percentage of TFs in protein coding genes DMR regulated") + theme_minimal() + theme(legend.title = element_blank()) +
+#     ylab("Frequency") + xlab(paste("DMR regulated genes (", length(protein_coding_genes), ")"))
+
+```
+
+
+```{r}
+genes_tf_cor_list <- lapply(corr_methods, function(corr_name){
+    genes_tf_cor <- mia::getExperimentCrossCorrelation(x = rna_seq_dt, 
+                                                        experiment2 = tf_genes,
+                                                        method = corr_name,
+                                                        assay.type1 = "dt1", 
+                                                        assay.type2 = "dt1",
+                                                        test_significance =  TRUE)
+    genes_tf_cor
+})
+names(genes_tf_cor_list) <- corr_methods
+saveRDS(genes_tf_cor_list, paste0(corr_output_dir, "genes_tf_corr.rds"))
+```
+
+```{r}
+genes_tf_cor_list <- readRDS(paste0(corr_output_dir, "genes_tf_corr.rds"))
+
+genes_tf_cor_list_all <- genes_tf_cor_list
+
+genes_tf_cor_list <- lapply(names(genes_tf_cor_list), function(corr_id){
+    genes_tf_cor <- genes_tf_cor_list[[corr_id]]
+    
+    genes_tf_cor <- genes_tf_cor[genes_tf_cor$p_adj <= 0.05,]    
+    genes_tf_cor <- genes_tf_cor[as.character(genes_tf_cor$Var1) != as.character(genes_tf_cor$Var2),]
+    genes_tf_cor$isNeg <- ifelse(genes_tf_cor$cor <= 0, "Negative", "Positive")
+
+    genes_tf_cor$gene_dmrReg <- ifelse(genes_tf_cor$Var1 %in%
+                                        gene_dmr_cors_list[[corr_id]]$Var1, 
+                                       "Yes", "No")
+    genes_tf_cor$tf_dmrReg <- ifelse(genes_tf_cor$Var2 %in%
+                                        gene_dmr_cors_list[[corr_id]]$Var1, 
+                                    "Yes", "No")
+    
+    genes_tf_cor
+})
+
+names(genes_tf_cor_list) <- names(genes_tf_cor_list_all)
+
+tf_associated <- lapply(genes_tf_cor_list, function(genes_tf_cor){
+    tf_associated <- tapply(genes_tf_cor$Var2, 
+                        INDEX = genes_tf_cor$Var1, 
+                        FUN = function(x){x})
+    tf_associated[lengths(tf_associated) != 0]
+})
+```
+
+```{r}
+lapply(names(genes_tf_cor_list), function(genes_tf_cor_id){
+    genes_tf_cor <- genes_tf_cor_list[[genes_tf_cor_id]]
+    ggplot(genes_tf_cor) + geom_boxplot(aes(x = isNeg, y = abs(cor), fill = isNeg)) + 
+        theme_minimal() + ggtitle(paste0(genes_tf_cor_id)) + 
+        xlab("Type of correlation") + ylab("Absolute correlation") + 
+        theme(legend.position = "none") + 
+        scale_fill_manual(values = list("Positive" = "lightcoral", 
+                                        "Negative" = "lightblue"))
+})
+
+lapply(genes_tf_cor_list, function(genes_tf_cor){
+    table(genes_tf_cor$isNeg)
+})
+lapply(genes_tf_cor_list, function(genes_tf_cor){
+    chisq.test(table(genes_tf_cor$isNeg))
+})
+
+lapply(genes_tf_cor_list, function(genes_tf_cor){
+    wilcox.test(abs(genes_tf_cor$cor) ~ genes_tf_cor$isNeg) 
+})
+  
+lapply(genes_tf_cor_list, function(genes_tf_cor){
+    tapply(abs(genes_tf_cor$cor), genes_tf_cor$isNeg, summary) 
+})  
+```
+
+```{r}
+# Are TF more enriched in genes regulated with their own DMRs
+
+# for(corr_id in corr_methods){
+#     
+#     dmr_reg_bool <- rownames(rna_seq_dt) %in% unique(gene_dmr_cors_list[[corr_id]]$Var1)
+#     gene_tf_bool <- rownames(rna_seq_dt) %in% rownames(tf_genes)
+#     
+#     
+#     t_tf_dmr <- table(dmr_reg_bool, gene_tf_bool)
+#     
+#     t_tf_dmr_chi <- chisq.test(t_tf_dmr)
+#     t_tf_dmr_chi
+#     t_tf_dmr_chi$observed
+#     t_tf_dmr_chi$expected
+# }
+```
+
+### Relationships Genes-TF (database TFLINK)
+
+```{r}
+tf_rel_db_tflink <- read.table("../../inputs/RNA_Sequencing/TFLink_Mus_musculus_interactions_All_simpleFormat_v1.0.tsv", 
+                                sep = "\t", header = TRUE)
+# length(unique(tf_rel_db_tflink$TF_entrez))
+length(unique(tf_rel_db_tflink$NCBI.GeneID.TF))
+# length(intersect(tf_rel_db$TF_entrez, tf_rel_db_tflink$NCBI.GeneID.TF))
+
+# length(unique(tf_rel_db$gene_entrez))
+length(unique(tf_rel_db_tflink$NCBI.GeneID.Target))
+# length(intersect(tf_rel_db$gene_entrez, tf_rel_db_tflink$NCBI.GeneID.Target))
+library(org.Mm.eg.db)
+tf_rel_db_tflink$TF_ensembl <- mapIds(x = org.Mm.eg.db, 
+                                    keys = tf_rel_db_tflink$NCBI.GeneID.TF,
+                                    column = "ENSEMBL", keytype = "ENTREZID",
+                                    multiVals = "first")
+tf_rel_db_tflink$gene_ensembl <- mapIds(x = org.Mm.eg.db, 
+                                        keys = tf_rel_db_tflink$NCBI.GeneID.Target,
+                                        column = "ENSEMBL", keytype = "ENTREZID",
+                                        multiVals = "first")
+
+tf_rel_db_tflink <- tf_rel_db_tflink[!is.na(tf_rel_db_tflink$TF_ensembl) &
+                                        !is.na(tf_rel_db_tflink$gene_ensembl),]
+# tf_tplink_ids <- unique(tf_rel_db_tflink$TF_ensembl)
+# 
+# tf_tplink_only <- tf_rel_db_tflink[(tf_rel_db_tflink$gene_ensembl %in% tf_tplink_ids) &
+#                                     !is.na(tf_rel_db_tflink$gene_ensembl) & !is.na(tf_rel_db_tflink$TF_ensembl),]
+# 
+# rna_seq_entrez <- rowData(rna_seq_dt)$entrezID[!is.na(rowData(rna_seq_dt)$entrezID)]
+# 
+# sum(tf_rel_db_tflink$NCBI.GeneID.TF %in% rna_seq_entrez)
+# 
+# sum(rna_seq_entrez %in% tf_rel_db_tflink$NCBI.GeneID.TF)
+# sum(rna_seq_entrez %in% tf_rel_db_tflink$NCBI.GeneID.Target)
+
+found_int_tplink <- tf_rel_db_tflink[tf_rel_db_tflink$TF_ensembl %in% rownames(rna_seq_dt) & 
+                           tf_rel_db_tflink$gene_ensembl %in% rownames(rna_seq_dt),]
+
+found_nw_paste <- paste0(found_int_tplink$TF_ensembl, 
+                       found_int_tplink$gene_ensembl)
+
+found_int_tplink <- found_int_tplink[!duplicated(found_nw_paste),]
+found_nw_paste <- found_nw_paste[!duplicated(found_nw_paste)]
+
+
+sum(unique(found_int_tplink$gene_ensembl) %in% unique(found_int_tplink$TF_ensembl))
+sum(unique(found_int_tplink$TF_ensembl) %in% unique(found_int_tplink$gene_ensembl))
+
+
+length(unique(found_int_tplink$TF_ensembl))
+length(unique(found_int_tplink$gene_ensembl))
+
+length(unique(c(found_int_tplink$gene_ensembl, 
+                found_int_tplink$TF_ensembl)))
+
+length(unique(c(found_int_tplink$gene_ensembl, 
+                found_int_tplink$TF_ensembl)))/nrow(rna_seq_dt)*100
+
+
+
+tf_db_associated_tflink <- tapply(found_int_tplink$TF_ensembl, 
+                        INDEX = found_int_tplink$gene_ensembl, 
+                        FUN = function(x){x})
+tf_db_associated_tflink <- tf_db_associated_tflink[lengths(tf_db_associated_tflink) != 0]
+```
+
+
+```{r}
+# tf_genes <- rna_seq_dt[rownames(rna_seq_dt) %in% tf_rel_db_tflink$TF_ensembl,]
+# genes_tf_tplink_cor_list <- lapply(corr_methods, function(corr_name){
+#     genes_tf_cor <- mia::getExperimentCrossCorrelation(x = rna_seq_dt, 
+#                                                         experiment2 = tf_genes,
+#                                                         method = corr_name,
+#                                                         assay.type1 = "dt1", 
+#                                                         assay.type2 = "dt1",
+#                                                         test_significance =  TRUE)
+#     genes_tf_cor
+# })
+# names(genes_tf_tplink_cor_list) <- corr_methods
+# saveRDS(genes_tf_tplink_cor_list, paste0(corr_output_dir, "genes_tf_tplink_corr.rds"))
+```
+
+```{r}
+genes_tf_cor_list <- readRDS(paste0(corr_output_dir, "genes_tf_corr.rds"))
+
+genes_tf_cor_list_all <- genes_tf_cor_list
+
+genes_tf_cor_list <- lapply(names(genes_tf_cor_list), function(corr_id){
+    genes_tf_cor <- genes_tf_cor_list[[corr_id]]
+
+    genes_tf_cor <- genes_tf_cor[genes_tf_cor$p_adj <= 0.05,]
+    genes_tf_cor <- genes_tf_cor[as.character(genes_tf_cor$Var1) != as.character(genes_tf_cor$Var2),]
+    genes_tf_cor$isNeg <- ifelse(genes_tf_cor$cor <= 0, "Negative", "Positive")
+
+    genes_tf_cor$gene_dmrReg <- ifelse(genes_tf_cor$Var1 %in%
+                                        gene_dmr_cors_list[[corr_id]]$Var1,
+                                       "Yes", "No")
+    genes_tf_cor$tf_dmrReg <- ifelse(genes_tf_cor$Var2 %in%
+                                        gene_dmr_cors_list[[corr_id]]$Var1,
+                                    "Yes", "No")
+
+    genes_tf_cor
+})
+
+names(genes_tf_cor_list) <- names(genes_tf_cor_list_all)
+
+# tf_associated <- lapply(genes_tf_tplink_cor_list, function(genes_tf_cor){
+#     tf_associated <- tapply(genes_tf_cor$Var2,
+#                         INDEX = genes_tf_cor$Var1,
+#                         FUN = function(x){x})
+#     tf_associated[lengths(tf_associated) != 0]
+# })
+```
+
+#### Correlations Gene-TF in TPLink network
+
+```{r}
+tf_genes_paste_list <- lapply(genes_tf_cor_list, function(genes_tf_cor){
+    paste0(genes_tf_cor$Var2, genes_tf_cor$Var1)
+})
+
+for(corr_id in corr_methods){
+    found_int_tplink[[corr_id]] <- genes_tf_cor_list[[corr_id]]$cor[match(found_nw_paste,
+                                                                          tf_genes_paste_list[[corr_id]])]
+}
+
+tf_genes_paste_list_all <- lapply(genes_tf_cor_list_all, function(genes_tf_cor){
+    paste0(genes_tf_cor$Var2, genes_tf_cor$Var1)
+})
+
+for(corr_id in corr_methods){
+    found_int_tplink[[paste0(corr_id, ".All")]] <- genes_tf_cor_list_all[[corr_id]]$cor[match(found_nw_paste,
+                                                                                            tf_genes_paste_list_all[[corr_id]])]
+}
+```
+
+
+```{r}
+genes_tf_cor_list_plot <- lapply(names(genes_tf_cor_list), function(corr_id){
+    genes_tf_cor <- genes_tf_cor_list[[corr_id]]
+    genes_tf_cor$corr_type <- corr_id
+    genes_tf_cor
+})
+names(genes_tf_cor_list_plot) <- names(genes_tf_cor_list)
+
+tplink_corrs_list <- lapply(names(genes_tf_cor_list_plot), function(corr_id){
+    genes_tf_cor_list_plot[[corr_id]][tf_genes_paste_list[[corr_id]] %in%
+                                            found_nw_paste,] 
+})
+
+tplink_corrs_list_plot <- do.call(rbind, tplink_corrs_list)
+tplink_corrs_list_plot$type <- "TP Link DB Correlations"
+
+genes_tf_cor_list_plot <- do.call(rbind, genes_tf_cor_list_plot)
+genes_tf_cor_list_plot$type <- "All Correlations"
+
+tf_genes_merged <- rbind(genes_tf_cor_list_plot, 
+                        tplink_corrs_list_plot)
+
+
+stat_sum_dt <- lapply(corr_methods, function(corr_id){
+    stat_dt <- tf_genes_merged[tf_genes_merged$corr_type == corr_id,]
+    
+    tapply(abs(stat_dt$cor), INDEX = stat_dt$type, summary)
+})
+names(stat_sum_dt) <- corr_methods
+stat_sum_dt
+
+stat_res <- lapply(corr_methods, function(corr_id){
+    stat_dt <- tf_genes_merged[tf_genes_merged$corr_type == corr_id,]
+    
+    wilcox.test(abs(stat_dt$cor) ~ stat_dt$type)
+})
+names(stat_res) <- corr_methods
+stat_res
+
+ggplot(tf_genes_merged) + geom_boxplot(aes(x = type, y = abs(cor))) + 
+    facet_grid(cols = vars(corr_type)) + theme_minimal() + 
+    xlab(NULL) + ylab("Absolute Correlation")
+
+# table(genes_tf_cor$isNeg)
+# table(tplink_corrs$isNeg)
+```
+
+
+```{r}
+# table(is.na(found_int_tplink$pearson))
+# table(!is.na(found_int_tplink$pearson))
+# 
+# genes_tf_cor_list_all <- lapply(names(genes_tf_tplink_cor_list_all), function(corr_id){
+#     genes_tf_cor_list_all[[corr_id]]$tplink_found <- tf_genes_paste_list_all[[corr_id]] %in% found_nw_paste
+#     genes_tf_cor_list_all[[corr_id]]
+# })
+# names(genes_tf_cor_list_all) <- corr_methods
+# 
+# t_sig <- table(ifelse(genes_tf_cor_list_all$pearson$tplink_found, "Found", "Not found"), 
+#                 ifelse(genes_tf_cor_list_all$pearson$p_adj <= 0.05, "Significant", "Not significant"))
+# t_sig_chi <- chisq.test(t_sig)
+# t_sig_chi
+# t_sig_chi$observed
+# t_sig_chi$expected
+```
+
+
+```{r}
+# table(tf_genes_merged$isNeg, tf_genes_merged$type)
+# 
+# chi_tplink <- chisq.test(table(tf_genes_merged$isNeg, tf_genes_merged$type))
+# chi_tplink
+# chi_tplink$observed
+# chi_tplink$expected
+```
+
+#### TPLink network
+
+```{r}
+tf_nw_tplink_full <- igraph::graph_from_data_frame(tf_rel_db_tflink[,c("TF_ensembl", 
+                                                                        "gene_ensembl", 
+                                                                        "Detection.method")],
+                                                    directed = TRUE)
+
+tf_nw_tplink_full
+
+tf_nw_tplink_full <- set_vertex_attr(graph = tf_nw_tplink_full, name = "isTF", 
+                                     value = names(V(tf_nw_tplink_full)) %in% 
+                                        tf_rel_db_tflink$UniprotID.TF)
+tf_nw_tplink_full_tf <- subgraph(tf_nw_tplink_full, 
+                                vids = V(tf_nw_tplink_full)[names(V(tf_nw_tplink_full)) %in%
+                                                                tf_rel_db_tflink$TF_ensembl])
+
+sum(degree(tf_nw_tplink_full_tf) == 0)
+
+p1 <- ggplot() + 
+    geom_violin(aes(x = "", y = degree(tf_nw_tplink_full_tf, mode = "out")), fill ="powderblue") +
+    geom_boxplot(aes(x = "", y = degree(tf_nw_tplink_full_tf, mode = "out", )), 
+                width = 0.1,  fill ="powderblue") +
+    theme_minimal() + xlab("Number of TFs that are regulated by a TF") + 
+    ylab("Network Out Degree")
+p1
+
+ggsave(filename = paste0(fig_dir, "figure_9_c.svg"), plot = p1, 
+       fix_text_size = FALSE)
+ggsave(filename = paste0(fig_dir, "figure_9_c.png"), plot = p1)
+
+
+p1 <- ggplot() + 
+    geom_violin(aes(x = "", y = degree(tf_nw_tplink_full_tf, mode = "in")), fill ="orange") +
+    geom_boxplot(aes(x = "", y = degree(tf_nw_tplink_full_tf, mode = "in", )), 
+                width = 0.1,  fill ="orange") +
+    theme_minimal() + xlab("Number of TFs that regulate a TF") + 
+    ylab("Network In Degree")
+p1
+
+ggsave(filename = paste0(fig_dir, "figure_9_d.svg"), plot = p1, 
+       fix_text_size = FALSE)
+ggsave(filename = paste0(fig_dir, "figure_9_d.png"), plot = p1)
+
+
+test_colors <- sapply(names(V(tf_nw_tplink_full_tf)), function(node_id){
+    return("white")
+})
+
+test_colors <- rep("white", length(V(tf_nw_tplink_full_tf)))
+
+library(qgraph)
+e <- get.edgelist(tf_nw_tplink_full_tf,names=FALSE)
+l <- qgraph.layout.fruchtermanreingold(e,vcount=vcount(tf_nw_tplink_full_tf),
+                                       area=8*(vcount(tf_nw_tplink_full_tf)^2),repulse.rad=(vcount(tf_nw_tplink_full_tf)^3.1))
+
+png("../../outputs/Paper_Figures_GFCV/figure_9_alt_full_tf.png")
+plot(tf_nw_tplink_full_tf, vertex.size = 4, vertex.label = NA, 
+     edge.arrow.size = 0.4, edge.arrow.width = 0.4, 
+     vertex.color = test_colors, layout = l)
+dev.off()
+
+
+average.path.length(tf_nw_tplink_full)
+average.path.length(tf_nw_tplink_full, weights = NA)
+clusters(tf_nw_tplink_full)$no
+
+raw_bfs_full <- bfs(graph = tf_nw_tplink_full,
+                root = names(V(tf_nw_tplink_full)[names(V(tf_nw_tplink_full)) %in% 
+                                                        dmr_regulated]),
+                mode = "out", unreachable = FALSE)
+raw_bfs_full
+
+
+
+
+test_colors <- rep(NA, length(V(tf_nw_tplink_full)))
+test_colors[names(V(tf_nw_tplink_full)) %in% tf_rel_db_tflink$TF_ensembl] <- "white"
+test_colors[!names(V(tf_nw_tplink_full)) %in% tf_rel_db_tflink$TF_ensembl] <- "powderblue"
+
+table(test_colors)
+
+library(qgraph)
+e <- get.edgelist(tf_nw_tplink_full,names=FALSE)
+l <- qgraph.layout.fruchtermanreingold(e,vcount=vcount(tf_nw_tplink_full),
+                                       area=8*(vcount(tf_nw_tplink_full)^2),repulse.rad=(vcount(tf_nw_tplink_full)^3.1))
+
+png("../../outputs/Paper_Figures_GFCV/figure_9_alt_full.png")
+plot(tf_nw_tplink_full, vertex.size = 4, vertex.label = NA, 
+     edge.arrow.size = 0.4, edge.arrow.width = 0.4, 
+     vertex.color = test_colors, layout = l)
+dev.off()
+
+length(raw_bfs_full$order)/length(V(tf_nw_tplink_full))*100
+
+rm(tf_nw_tplink_full)
+```
+
+
+```{r}
+tf_nw_tplink <- igraph::graph_from_data_frame(found_int_tplink[,c("TF_ensembl", 
+                                                        "gene_ensembl", 
+                                                        "Detection.method", 
+                                                        "pearson", 
+                                                        "spearman",
+                                                        "pearson.All",
+                                                            "spearman.All")],
+                                            directed = TRUE)
+
+library(igraph)
+
+isTF <- ifelse(names(V(tf_nw_tplink)) %in% unique(found_int_tplink$TF_ensembl), TRUE, FALSE)
+names(isTF) <- names(V(tf_nw_tplink))
+
+length(unique(found_int_tplink$TF_ensembl))
+
+tf_nw_tplink <- set_vertex_attr(tf_nw_tplink, name = "isTF", value = isTF)
+
+## pearson DMR regulated
+dmrREG_pearson <- ifelse(names(V(tf_nw_tplink)) %in% 
+                            unique(gene_dmr_cors_list$pearson$Var1),
+                         TRUE, FALSE)
+names(dmrREG_pearson) <- names(V(tf_nw_tplink))
+
+tf_nw_tplink <- set_vertex_attr(tf_nw_tplink, name = "dmrREG.pearson", 
+                                value = dmrREG_pearson)
+
+# spearman DMR regulated
+dmrREG_spearman <- ifelse(names(V(tf_nw_tplink)) %in% 
+                            unique(gene_dmr_cors_list$spearman$Var1),
+                         TRUE, FALSE)
+names(dmrREG_pearson) <- names(V(tf_nw_tplink))
+
+tf_nw_tplink <- set_vertex_attr(tf_nw_tplink, name = "dmrREG.spearman", 
+                                value = dmrREG_spearman)
+
+# DMR regulated
+tf_nw_tplink <- set_vertex_attr(tf_nw_tplink, name = "dmrREG", 
+                                value = (vertex_attr(tf_nw_tplink, name = "dmrREG.pearson") |
+                                            vertex_attr(tf_nw_tplink, name = "dmrREG.spearman")))
+
+
+tf_dmr_regulated_tplink <- vertex_attr(tf_nw_tplink, name = "isTF") & 
+    (vertex_attr(tf_nw_tplink, name = "dmrREG.pearson") | 
+        vertex_attr(tf_nw_tplink, name = "dmrREG.spearman"))
+
+for(fc_id in names(fc_dt_g)[1:3]){
+    tf_nw_tplink <- set_vertex_attr(tf_nw_tplink, name = fc_id, 
+                                    value = fc_dt_g[[fc_id]][match(names(V(tf_nw_tplink)), 
+                                                                    rownames(fc_dt_g))])    
+}
+
+
+# vertex_attr(tf_nw_tplink, "HFD-CNT.log2FC")
+sum(tf_dmr_regulated_tplink)
+
+
+names(V(tf_nw_tplink)[tf_dmr_regulated_tplink])
+
+sum(vertex_attr(tf_nw_tplink, name = "isTF"))
+sum(tf_dmr_regulated_tplink)
+sum(vertex_attr(tf_nw_tplink, name = "dmrREG.pearson"))
+sum(vertex_attr(tf_nw_tplink, name = "dmrREG.spearman"))
+```
+
+
+```{r}
+# Unfiltered network
+average.path.length(tf_nw_tplink)
+average.path.length(tf_nw_tplink, weights = NA)
+clusters(tf_nw_tplink)$no
+
+raw_bfs <- bfs(graph = tf_nw_tplink,
+                root = names(V(tf_nw_tplink)[vertex_attr(graph = tf_nw_tplink, 
+                                                        name = "dmrREG")]),
+                mode = "out", unreachable = FALSE)
+length(raw_bfs$order)/length(V(tf_nw_tplink))*100
+
+
+degree_dist_dmr_reg <- data.frame(
+    "Degree" = degree(tf_nw_tplink, v = vertex_attr(graph = tf_nw_tplink,
+                                                        name = "isTF"), mode = "out"),
+    "dmrREG" = ifelse(vertex_attr(graph = tf_nw_tplink, name = "dmrREG", 
+                            index = vertex_attr(graph = tf_nw_tplink, name = "isTF")), "Yes", "No"))
+
+ggplot(degree_dist_dmr_reg) + geom_histogram(aes(x = Degree, fill = dmrREG)) 
+    
+wilcox.test(degree_dist_dmr_reg$Degree ~ degree_dist_dmr_reg$dmrREG)
+# plot(tf_nw_tplink, vertex.size = 4, vertex.label = NA, 
+#      edge.arrow.size = 0.2, edge.arrow.width = 0.5, 
+#      vertex.color = vertex_attr(tf_nw_tplink_test_tf, name = "dmrREG"))
+
+# Any correlations network
+tf_nw_tplink_test <- subgraph.edges(tf_nw_tplink, 
+                                    eids = E(tf_nw_tplink)[!is.na(edge_attr(tf_nw_tplink, 
+                                                                            name = corr_id))],
+                                    delete.vertices = TRUE)
+
+average.path.length(tf_nw_tplink_test)
+
+degree_dmr_reg <- degree(tf_nw_tplink_test, 
+                        v = vertex_attr(graph = tf_nw_tplink_test, name = "dmrREG"),
+                        mode = "out")
+```
+
+
+```{r}
+degree_no_dmr_reg <- degree(tf_nw_tplink_test, 
+                    v = !vertex_attr(graph = tf_nw_tplink_test, name = "dmrREG"), 
+                    mode = "out")
+
+degree_dist_dmr_reg <- data.frame(
+    "Degree" = degree(tf_nw_tplink_test, v = vertex_attr(graph = tf_nw_tplink_test,
+                                                        name = "isTF"), mode = "out"),
+    "dmrREG" = ifelse(vertex_attr(graph = tf_nw_tplink_test, name = "dmrREG", 
+                            index = vertex_attr(graph = tf_nw_tplink_test, name = "isTF")), "Yes", "No"))
+
+ggplot(degree_dist_dmr_reg) + geom_histogram(aes(x = Degree, fill = dmrREG)) 
+
+length(degree_dist_dmr_reg$Degree)
+p1 <- ggplot(degree_dist_dmr_reg) + 
+    geom_violin(aes(x = dmrREG, y = Degree, fill = dmrREG)) +     
+    geom_boxplot(aes(x = dmrREG, y = Degree, fill = dmrREG), width = 0.1) + 
+    ylab("TF network out degree") +
+    ggtitle("Number of regulated genes by TFs") + 
+    theme_minimal() + xlab("DMR Regulated") + 
+    theme(legend.position = "none") +  
+    scale_fill_brewer(palette = "Pastel1") + 
+    annotate(geom = "text", x = c("No", "Yes"), y = max(degree_dist_dmr_reg$Degree) + 100, 
+            label = paste0("N = ", table(degree_dist_dmr_reg$dmrREG)))
+p1
+ggsave(filename = paste0(fig_dir, "figure_9_b.svg"), plot = p1, 
+       fix_text_size = FALSE)
+ggsave(filename = paste0(fig_dir, "figure_9_b.png"), plot = p1)
+wilcox.test(degree_dist_dmr_reg$Degree ~ degree_dist_dmr_reg$dmrREG)
+```
+
+
+```{r}
+mean(degree(tf_nw_tplink_test, mode = "out"))
+
+tf_bfs <- bfs(graph = tf_nw_tplink_test,
+                root = names(V(tf_nw_tplink_test)[vertex_attr(graph = tf_nw_tplink_test, 
+                                                        name = "dmrREG")]),
+                mode = "out", unreachable = FALSE)
+
+test_colors <- sapply(names(V(tf_nw_tplink_test)), function(node_id){
+    if(vertex_attr(tf_nw_tplink_test, index = node_id, name = "dmrREG")){
+        return("orange")
+    } else if(node_id %in% names(tf_bfs$order)){
+        return("powderblue")        
+    } else{
+        return("white")
+    }
+})
+table(test_colors)
+
+library(qgraph)
+e <- get.edgelist(tf_nw_tplink_test,names=FALSE)
+l <- qgraph.layout.fruchtermanreingold(e,vcount=vcount(tf_nw_tplink_test),
+                                       area=8*(vcount(tf_nw_tplink_test)^2),repulse.rad=(vcount(tf_nw_tplink_test)^3.1))
+
+svg("../../outputs/Paper_Figures_GFCV/figure_9_alt.svg")
+plot(tf_nw_tplink_test, vertex.size = 4, vertex.label = NA, 
+     edge.arrow.size = 0.4, edge.arrow.width = 0.4, 
+     vertex.color = test_colors, layout = l)
+dev.off()
+
+png("../../outputs/Paper_Figures_GFCV/figure_9_alt.png")
+plot(tf_nw_tplink_test, vertex.size = 4, vertex.label = NA, 
+     edge.arrow.size = 0.4, edge.arrow.width = 0.4, 
+     vertex.color = test_colors, layout = l)
+dev.off()
+
+
+# TF network
+tf_nw_tplink_test_tf <- subgraph(tf_nw_tplink_test, 
+                                vids = vertex_attr(graph = tf_nw_tplink_test,
+                                                    name = "isTF"))
+
+average.path.length(tf_nw_tplink_test_tf)
+
+degree_dist_dmr_reg <- data.frame(
+    "Degree" = degree(tf_nw_tplink_test_tf, v = vertex_attr(graph = tf_nw_tplink_test_tf,
+                                                        name = "isTF"), mode = "out"),
+    "dmrREG" = vertex_attr(graph = tf_nw_tplink_test_tf, name = "dmrREG", 
+                            index = vertex_attr(graph = tf_nw_tplink_test_tf, name = "isTF")))
+
+ggplot(degree_dist_dmr_reg) + geom_histogram(aes(x = Degree))
+```
+
+```{r}
+degree_no_dmr_reg <- degree(tf_nw_tplink_test_tf, 
+                    v = !vertex_attr(graph = tf_nw_tplink_test_tf, name = "dmrREG"), 
+                    mode = "out")
+
+degree_dist_dmr_reg <- data.frame(
+    "Degree" = degree(tf_nw_tplink_test_tf, mode = "out"),
+    "dmrREG" = ifelse(vertex_attr(graph = tf_nw_tplink_test_tf, name = "dmrREG", 
+                            index = vertex_attr(graph = tf_nw_tplink_test_tf, name = "isTF")), "Yes", "No"))
+
+ggplot(degree_dist_dmr_reg) + geom_histogram(aes(x = Degree, fill = dmrREG)) 
+
+length(degree_dist_dmr_reg$Degree)
+p1 <- ggplot(degree_dist_dmr_reg) + 
+    geom_violin(aes(x = dmrREG, y = Degree, fill = dmrREG)) +     
+    geom_boxplot(aes(x = dmrREG, y = Degree, fill = dmrREG), width = 0.1) + 
+    ylab("TF network out degree") +
+    ggtitle("Number of regulated TFs by TFs") + 
+    theme_minimal() + xlab("DMR Regulated") + 
+    theme(legend.position = "none") +  
+    scale_fill_brewer(palette = "Pastel1") + 
+    annotate(geom = "text", x = c("No", "Yes"), y = max(degree_dist_dmr_reg$Degree) + 100, 
+            label = paste0("N = ", table(degree_dist_dmr_reg$dmrREG)))
+p1
+ggsave(filename = paste0(fig_dir, "figure_9_b.svg"), plot = p1, 
+       fix_text_size = FALSE)
+ggsave(filename = paste0(fig_dir, "figure_9_b.png"), plot = p1)
+wilcox.test(degree_dist_dmr_reg$Degree ~ degree_dist_dmr_reg$dmrREG)
+```
+```{r}
+wilcox.test(degree_dist_dmr_reg$Degree ~ degree_dist_dmr_reg$dmrREG)
+hist(degree(tf_nw_tplink_test_tf, mode = "out"), breaks = 100)
+
+tf_bfs <- bfs(graph = tf_nw_tplink_test_tf,
+                root = names(V(tf_nw_tplink_test_tf)[vertex_attr(graph = tf_nw_tplink_test_tf, 
+                                                        name = "dmrREG")]),
+                mode = "out", unreachable = FALSE)
+
+test_colors <- sapply(names(V(tf_nw_tplink_test_tf)), function(node_id){
+    if(vertex_attr(tf_nw_tplink_test_tf, index = node_id, name = "dmrREG")){
+        return("orange")
+    } else if(node_id %in% names(tf_bfs$order)){
+        return("powderblue")        
+    } else{
+        return("white")
+    }
+})
+table(test_colors)
+
+library(qgraph)
+e <- get.edgelist(tf_nw_tplink_test_tf,names=FALSE)
+l <- qgraph.layout.fruchtermanreingold(e,vcount=vcount(tf_nw_tplink_test_tf),
+                                       area=8*(vcount(tf_nw_tplink_test_tf)^2),repulse.rad=(vcount(tf_nw_tplink_test_tf)^3.1))
+
+svg("../../outputs/Paper_Figures_GFCV/figure_9.svg")
+plot(tf_nw_tplink_test_tf, vertex.size = 4, vertex.label = NA, 
+     edge.arrow.size = 0.4, edge.arrow.width = 0.4, 
+     vertex.color = test_colors, layout = l)
+dev.off()
+
+png("../../outputs/Paper_Figures_GFCV/figure_9.png")
+plot(tf_nw_tplink_test_tf, vertex.size = 4, vertex.label = NA, 
+     edge.arrow.size = 0.4, edge.arrow.width = 0.4, 
+     vertex.color = test_colors, layout = l)
+dev.off()
+```
+
+```{r}
+## Testing if genes at larger distances have also lower FCs
+for(corr_id in corr_methods){
+    test_dist <- igraph::distances(graph = tf_nw_tplink_test, 
+                                    v = V(tf_nw_tplink_test)[vertex_attr(tf_nw_tplink_test, "dmrREG.spearman") &
+                                                                vertex_attr(tf_nw_tplink_test, "isTF")], 
+                                    mode = "out")
+    
+    
+    nw_attr <- vertex.attributes(graph = tf_nw_tplink_test)[c("HFD-CNT.log2FC", 
+                                                            "INT-CNT.log2FC",  
+                                                            "INT-HFD.log2FC")]
+    nw_attr <- as.data.frame(do.call(cbind,nw_attr))
+    nw_attr$dist_dt <- apply(test_dist, 2, min)
+    
+    rownames(nw_attr) <- names(V(tf_nw_tplink_test))
+    nw_attr <- nw_attr[!(rownames(nw_attr) %in% names(V(tf_nw_tplink_test))[!vertex_attr(tf_nw_tplink_test, 
+                                                                                        paste0("dmrREG.",
+                                                                                                corr_id)) &
+                                                                                !vertex_attr(tf_nw_tplink_test, "isTF")]),]
+    
+    for(fc_id in names(nw_attr)[1:3]){
+        
+        print(tapply(abs(nw_attr[[fc_id]]), nw_attr$dist_dt, summary))
+        
+        print(ggplot(nw_attr) + geom_boxplot(aes(x = as.factor(dist_dt), 
+                                     y = abs(.data[[fc_id]]))))
+    }
+    
+    nw_attr$total_fc <- abs(nw_attr$`HFD-CNT.log2FC`) + abs(nw_attr$`INT-HFD.log2FC`)
+    
+    print(tapply(abs(nw_attr[["total_fc"]]), nw_attr$dist_dt, summary))
+    
+    print(ggplot(nw_attr) + geom_boxplot(aes(x = as.factor(dist_dt), 
+                                     y = abs(.data[["total_fc"]]))))
+}
+```
+
+```{r}
+long_dt <- as_adjacency_matrix(tf_nw_tplink_test, attr = "spearman")
+long_dt <- long_dt[names(V(tf_nw_tplink_test))[vertex_attr(tf_nw_tplink_test, "dmrREG.spearman") &
+                                                            vertex_attr(tf_nw_tplink_test, "isTF")],]
+dist_mat <- distances(tf_nw_tplink_test, 
+                        v = V(tf_nw_tplink_test)[vertex_attr(tf_nw_tplink_test, "dmrREG.spearman") &
+                                                            vertex_attr(tf_nw_tplink_test, "isTF")],
+                        mode = "out")
+
+corr_info <- lapply(colnames(long_dt), function(nw_id){
+    dist_id <- which.min(dist_mat[,nw_id])
+    corr_dt <- long_dt[dist_id, nw_id]
+    data.frame("Distance" = min(dist_mat[,nw_id]),
+               "Correlation" = corr_dt)
+})
+corr_info <- do.call(rbind, corr_info)
+
+ggplot(corr_info) + geom_boxplot(aes(x = as.factor(Distance), 
+                                 y = abs(.data[["Correlation"]])))
+# dim(long_dt)
+# dim(dist_mat)
+# all(rownames(long_dt) == rownames(dist_mat))
+```
+
+
+
+### Correlations Genes-Histones (already done)
+
+```{r}
+overlap_samples_2 <- intersect(colnames(rna_seq_dt), colnames(histone_dt))
+
+genes_histone_cor_list <- lapply(corr_methods, function(corr_name){
+    mia::getExperimentCrossCorrelation(x = rna_seq_dt[,overlap_samples_2], 
+                                        experiment2 = histone_dt[,overlap_samples_2],
+                                        method = corr_name,
+                                        assay.type1 = "dt1", 
+                                        assay.type2 = "dt1",
+                                        test_significance =  TRUE)
+})
+names(genes_histone_cor_list) <- corr_methods
+saveRDS(genes_histone_cor_list, paste0(corr_output_dir, "genes_histone_corr.rds"))
+```
+
+```{r}
+genes_histone_cor_list <- readRDS(paste0(corr_output_dir, "genes_histone_corr.rds"))
+genes_histone_cor_list_all <- genes_histone_cor_list
+
+residues_dict <- rowData(histone_dt)$Histone_Residues_K
+names(residues_dict) <- rownames(histone_dt)
+    
+genes_histone_cor_list <- lapply(names(genes_histone_cor_list), function(corr_id){
+    genes_histone_cor <- genes_histone_cor_list[[corr_id]]
+    genes_histone_cor <- genes_histone_cor[genes_histone_cor$p_adj <= 0.05,]
+    genes_histone_cor$isNeg <- ifelse(genes_histone_cor$cor <= 0, "Negative", "Positive")
+
+    genes_histone_cor$gene_dmrReg <- ifelse(genes_histone_cor$Var1 %in%
+                                            gene_dmr_cors_list[[corr_id]]$Var1, 
+                                       "Yes", "No")
+    genes_histone_cor$tf_dmrReg <- ifelse(genes_histone_cor$Var2 %in%
+                                            gene_dmr_cors_list[[corr_id]]$Var1, 
+                                    "Yes", "No")
+    genes_histone_cor$residue_K <- residues_dict[as.character(genes_histone_cor$Var2)]
+        
+    genes_histone_cor
+})
+names(genes_histone_cor_list) <- names(genes_histone_cor_list_all)
+
+histone_associated <- lapply(genes_histone_cor_list, function(genes_histone_cor){
+    histone_associated <- tapply(genes_histone_cor$Var2, 
+                        INDEX = genes_histone_cor$Var1, 
+                        function(x){x})
+    histone_associated[lengths(histone_associated) != 0]
+})
+```
+
+```{r}
+lapply(names(genes_histone_cor_list), function(corr_id){
+    genes_histone_cor <- genes_histone_cor_list[[corr_id]]
+    ggplot(genes_histone_cor) + geom_boxplot(aes(x = isNeg, y = abs(cor), fill = isNeg)) + 
+        theme_minimal() + ggtitle(paste0(corr_id)) + 
+        xlab("Type of correlation") + ylab("Absolute correlation") + 
+        theme(legend.position = "none") + 
+        scale_fill_manual(values = list("Positive" = "lightcoral", 
+                                        "Negative" = "lightblue"))
+})
+
+lapply(genes_histone_cor_list, function(genes_histone_cor){
+    table(genes_histone_cor$isNeg)
+})
+lapply(genes_histone_cor_list, function(genes_histone_cor){
+    chisq.test(table(genes_histone_cor$isNeg))
+})
+
+lapply(genes_histone_cor_list, function(genes_histone_cor){
+    wilcox.test(abs(genes_histone_cor$cor) ~ genes_histone_cor$isNeg) 
+})
+  
+lapply(genes_histone_cor_list, function(genes_histone_cor){
+    tapply(abs(genes_histone_cor$cor), genes_histone_cor$isNeg, summary) 
+})  
+```
+
+```{r}
+lapply(genes_histone_cor_list, function(genes_histone_cor){
+    table(genes_histone_cor$Var1)
+}) 
+
+lapply(genes_histone_cor_list, function(genes_histone_cor){
+    table(table(genes_histone_cor$Var1) != 0)
+})
+
+lapply(genes_histone_cor_list, function(genes_histone_cor){
+    table(genes_histone_cor$Var2)
+})  
+lapply(genes_histone_cor_list, function(genes_histone_cor){
+    table(genes_histone_cor$residue_K)
+})
+```
+
+
+### Correlations Genes-OtherRNA
+
+```{r}
+lncRNA_genes <- rna_seq_dt[rowData(rna_seq_dt)$gene_biotype == "lncRNA" &
+                                    !is.na(rowData(rna_seq_dt)$gene_biotype),]
+
+genes_lncRNA_cor_list <- lapply(corr_methods, function(corr_name){
+    genes_tf_cor <- mia::getExperimentCrossCorrelation(x = rna_seq_dt, 
+                                                        experiment2 = lncRNA_genes,
+                                                        method = corr_name,
+                                                        assay.type1 = "dt1", 
+                                                        assay.type2 = "dt1",
+                                                        test_significance =  TRUE)
+    genes_tf_cor
+})
+names(genes_lncRNA_cor_list) <- corr_methods
+saveRDS(genes_lncRNA_cor_list, paste0(corr_output_dir, "genes_lncRNA_corr.rds"))
+
+```
+
+### Correlations All Genes-Histones 
+
+```{r}
+overlap_samples_2 <- intersect(colnames(rna_seq_all), colnames(histone_all))
+
+all_genes_histone_cor_list_all <- lapply(corr_methods, function(corr_name){
+    mia::getExperimentCrossCorrelation(x = rna_seq_all[,overlap_samples_2], 
+                                        experiment2 = histone_all[,overlap_samples_2],
+                                        method = corr_name,
+                                        assay.type1 = "dt1", 
+                                        assay.type2 = "dt1",
+                                        test_significance =  TRUE)
+})
+names(all_genes_histone_cor_list_all) <- corr_methods
+
+saveRDS(all_genes_histone_cor_list_all, paste0(corr_output_dir, "all_genes_tf_corr.rds"))
+```
+
+```{r}
+all_genes_histone_cor_list_all <- readRDS(paste0(corr_output_dir, "all_genes_tf_corr.rds"))
+
+all_genes_histone_cor_list_all <- lapply(names(all_genes_histone_cor_list_all), function(corr_id){
+    genes_histone_cor <- all_genes_histone_cor_list_all[[corr_id]]
+    
+    genes_histone_cor$isNeg <- ifelse(genes_histone_cor$cor <= 0, "Negative", "Positive")
+
+    genes_histone_cor$gene_dmrReg <- ifelse(genes_histone_cor$Var1 %in%
+                                        gene_dmr_cors_list[[corr_id]]$Var1, 
+                                       "Gene dmr reg", "Gene not dmr reg")
+
+    genes_histone_cor$histone_isSig <- ifelse(genes_histone_cor$Var2 %in%
+                                        rownames(histone_dt), 
+                                    "Histone sig", "Histone not sig")
+    genes_histone_cor$gene_isSig <- ifelse(genes_histone_cor$Var1 %in%
+                                        rownames(rna_seq_dt), 
+                                    "Gene sig", "Gene not sig")
+    genes_histone_cor$both_isSig <- ifelse(genes_histone_cor$gene_isSig == "Gene sig" &
+                                          genes_histone_cor$histone_isSig == "Histone sig", 
+                                    "Both sig", "Both not sig")
+    genes_histone_cor
+})
+names(all_genes_histone_cor_list_all) <- corr_methods
+
+all_genes_histone_cor_list <- lapply(all_genes_histone_cor_list_all, function(genes_histone_cor){
+    genes_histone_cor[genes_histone_cor$p_adj <= 0.05,] 
+})
+# tf_associated <- lapply(all_genes_histone_cor, function(genes_histone_cor){
+#     tf_associated <- tapply(genes_histone_cor$Var2, 
+#                         INDEX = genes_histone_cor$Var1, 
+#                         FUN = function(x){x})
+#     tf_associated[lengths(tf_associated) != 0]
+# })
+# names(all_genes_histone_cor) <- names(all_genes_histone_cor_list_all)
+```
+
+```{r}
+lapply(all_genes_histone_cor_list_all, function(genes_histone_cor){
+    table(genes_histone_cor$both_isSig,
+          genes_histone_cor$gene_dmrReg)
+})
+```
+
+```{r}
+lapply(names(all_genes_histone_cor_list_all), function(genes_histone_cor_id){
+    genes_histone_cor <- all_genes_histone_cor_list_all[[genes_histone_cor_id]]
+    
+    ggplot(genes_histone_cor) + geom_boxplot(aes(x = isNeg, y = abs(cor), fill = isNeg)) + 
+        theme_minimal() + ggtitle(paste0(genes_histone_cor_id)) + 
+        xlab("Type of correlation") + ylab("Absolute correlation") + 
+        theme(legend.position = "none") + 
+        scale_fill_manual(values = list("Positive" = "lightcoral", 
+                                        "Negative" = "lightblue"))
+})
+
+lapply(all_genes_histone_cor_list_all, function(genes_histone_cor){
+    table(genes_histone_cor$isNeg)
+})
+lapply(all_genes_histone_cor_list_all, function(genes_histone_cor){
+    chisq.test(table(genes_histone_cor$isNeg))
+})
+
+lapply(all_genes_histone_cor_list_all, function(genes_histone_cor){
+    wilcox.test(abs(genes_histone_cor$cor) ~ genes_histone_cor$both_isSig) 
+})
+  
+lapply(all_genes_histone_cor_list_all, function(genes_histone_cor){
+    tapply(abs(genes_histone_cor$cor), genes_histone_cor$both_isSig, summary) 
+})  
+
+
+
+lapply(all_genes_histone_cor_list_all, function(genes_histone_cor){
+    t1 <- table(genes_histone_cor$both_isSig, genes_histone_cor$p_adj <= 0.05) 
+    t1_c <- chisq.test(t1)
+    list(t1_c$expected, t1_c$observed, t1_c)
+})  
+
+
+
+lapply(all_genes_histone_cor_list, function(genes_histone_cor){
+    wilcox.test(abs(genes_histone_cor$cor) ~ genes_histone_cor$both_isSig) 
+})
+
+lapply(all_genes_histone_cor_list, function(genes_histone_cor){
+    tapply(abs(genes_histone_cor$cor), genes_histone_cor$both_isSig, summary) 
+})  
+```
+
+### Correlations All Genes-TF
+
+```{r}
+library(org.Mm.eg.db)
+tf_db <- read.table("../../inputs/RNA_Sequencing/export_tfcheckpoint.txt", 
+                    sep = "\t", header = TRUE)
+mouse_tf_ids <- tf_db$Mouse_entrez[!is.na(tf_db$Mouse_entrez)]
+mouse_tf_ensembl <- mapIds(org.Mm.eg.db, keys = as.character(mouse_tf_ids), 
+                        column = "ENSEMBL", keytype = "ENTREZID", 
+                        multiVals = "first")
+nw_ids_tfs <- paste0("RNA_Sequencing.", mouse_tf_ensembl)
+
+tf_genes_all <- rna_seq_all[rownames(rna_seq_all) %in% mouse_tf_ensembl,]
+
+all_genes_tf_cor <- lapply(corr_methods, function(corr_name){
+    mia::getExperimentCrossCorrelation(x = rna_seq_all, 
+                                        experiment2 = tf_genes_all,
+                                        method = corr_name,
+                                        assay.type1 = "dt1", 
+                                        assay.type2 = "dt1",
+                                        test_significance =  TRUE)
+})
+names(all_genes_tf_cor) <- corr_methods
+
+saveRDS(all_genes_tf_cor, paste0(corr_output_dir, "all_genes_tf_corr.rds"))
+```
+
+```{r}
+all_genes_tf_cor_list_all <- readRDS(paste0(corr_output_dir, "all_genes_tf_corr.rds"))
+
+all_genes_tf_cor_list_all <- lapply(names(all_genes_tf_cor_list_all), function(corr_id){
+    genes_tf_cor <- all_genes_tf_cor_list_all[[corr_id]]
+    
+       
+    genes_tf_cor <- genes_tf_cor[as.character(genes_tf_cor$Var1) != as.character(genes_tf_cor$Var2),]
+    genes_tf_cor$isNeg <- ifelse(genes_tf_cor$cor <= 0, "Negative", "Positive")
+
+    genes_tf_cor$gene_dmrReg <- ifelse(genes_tf_cor$Var1 %in%
+                                        gene_dmr_cors_list[[corr_id]]$Var1, 
+                                       "Gene dmr reg", "Gene not dmr reg")
+    genes_tf_cor$tf_dmrReg <- ifelse(genes_tf_cor$Var2 %in%
+                                        gene_dmr_cors_list[[corr_id]]$Var1, 
+                                    "TF dmr reg", "TF not dmr reg")
+    genes_tf_cor$tf_isSig <- ifelse(genes_tf_cor$Var2 %in%
+                                        rownames(rna_seq_dt), 
+                                    "TF sig", "TF not sig")
+    genes_tf_cor$gene_isSig <- ifelse(genes_tf_cor$Var1 %in%
+                                        rownames(rna_seq_dt), 
+                                    "Gene sig", "Gene not sig")
+    genes_tf_cor$both_isSig <- ifelse(genes_tf_cor$gene_isSig == "Gene sig" &
+                                          genes_tf_cor$tf_isSig == "TF sig", 
+                                    "Both sig", "Both not sig")
+    genes_tf_cor$both_dmrReg <- ifelse(genes_tf_cor$gene_dmrReg == "Gene dmr reg" &
+                                          genes_tf_cor$tf_dmrReg == "TF dmr reg", 
+                                    "Both dmr reg", "Both not dmr reg")
+    genes_tf_cor
+})
+names(all_genes_tf_cor_list_all) <- corr_methods
+
+all_genes_tf_cor_list <- lapply(all_genes_tf_cor_list_all, function(genes_tf_cor){
+    genes_tf_cor[genes_tf_cor$p_adj <= 0.05,] 
+})
+# tf_associated <- lapply(all_genes_tf_cor, function(genes_tf_cor){
+#     tf_associated <- tapply(genes_tf_cor$Var2, 
+#                         INDEX = genes_tf_cor$Var1, 
+#                         FUN = function(x){x})
+#     tf_associated[lengths(tf_associated) != 0]
+# })
+# names(all_genes_tf_cor) <- names(all_genes_tf_cor_list_all)
+```
+
+```{r}
+lapply(all_genes_tf_cor_list_all, function(genes_tf_cor){
+    table(genes_tf_cor$both_isSig,
+          genes_tf_cor$both_dmrReg)
+})
+```
+
+```{r}
+lapply(names(all_genes_tf_cor_list_all), function(genes_tf_cor_id){
+    genes_tf_cor <- genes_tf_cor_list[[genes_tf_cor_id]]
+    
+    ggplot(genes_tf_cor) + geom_boxplot(aes(x = isNeg, y = abs(cor), fill = isNeg)) + 
+        theme_minimal() + ggtitle(paste0(genes_tf_cor_id)) + 
+        xlab("Type of correlation") + ylab("Absolute correlation") + 
+        theme(legend.position = "none") + 
+        scale_fill_manual(values = list("Positive" = "lightcoral", 
+                                        "Negative" = "lightblue"))
+})
+
+lapply(genes_tf_cor_list, function(genes_tf_cor){
+    table(genes_tf_cor$isNeg)
+})
+lapply(genes_tf_cor_list, function(genes_tf_cor){
+    chisq.test(table(genes_tf_cor$isNeg))
+})
+
+lapply(all_genes_tf_cor_list_all, function(genes_tf_cor){
+    wilcox.test(abs(genes_tf_cor$cor) ~ genes_tf_cor$both_isSig) 
+})
+  
+lapply(all_genes_tf_cor_list_all, function(genes_tf_cor){
+    tapply(abs(genes_tf_cor$cor), genes_tf_cor$both_isSig, summary) 
+})  
+
+
+
+lapply(all_genes_tf_cor_list_all, function(genes_tf_cor){
+    t1 <- table(genes_tf_cor$both_isSig, genes_tf_cor$p_adj <= 0.05) 
+    t1_c <- chisq.test(t1)
+    list(t1_c$expected, t1_c$observed, t1_c)
+})  
+
+
+
+lapply(all_genes_tf_cor_list, function(genes_tf_cor){
+    wilcox.test(abs(genes_tf_cor$cor) ~ genes_tf_cor$both_isSig) 
+})
+
+lapply(all_genes_tf_cor_list, function(genes_tf_cor){
+    tapply(abs(genes_tf_cor$cor), genes_tf_cor$both_isSig, summary) 
+})  
+```
+
+
+
+```{r}
+all_genes_tf_cor <- readRDS(paste0(corr_output_dir, "all_genes_tf_corr.rds"))
+all_genes_tf_cor <- all_genes_tf_cor[as.character(all_genes_tf_cor$Var1) != as.character(all_genes_tf_cor$Var2),]
+
+
+all_genes_tf_cor$Var1_sig <- all_genes_tf_cor$Var1 %in% rownames(rna_seq_dt)
+all_genes_tf_cor$Var2_sig <- all_genes_tf_cor$Var2 %in% rownames(rna_seq_dt)    
+all_genes_tf_cor$sig <- all_genes_tf_cor$p_adj <= 0.05
+
+all_genes_tf_cor$Var1_2_sig <- all_genes_tf_cor$Var1_sig & all_genes_tf_cor$Var2_sig
+
+## This proves that genes that are varying with the HFD/INT have more significant correlations with histones implying a higher regulation
+t2 <- table(all_genes_tf_cor$sig, all_genes_tf_cor$Var1_2_sig)
+prop.table(t2)
+chi_2 <- chisq.test(t2)
+chi_2$observed
+chi_2$expected
+chi_2
+
+all_genes_tf_cor <- all_genes_tf_cor[all_genes_tf_cor$p_adj <= 0.05,]
+```
+
+```{r}
+genes_tf_cor$isNeg <- ifelse(genes_tf_cor$cor <= 0, "Negative", "Positive")
+table(genes_tf_cor$isNeg)
+hist(genes_tf_cor$cor, breaks = 100)
+```
+
+### Combining the results 
+
+```{r}
+num_dt_list <- lapply(corr_methods, function(corr_id){
+    corr_dt <- lapply(rownames(rna_seq_dt), function(ensembl_id){
+        
+        histone_ids <- histone_associated[[corr_id]][[ensembl_id]]
+        tf_ids <- tf_associated[[corr_id]][[ensembl_id]]
+        dmr_ids <- dmr_associated[[corr_id]][[ensembl_id]]
+        tf_db_tplink_ids <- tf_db_associated_tflink[[corr_id]][[ensembl_id]]
+        
+        
+        data.frame("Num_Histones" = length(histone_ids),
+                   "Num_TF" = length(tf_ids),
+                   "Num_DMRs" = length(dmr_ids),
+                   "Any_DMRs" = length(dmr_ids) != 0,
+                   "is_TF" = ensembl_id %in% rownames(tf_genes),
+                   "Num_TF_DB_tplink" = length(tf_db_tplink_ids),
+                   "Num_Histone_pc" = length(histone_ids)/nrow(histone_dt),
+                   "Num_TF_pc" = length(tf_ids)/nrow(tf_genes)
+                   # "Num_DMRs_pc" = length(dmr_ids),
+                   # "Num_TF_DB_pc" = length(tf_db_ids)
+                   )
+    })
+    corr_dt <- do.call(rbind, corr_dt)
+    rownames(corr_dt) <- rownames(rna_seq_dt)
+    corr_dt
+})
+names(num_dt_list) <- corr_methods
+```
+
+
+```{r}
+overall_p <- function(my_model) {
+    f <- summary(my_model)$fstatistic
+    p <- pf(f[1],f[2],f[3],lower.tail=F)
+    attributes(p) <- NULL
+    return(p)
+}
+
+
+for(corr_id in names(num_dt_list)){
+    num_dt <- num_dt_list[[corr_id]]
+    num_dt <- cbind(num_dt, fc_dt_g)
+    
+    for(fc_ct_id in colnames(fc_dt_g[1:4])){
+        print(paste0(fc_ct_id, " Num. histones"))
+        print(cor.test(abs(fc_dt_g[[fc_ct_id]]), 
+                       num_dt$Num_Histones))
+        print(paste0(fc_ct_id, " Num. TFs"))
+        print(cor.test(abs(fc_dt_g[[fc_ct_id]]), 
+                       num_dt$Num_TF))
+    }
+    
+    print(cor.test(num_dt$Num_Histones, num_dt$Num_TF))
+    
+    lm_mod <- lm(num_dt$Num_Histones ~ num_dt$Num_TF)
+    lm_sum <- summary(lm_mod)
+    
+    print(lm_sum)
+    
+    test_mod <- paste0("y = ", round(lm_sum$coefficients[1,1], 2), " + ", 
+                       round(lm_sum$coefficients[2,1], 3), "x \n R = ", round(lm_sum$adj.r.squared, 2), 
+                       " / p-value = ", round(overall_p(lm_mod), 2)) 
+    
+    p1 <- ggplot(num_dt) + geom_point(aes(x = Num_Histones, y= Num_TF)) + 
+            xlab("Number of histone correlations") + ylab("Number of TF correlations") + 
+            theme_minimal() + ggtitle(paste(corr_id, "correlations")) + 
+            geom_smooth(method = "lm", aes(x = Num_Histones, y = Num_TF)) +
+            annotate(geom = "text", x = 2, y = 200, label = test_mod)
+    print(p1)
+    ggsave(filename = paste0(fig_dir, "figure_10_", corr_id, ".svg"), 
+            plot = p1,  fix_text_size = FALSE)
+    ggsave(filename = paste0(fig_dir, "figure_10_", corr_id, ".png"), 
+            plot = p1)
+    
+}
+```
+
+
+```{r}
+# Are non-coding-RNA more enriched in genes regulated with their own DMRs?
+genes_type_sig$isDMRreg <- genes_type_sig$ensembl_gene_id %in% unique(gene_dmr_cors$Var1)
+
+t_gb_dmr <- table(genes_type_sig$gene_biotype, genes_type_sig$isDMRreg)
+t_gb_dmr
+t_gb_dmr_chi <- chisq.test(t_gb_dmr)
+t_gb_dmr_chi
+t_gb_dmr_chi$observed
+t_gb_dmr_chi$expected
+
+
+
+# Do genes that are not regulated by their own DMRs correlate more with certain histones or TF?
+## Histones
+gene_DMRreg_ids <- rownames(num_vars)[num_vars$Num_DMRs != 0]
+genes_histone_cor$isDMRreg <- genes_histone_cor$Var1 %in% gene_DMRreg_ids
+chisq.test(table(genes_histone_cor$Var2, genes_histone_cor$isDMRreg))
+
+## TF
+genes_tf_cor$isDMRreg <- genes_tf_cor$Var1 %in% gene_DMRreg_ids
+chi_tf <- chisq.test(table(genes_tf_cor$Var2, genes_tf_cor$isDMRreg))
+chi_tf$observed - chi_tf$expected
+
+chi_tf$observed[order(abs(chi_tf$residuals[,1]), decreasing = TRUE),]
+chi_tf
+
+# Genes that correlate with more histone modifications also correlate with more transcription factor
+cor.test(num_vars$Num_Histones, num_vars$Num_TF)
+
+# Genes that correlate with a lot of TF and histones also are more likely regulated by their own DMRs
+boxplot(num_vars$Num_TF ~ num_vars$Num_DMRs != 0)
+boxplot(num_vars$Num_Histones ~ num_vars$Num_DMRs != 0)
+
+fc_dt <- rowData(rna_seq_dt)[,grepl("FC",
+                                colnames(rowData(rna_seq_dt)))]
+fc_dt <- fc_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(fc_dt))]
+
+cor(num_vars$Num_Histones, abs(fc_dt$`HFD-CNT.log2FC`))
+cor(num_vars$Num_Histones, abs(fc_dt$`INT-CNT.log2FC`))
+cor(num_vars$Num_Histones, abs(fc_dt$`INT-HFD.log2FC`))
+
+cor(num_vars$Num_TF, abs(fc_dt$`HFD-CNT.log2FC`))
+cor(num_vars$Num_TF, abs(fc_dt$`INT-CNT.log2FC`))
+cor(num_vars$Num_TF, abs(fc_dt$`INT-HFD.log2FC`))
+
+histone_gene_cors <- tapply(genes_histone_cor$cor, INDEX = genes_histone_cor$Var1, function(x){
+    x
+})
+histone_gene_cors <- histone_gene_cors[lengths(histone_gene_cors) != 0]
+histone_gene_cors <- sapply(histone_gene_cors, function(x){mean(abs(x))})
+hist(histone_gene_cors)
+cor(histone_gene_cors, fc_dt[names(histone_gene_cors),]$`HFD-CNT.log2FC`)
+cor(histone_gene_cors, fc_dt[names(histone_gene_cors),]$`INT-HFD.log2FC`)
+
+```
+
+#### GRNdb network
+
+```{r}
+tf_nw <- igraph::graph_from_data_frame(found_int[,c("TF_ensembl", 
+                                                    "gene_ensembl", 
+                                                    "Confidence")],
+                                       directed = TRUE)
+
+library(igraph)
+
+isTF <- ifelse(names(V(tf_nw)) %in% unique(found_int$TF_ensembl), TRUE, FALSE)
+names(isTF) <- names(V(tf_nw))
+
+unique(found_int$TF_ensembl)
+
+tf_nw <- set_vertex_attr(tf_nw, name = "isTF", value = isTF)
+
+
+dmrREG <- ifelse(names(V(tf_nw)) %in% unique(gene_dmr_cors$Var1), TRUE, FALSE)
+names(dmrREG) <- names(V(tf_nw))
+
+tf_nw <- set_vertex_attr(tf_nw, name = "dmrREG", value = dmrREG)
+
+
+tf_dmr_regulated <- vertex_attr(tf_nw, name = "isTF") & 
+    vertex_attr(tf_nw, name = "dmrREG")
+names(V(tf_nw)[tf_dmr_regulated])
+
+sum(vertex_attr(tf_nw, name = "isTF"))
+sum(tf_dmr_regulated)
+sum(vertex_attr(tf_nw, name = "dmrREG"))
+
+bf_lh <- bfs(graph = tf_nw, 
+            root = names(V(tf_nw)[tf_dmr_regulated]), 
+            mode = "out", unreachable = FALSE)
+
+length(bf_lh$order)
+
+tf_nw_strong <- subgraph.edges(graph = tf_nw, 
+                            eids = E(tf_nw)[edge_attr(graph = tf_nw, 
+                                             name = "Confidence") == "High"], 
+                            delete.vertices = TRUE) 
+
+
+tf_dmr_regulated_strong <- vertex_attr(tf_nw_strong, name = "isTF") & 
+    vertex_attr(tf_nw_strong, name = "dmrREG")
+
+sum(tf_dmr_regulated_strong)
+
+tf_h <- bfs(graph = tf_nw_strong, 
+            root = names(V(tf_nw_strong)[tf_dmr_regulated_strong]), 
+            mode = "out", unreachable = FALSE)
+
+tf_nw_strong <- set_vertex_attr(tf_nw_strong, name = "tfCovered", 
+                                value = names(V(tf_nw_strong)) %in% names(tf_h$order))
+
+length(tf_h$order)
+
+
+tf_names <- names(V(tf_nw)[vertex_attr(tf_nw, name = "isTF")])
+
+rep_names <- replicate(n = 100, {
+    sample(tf_names, size = 2)
+})
+res_test <- apply(rep_names, 2, function(x){
+    length(bfs(graph = tf_nw, 
+            root = x, 
+            mode = "out", unreachable = FALSE)$order)
+})
+
+boxplot(res_test)
+
+in_dg <- degree(tf_nw, mode = "in")
+length(names(in_dg)[in_dg == 0])
+length(names(in_dg)[in_dg != 0])
+
+tf_nw_tf_only <- subgraph(graph = tf_nw,
+                            vids = V(tf_nw)[vertex_attr(graph = tf_nw,
+                                                    name = "isTF")])
+tf_nw
+tf_nw_tf_only
+
+RCy3::cytoscapePing()
+RCy3::createNetworkFromIgraph(tf_nw_strong)
+
+```
+
+#### FC Results test
+
+```{r}
+for(corr_id in corr_methods){
+    fc_dt_g[[corr_id]] <- rownames(fc_dt_g) %in% 
+        unique(gene_dmr_cors_list[[corr_id]]$Var1)
+}
+fc_dt_g$DMR_regulated <- ifelse(fc_dt_g$pearson | fc_dt_g$spearman, 
+                                "Yes", "No")
+fc_dt_g$pearson <- NULL
+fc_dt_g$spearman <- NULL
+# for(tf_id in names(plot_ov)){
+#     fc_dt_g[[tf_id]] <- rownames(fc_dt_g) %in% 
+#         unique(plot_ov[[tf_id]])
+# }
+colnames(fc_dt_g)[1:3] <- c("HFD-CNT", "INT-CNT", "INT-HFD")
+
+
+print(lapply(fc_dt_g[1:3], function(x){
+        wilcox.test(abs(x) ~ fc_dt_g[["DMR_regulated"]])
+}))
+
+print(lapply(fc_dt_g[1:3], function(x){
+    tapply(abs(x), fc_dt_g[["DMR_regulated"]], FUN = summary)
+}))
+
+bp_dt <- reshape2::melt(as.data.frame(fc_dt_g))
+
+p1 <- ggplot(bp_dt) + geom_boxplot(aes(x =variable , y = abs(value), 
+                                fill = .data[["DMR_regulated"]])) +
+    theme_minimal() + ylab("Absolute log2 fold-change") + xlab("Contrasts") +
+    scale_fill_brewer(palette = "Set2") + labs(fill = "Own DMR Regulated") + 
+    ylim(c(0, 2.5))
+p1
+ggsave(filename = paste0(fig_dir, "figure_12.svg"), 
+            plot = p1,  fix_text_size = FALSE)
+ggsave(filename = paste0(fig_dir, "figure_12.png"), 
+        plot = p1)
+
+print(wilcox.test(abs(bp_dt$value) ~ bp_dt[[corr_column]]))
+print(ggplot(bp_dt) + geom_boxplot(aes(x = .data[["DMR_regulated"]], y = abs(value),
+                                fill = .data[["DMR_regulated"]])) +
+    theme_minimal() + ylab("Absolute log2 fold-change")) 
+ggsave(filename = paste0(fig_dir, "figure_12.svg"), 
+            plot = p1,  fix_text_size = FALSE)
+ggsave(filename = paste0(fig_dir, "figure_12.png"), 
+        plot = p1)
+
+
+for(corr_id in corr_methods){
+    
+    corr_column <- paste0("DMR_Reg.", corr_id)
+    
+    print(lapply(fc_dt_g[1:3], function(x){
+        wilcox.test(abs(x) ~ fc_dt_g[[corr_column]])
+    }))
+    
+    print(lapply(fc_dt_g[1:3], function(x){
+        tapply(abs(x), fc_dt_g[[corr_column]], FUN = summary)
+    }))
+    
+    bp_dt <- reshape2::melt(as.data.frame(fc_dt_g))
+    print(ggplot(bp_dt) + geom_boxplot(aes(x =variable , y = abs(value), 
+                                    fill = .data[[corr_column]])) +
+        theme_minimal())
+    
+    
+    print(wilcox.test(abs(bp_dt$value) ~ bp_dt[[corr_column]]))
+    print(ggplot(bp_dt) + geom_boxplot(aes(x = .data[[corr_column]], y = abs(value),
+                                    fill = .data[[corr_column]])) +
+        theme_minimal() + ylab("Absolute log2 fold-change"))
+
+}
+```
+

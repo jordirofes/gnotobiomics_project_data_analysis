@@ -662,15 +662,15 @@ mouse_tf_ids <- tf_db$Mouse_entrez[!is.na(tf_db$Mouse_entrez)]
 mouse_tf_ensembl <- mapIds(org.Mm.eg.db, keys = as.character(mouse_tf_ids), 
                         column = "ENSEMBL", keytype = "ENTREZID", 
                         multiVals = "first")
-mouse_tf_ensembl <- mouse_tf_ensembl[mouse_tf_ensembl %in% rownames(rna_seq_dt)]
+mouse_tf_ensembl <- mouse_tf_ensembl[mouse_tf_ensembl %in% rownames(multi_omics[["RNA_Sequencing"]])]
 
 nw_ids_tfs <- paste0("RNA_Sequencing.", mouse_tf_ensembl)
 
 sum(rownames(rna_seq_all) %in% mouse_tf_ensembl)
 sum(rownames(rna_seq_dt) %in% mouse_tf_ensembl)
 
-sum(unique(gene_dmr_cors_list$pearson$Var1) %in% mouse_tf_ensembl)
-sum(unique(gene_dmr_cors_list$spearman$Var1) %in% mouse_tf_ensembl)
+# sum(unique(gene_dmr_cors_list$pearson$Var1) %in% mouse_tf_ensembl)
+# sum(unique(gene_dmr_cors_list$spearman$Var1) %in% mouse_tf_ensembl)
 
 tf_genes <- multi_omics[["RNA_Sequencing"]][rownames(multi_omics[["RNA_Sequencing"]]) %in% mouse_tf_ensembl,]
 
@@ -1097,7 +1097,7 @@ overlap_samples
 
 gene_dmr_cors_list <- lapply(corr_methods, function(corr_name){
     corr_dt <- lapply(rownames(rna_seq_dt_found), function(x){
-        browser()
+
         rna_seq_gene <- rna_seq_dt_found[x, overlap_samples]
         dna_met_dmr <- dna_met_dt[!is.na(rowData(dna_met_dt)$ensemblId) & 
                                     rowData(dna_met_dt)$ensemblId %in% x, overlap_samples]
@@ -1174,10 +1174,6 @@ lapply(dmr_reg_genes, function(gene_id){
 
 View(as.data.frame(rowData(omic_dt[["RNA_Sequencing"]][dmr_reg_genes,])))
 ```
-
-
-
-
 
 
 ```{r}
@@ -1338,7 +1334,7 @@ dmr_associated <- lapply(gene_dmr_cors_list, function(x){
 })
 ```
 
-#### Gene Correlations
+#### Gene Correlations enrich
 
 ```{r}
 enrich_dir <- paste0(params$output_dir, "gene_dmr_analysis/")
@@ -1399,7 +1395,8 @@ xfun::Rscript_call(rmarkdown::render,
 ```
 
 ```{r}
-enrich_res_dmrreg <- readRDS(paste0(enrich_dir, "correlated_gene_enrich_rna_seq_enrich_results.rds"))
+enrich_res_dmrreg <- readRDS(paste0(enrich_dir,
+                                    "correlated_gene_enrich_rna_seq_enrich_results.rds"))
 p1 <- dotplot(enrich_res_dmrreg$ORA$combined$custom_ora) + theme_minimal() + 
     theme(axis.text.y = element_text(size = 16))
 ggsave(filename = "../../outputs/Paper_Figures/figure_12_d.svg", plot = p1,
@@ -1482,267 +1479,6 @@ dmr_associated_list_all_gene <- lapply(all_gene_dmr_cors_list, function(x){
 })
 ```
 
-### ALL Gene-DMR correlations
-
-```{r}
-overlap_samples <- intersect(colnames(rna_seq_all), 
-                            colnames(dna_met_dt))
-overlap_samples
-
-all_gene_all_dmr_cors_list <- lapply(corr_methods, function(corr_name){
-    corr_dt <- mia::getExperimentCrossCorrelation(x = rna_seq_all[,overlap_samples],
-                                                experiment2 = dna_met_dt[,overlap_samples],
-                                                method = corr_name,
-                                                assay.type1 = "dt1",
-                                                assay.type2 = "dt1",
-                                                test_significance = TRUE)
-
-    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
-    corr_dt
-})
-names(all_gene_all_dmr_cors_list) <- corr_methods
-
-saveRDS(all_gene_all_dmr_cors_list, paste0(corr_output_dir, "all_genes_all_dmr_corr.rds"))
-```
-
-```{r}
-all_gene_all_dmr_cors_list <- readRDS(paste0(corr_output_dir, "all_genes_all_dmr_corr.rds"))
-
-all_gene_all_dmr_cors_list <- lapply(names(all_gene_all_dmr_cors_list), function(corr_id){
-    all_gene_all_dmr_cors <- all_gene_all_dmr_cors_list[[corr_id]]
-    
-    all_gene_all_dmr_cors$type <- corr_id
-    all_gene_all_dmr_cors$isNeg <- ifelse(all_gene_all_dmr_cors$cor < 0,
-                                        "Negative", "Positive")
-    
-    all_gene_all_dmr_cors <- all_gene_all_dmr_cors[all_gene_all_dmr_cors$p_adj <= 0.05,]
-    
-    all_gene_all_dmr_cors$chrom_gene <- RNA_chromosomes[as.character(all_gene_all_dmr_cors$Var1)]
-    all_gene_all_dmr_cors$chrom_dmr <- DMR_chromosomes[as.character(all_gene_all_dmr_cors$Var2)]
-    all_gene_all_dmr_cors$dmr_ensembl <- DMR_ensembl[as.character(all_gene_all_dmr_cors$Var2)]
-    
-    all_gene_all_dmr_cors <- all_gene_all_dmr_cors[!is.na(all_gene_all_dmr_cors$dmr_ensembl),]
-    
-    all_gene_all_dmr_cors$equal_chromosome <- all_gene_all_dmr_cors$chrom_gene == all_gene_all_dmr_cors$chrom_dmr 
-    all_gene_all_dmr_cors$equal_ensembl <- ifelse(all_gene_all_dmr_cors$Var1 == all_gene_all_dmr_cors$dmr_ensembl, 
-                                                "Own DMRs", "Other DMRs")
-    
-    all_gene_all_dmr_cors$DMR_annotation <- simplified_DMR_annotation[as.character(all_gene_all_dmr_cors$Var2)]
-    
-    all_gene_all_dmr_cors
-})
-names(all_gene_all_dmr_cors_list) <- corr_methods
-
-plot_dt2 <- do.call(rbind, all_gene_all_dmr_cors_list)
-```
-
-```{r, fig.height=4, fig.width=10}
-region_t <- table(plot_dt2$DMR_annotation)
-plot_dt2$DMR_annotation <- factor(plot_dt2$DMR_annotation, levels = names(sort(region_t)))
-
-
-p1 <- ggplot(plot_dt2)+ 
-    geom_bar(aes(x = DMR_annotation, fill = isNeg), position = "dodge") + 
-    theme_minimal() + scale_fill_brewer(palette = "Set2") +
-    labs(fill = "Correlation type") + 
-    theme(axis.text.x = element_text(angle = 90), 
-          legend.title = element_blank()) +
-    xlab("DMR Annotation") + ylab("Count") + 
-    facet_grid(paste(type, equal_ensembl) ~., scales = "free")
-p1
-ggsave(filename = "../../outputs/Paper_Figures/figure_6_a_alt3.svg", plot = p1,
-        fix_text_size = FALSE)
-ggsave(filename = "../../outputs/Paper_Figures/figure_6_a_alt3.png", plot = p1)
-
-
-p1 <- ggplot(plot_dt2)+ 
-    geom_bar(aes(x = DMR_annotation, fill = isNeg)) + 
-    theme_minimal() + scale_fill_brewer(palette = "Set2") +
-    labs(fill = "Correlation type") + 
-    theme(axis.text.x = element_text(angle = 90), 
-          legend.title = element_blank()) +
-    xlab("DMR Annotation") + ylab("Count") + 
-    facet_grid(paste(type, equal_ensembl) ~., scales = "free")
-p1
-ggsave(filename = "../../outputs/Paper_Figures/figure_6_a_alt4.svg", plot = p1,
-        fix_text_size = FALSE)
-ggsave(filename = "../../outputs/Paper_Figures/figure_6_a_alt4.png", plot = p1)
-
-
-p1 <- ggplot(plot_dt2)+ 
-    geom_bar(aes(y = DMR_annotation, fill = isNeg), position = "fill") + 
-    theme_minimal() + scale_fill_brewer(palette = "Set2") +
-    labs(fill = "Correlation type") + 
-    theme(axis.text.x = element_text(angle = 0), 
-          legend.title = element_blank()) + scale_x_continuous(breaks = c(0,0.5, 1), labels = c("0", "0.5", "1")) + 
-    ylab("DMR Annotation") + xlab("Proportion") +  
-    facet_grid(cols = vars(type, equal_ensembl))
-p1
-ggsave(filename = "../../outputs/Paper_Figures/figure_6_a_alt5.svg", plot = p1,
-        fix_text_size = FALSE, height=4, width=10)
-ggsave(filename = "../../outputs/Paper_Figures/figure_6_a_alt5.png", plot = p1, 
-        height=4, width=10)
-
-```
-
-```{r}
-lapply(all_gene_all_dmr_cors_list, function(all_gene_all_dmr_cors){
-    all_gene_all_dmr_cors <- all_gene_all_dmr_cors[all_gene_all_dmr_cors$p_adj <= 0.05,]
-    sum(unique(all_gene_all_dmr_cors$Var1) %in%
-            rownames(rna_seq_dt))/length(unique(all_gene_all_dmr_cors$Var1))
-})
-lapply(all_gene_all_dmr_cors_list, function(all_gene_all_dmr_cors){
-    all_gene_all_dmr_cors <- all_gene_all_dmr_cors[all_gene_all_dmr_cors$p_adj <= 0.05,]
-    length(unique(all_gene_all_dmr_cors$Var1))
-})
-
-
-chi_res_list <- lapply(all_gene_all_dmr_cors_list, function(all_gene_all_dmr_cors){
-    all_gene_all_dmr_cors$gene_isSig <- all_gene_all_dmr_cors$Var1 %in%
-        rownames(rna_seq_dt)
-    
-    t1 <- table(all_gene_all_dmr_cors$gene_isSig, 
-                all_gene_all_dmr_cors$p_adj <= 0.05)
-    chisq.test(t1)
-})
-chi_res_list$pearson
-chi_res_list$pearson$observed
-chi_res_list$pearson$expected
-
-chi_res_list$spearman
-chi_res_list$spearman$observed
-chi_res_list$spearman$expected
-
-
-```
-
-
-
-### ALL Gene-DMRseq correlations
-
-```{r}
-library(impute)
-dna_met_dmrseq <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/dmrseq.group.non_smoothed/dna_met_exp_non_smoothed.reduced.group.reduced.rds")
-dna_met_dmrseq <- impute_knn_assay(dna_met_dmrseq)
-dna_met_dmrseq <- scale_assay(dna_met_dmrseq)
-
-assayNames(dna_met_dmrseq) <- "dt1"
-
-dna_met_dmrseq_p_vals <- rowData(dna_met_dmrseq)[grep("adj", colnames( rowData(dna_met_dmrseq)))]
-dna_met_dmrseq_p_vals <- dna_met_dmrseq_p_vals[grep("HFD-CNT|INT-CNT|INT-HFD", colnames(dna_met_dmrseq_p_vals))]
-
-dna_met_dmrseq_sig <- dna_met_dmrseq[apply(as.matrix(dna_met_dmrseq_p_vals), 1, function(x){any(x <= 0.05)}),]
-
-overlap_samples <- intersect(colnames(rna_seq_all), 
-                            colnames(dna_met_dmrseq))
-overlap_samples
-
-all_gene_all_dmrseq_cors_list <- lapply(corr_methods, function(corr_name){
-    corr_dt <- mia::getExperimentCrossCorrelation(x = rna_seq_all[,overlap_samples],
-                                                experiment2 = dna_met_dmrseq[,overlap_samples],
-                                                method = corr_name,
-                                                assay.type1 = "dt1",
-                                                assay.type2 = "dt1",
-                                                test_significance = TRUE)
-
-    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
-    corr_dt
-})
-names(all_gene_all_dmrseq_cors_list) <- corr_methods
-
-saveRDS(all_gene_all_dmrseq_cors_list, paste0(corr_output_dir, "all_genes_all_dmrseq_corr.rds"))
-```
-
-```{r}
-all_gene_all_dmrseq_cors_list <- readRDS(paste0(corr_output_dir, 
-                                                "all_genes_all_dmrseq_corr.rds"))
-
-lapply(all_gene_all_dmrseq_cors_list, function(all_gene_all_dmrseq_cors){
-    all_gene_all_dmrseq_cors <- all_gene_all_dmrseq_cors[all_gene_all_dmrseq_cors$p_adj <= 0.05,]
-    sum(unique(all_gene_all_dmrseq_cors$Var1) %in%
-            rownames(rna_seq_dt))/length(unique(all_gene_all_dmrseq_cors$Var1))
-})
-lapply(all_gene_all_dmrseq_cors_list, function(all_gene_all_dmrseq_cors){
-    all_gene_all_dmrseq_cors <- all_gene_all_dmrseq_cors[all_gene_all_dmrseq_cors$p_adj <= 0.05,]
-    length(unique(all_gene_all_dmrseq_cors$Var1))
-})
-
-
-chi_res_list <- lapply(all_gene_all_dmrseq_cors_list, function(all_gene_all_dmrseq_cors){
-    all_gene_all_dmrseq_cors$both_isSig <- ifelse((all_gene_all_dmrseq_cors$Var1 %in%
-        rownames(rna_seq_dt)) & (all_gene_all_dmrseq_cors$Var2 %in% rownames(dna_met_dmrseq_sig)), "Gene/DMR Sig", "Gene/DMR Not Sig")
-    
-    t1 <- table(all_gene_all_dmrseq_cors$both_isSig, 
-                all_gene_all_dmrseq_cors$p_adj <= 0.05)
-    chisq.test(t1)
-})
-chi_res_list$pearson
-chi_res_list$pearson$observed
-chi_res_list$pearson$expected
-
-chi_res_list$spearman
-chi_res_list$spearman$observed
-chi_res_list$spearman$expected
-
-
-```
-
-```{r}
-chi_res_list2 <- lapply(all_gene_all_dmrseq_cors_list, function(all_gene_all_dmrseq_cors){
-    all_gene_all_dmrseq_cors <- all_gene_all_dmrseq_cors[all_gene_all_dmrseq_cors$p_adj <= 0.05,]
-    
-    t1 <- table(ifelse(all_gene_all_dmrseq_cors$Var1 %in% rownames(rna_seq_dt), "Gene Sig", "Gene not Sig"), 
-                ifelse(all_gene_all_dmrseq_cors$Var2 %in% rownames(dna_met_dmrseq_sig), "DMR Sig", "DMR not Sig"))
-    chisq.test(t1)
-})
-
-chi_res_list2$pearson
-chi_res_list2$pearson$observed
-chi_res_list2$pearson$expected
-
-chi_res_list2$spearman
-chi_res_list2$spearman$observed
-chi_res_list2$spearman$expected
-
-```
-
-### Gene-ownDMRseq correlations
-
-```{r}
-library(org.Mm.eg.db)
-dna_met_ensembl <- mapIds(x = org.Mm.eg.db, keys = rowData(dna_met_dmrseq_sig)$geneId, 
-                        column = "ENSEMBL", keytype = "ENTREZID")
-rowData(dna_met_dmrseq_sig)$ensemblId <- dna_met_ensembl
-
-rna_seq_dt_found <- rna_seq_dt[rownames(rna_seq_dt) %in% rowData(dna_met_dmrseq_sig)$ensemblId,]
-rna_seq_dt_found
-
-overlap_samples <- intersect(colnames(rna_seq_dt), colnames(dna_met_dmrseq_sig))
-overlap_samples
-
-gene_dmrseq_cors_list <- lapply(corr_methods, function(corr_name){
-    corr_dt <- lapply(rownames(rna_seq_dt_found), function(x){
-        rna_seq_gene <- rna_seq_dt_found[x, overlap_samples]
-        dna_met_dmr <- dna_met_dmrseq_sig[!is.na(rowData(dna_met_dmrseq_sig)$ensemblId) & 
-                                            rowData(dna_met_dmrseq_sig)$ensemblId %in% x, overlap_samples]
-        mia::getExperimentCrossCorrelation(x = rna_seq_gene, 
-                                            experiment2 = dna_met_dmr,
-                                            method = corr_name,
-                                            assay.type1 = "dt1", 
-                                            assay.type2 = "dt1",
-                                            test_significance =  TRUE)
-    })
-    corr_dt <- do.call(rbind, corr_dt)
-    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
-    corr_dt
-})
-names(gene_dmrseq_cors_list) <- corr_methods
-
-saveRDS(gene_dmrseq_cors_list, paste0(corr_output_dir, "sig_genes_own_dmrseq_corr.rds"))
-```
-
-
-        
 ### Gene-DMR correlations
 
 ```{r}
@@ -1767,7 +1503,6 @@ saveRDS(sig_gene_all_dmr_cors_list, paste0(corr_output_dir, "sig_genes_dmr_corr.
 
 
 ```{r}
-
 dmr_gene_corr_dt <- readRDS("../../outputs/Multi_Omics_Analysis/gene_tf_histone_analysis/sig_genes_dmr_corr.rds")
 
 dmr2ensembl <- rowData(multi_omics[["WGB_DNA_Methylation"]])$ensemblId
@@ -1832,7 +1567,7 @@ dmr_gene_corr_dt_chr <- lapply(dmr_gene_corr_dt, function(score_dt){
 })
 
 dmr_gene_corr_dt_chr_1MB <- lapply(dmr_gene_corr_dt, function(score_dt){
-    score_dt[abs(score_dt$cor) > 0.6 & score_dt$p_adj <= 0.05 & 
+    score_dt[abs(score_dt$cor) > 0.6 & score_dt$p_adj <= 0.05 &
                  score_dt$Own_chr & score_dt$dist_to_tss < 1e6,]
 })
 
@@ -1867,8 +1602,6 @@ length(union(dmr_gene_corr_dt_filt$pearson$Var1,
 
 # pearson_dmr_reg <- unique(dmr_gene_corr_dt_filt$pearson$Var1)
 # spearman_dmr_reg <- unique(dmr_gene_corr_dt_filt$spearman$Var1)
-
-
 
 ```
 
@@ -2546,35 +2279,6 @@ pheatmap::pheatmap(jaccard_idx_filt)
 ```
 
 
-#### Distal 1 MB correlations
-
-```{r}
-
-```
-
-
-- Gene-DMR correlations
-6000 gens - 4500 DMRs
-1. Descriure les interaccions gen-metil·lació del DNA (distal o proximal)
-2. Obtindre un subconjunt de gens que estiguin regulats per canvis en la metil·lació del DNA
-
-- 87 gens estan directament regulats per DMRs propies (pearson > 0.6)
-- Tots els gens tenen alguna correlació amb gens distals (pearson > 0.6)
-- Les DMRs regulen més gens de mitjana
-- Tots els gens venen regulats per bastantes DMRs
-- Alguns gens estan més regulats positivament i alguns negativament
-
-
-
-3. Veure quines funcionalitats estan associades a aquests gens
-4. Associar aquests canvis gens/DMRs amb canvis metabolics 
-5. Associar els canvis metabolics amb funcionalitats de la microbiota
-
-
-```{r}
-
-```
-
 
 #### Epigenetically relevant genes
 
@@ -2715,11 +2419,6 @@ epigenetic_genes[rownames(epigenetic_genes) %in% microbiota_regulated_genes,]
 
 #### DMR regulated gene enrich all
 
-```{r}
-dmrgene
-```
-
-
 ##### GO enrich
 
 ```{r}
@@ -2800,1000 +2499,122 @@ dmrreg_chebi_enrich_alluni <- lapply(gene_id_list, function(factor_dt){
 })
 ```
 
+### GFCV Gene 1MB correlations
 
 ```{r}
-sum(f1_gsea_vars %in% dmr_gene_corr_dt_filt$pearson$Var1)
-sum(f2_gsea_vars %in% dmr_gene_corr_dt_filt$pearson$Var1)
+gfcv_vars <- readRDS("../../outputs/Multi_Omics_Analysis_GFCV/gfcv_interesting_vars.rds")
 
-sum(f1_gsea_vars %in% dmr_gene_corr_dt_filt$spearman$Var1)
-sum(f2_gsea_vars %in% dmr_gene_corr_dt_filt$spearman$Var1)
+lima_microb_dmrs_ov <- findOverlaps(multi_omics[["WGB_DNA_Methylation"]], 
+                                     gfcv_vars$`GFM-CVM`[["WGB_DNA_Methylation"]])
+lima_microb_dmrs <- multi_omics[["WGB_DNA_Methylation"]][unique(lima_microb_dmrs_ov@from),]
 
-sum(f2_gsea_vars %in% dmr_gene_corr_dt_filt$spearman$Var1)
+View(as.data.frame(rowData(omic_dt[["WGB_DNA_Methylation"]][rownames(lima_microb_dmrs),])))
+nrow(lima_microb_dmrs)
 
-omic_dt[["RNA_Sequencing"]][claudia_genes[claudia_genes %in% dmr_gene_corr_dt_filt$spearman$Var1],]
-
-```
-
-
-
-
-```{r}
-corr_output_name <- "full_gene_dmr_analysis"
-corr_output_dir <- paste0(params$output_dir, corr_output_name, "/")
-
-if(!dir.exists(corr_output_dir)){dir.create(corr_output_dir)}
-
-network_omics <- list("Pairwise full liver" = matrix(c("RNA_Sequencing",
-                    "WGB_DNA_Methylation"), nrow = 2, ncol = 1))
-```
-
-```{r}
-# network_omics <- list("All Omics" = names(assays(omic_dt)))
-variables_dicts <- lapply(unique(unlist(network_omics[[1]])), function(omic_name){
-    if(omic_name == "RNA_Sequencing"){
-        return("gene_lab")
-    } else if(omic_name == "Untargeted_Metabolomics"){
-        return("compounds_merged_readable")
-        #return("HFD-CNT.formula")
-    } else if(grepl("DNA_Methylation", omic_name)){
-        return("geneName")
-    } else if(grepl("Shotgun|Metallomics|16S|Targeted|Histone", omic_name)){
-        return("readable_name")  
-    } else{
-        return(NA)
-    }
-})
-names(variables_dicts) <- unique(unlist(network_omics[[1]]))
-variables_dicts[is.na(variables_dicts)] <- NULL
-
-add_var_names <- grep("weights|FC", colnames(rowData(omic_dt@ExperimentList$RNA_Sequencing)), value = T)
-
-# corr_method_vect <- c("kendall", "spearman", "pearson")
-corr_method_vect <- c("pearson", "spearman")
-
-for(corr_method in corr_method_vect){
-    xfun::Rscript_call(rmarkdown::render,
-                            args = list(input = "../Multi_Omics_Correlations/Correlations_Script.Rmd",
-                              output_file = params$output_dir,
-                              params = list(
-                                corr_threshold = 0,
-                                corr_method = corr_method,
-                                multi_omic_path = multi_omics,
-                                group_metadata_var = "group",
-                                sample_levels_2_correlate = c("CNT", "HFD", "INT"),
-                                filter_variable_2_correlate = list(
-                                    "All" = NA
-                                ),
-                                p_adj_thr = 1,
-                                omic_list_pairs = network_omics,
-                                rowData_variable_name_list = variables_dicts,
-                                draw_networks = FALSE,
-                                draw_cytoscape = FALSE,
-                                add_autocorrelations = FALSE,
-                                keep_full_correlations = TRUE,
-                                output_dir = corr_output_dir,
-                                output_suffix = paste0("0_005_chi_f1f2_", corr_method),
-                                add_variables = TRUE,
-                                variables_names = add_var_names,
-                                draw_cluster_scatter_plots = FALSE))
-     )
-}
-```
-
-#### Correlation Analysis
-
-```{r}
-library(ProteoNet)
-library(igraph)
-library(dplyr)
-library(org.Mm.eg.db)
-
-corr_output_dir <- paste0(params$output_dir, corr_output_name ,"/")
-
-# omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
-# omic_dt <- readRDS(paste0(params$output_dir, "multi_omics_filtered_mod.rds"))
-
-nw_paths <- list.files(corr_output_dir, 
-                        pattern = "network_results_0_005_chi_f1f2_.*\\.rds$", 
-                        full.names = T)
-nw_graphs <- lapply(nw_paths, readRDS)
-
-nw_graphs <- lapply(nw_graphs, function(score_dt){
-    lapply(score_dt, function(weight_dt){
-        weight_dt[["Pairwise full liver"]]
-    })
+gfcv_corr_dt_filt <- lapply(gfcv_vars$Correlations, function(score_dt){
+    score_dt[abs(score_dt$cor) > 0.6,]
 })
 
-score_names <- gsub("\\.rds", "", sapply(strsplit(grep("network_results", 
-                                                        basename(nw_paths), 
-                                                        value = TRUE), "_"),
-                                            function(x){x[length(x)]}))
-score_filters <- c(0.8, 0.8)
-names(score_filters) <- score_names
-names(nw_graphs) <- score_names
+hist(abs(gfcv_corr_dt_filt$pearson$cor))
+
+gfcv_dmr_reg_dmrs <- as.character(unique(gfcv_corr_dt_filt$pearson$Var2))
+gfcv_dmr_reg_genes <- as.character(unique(gfcv_corr_dt_filt$pearson$Var1))
+
+lima_gfcv_dmrreg_ov <- findOverlaps(multi_omics[["WGB_DNA_Methylation"]],
+                                    gfcv_vars$Full_dt[["WGB_DNA_Methylation"]][gfcv_dmr_reg_dmrs,])
+lima_gfcv_dmrreg <- multi_omics[["WGB_DNA_Methylation"]][unique(lima_gfcv_dmrreg_ov@from),]
+
+lima_dmrs_microb_dmr_reg <- intersect(rownames(lima_gfcv_dmrreg), 
+                                    rownames(lima_microb_dmrs))
+
+View(as.data.frame(rowData(omic_dt[["WGB_DNA_Methylation"]][lima_dmrs_microb_dmr_reg,])))
 
 
 ```
 
-```{r}
-nw_graphs <- lapply(names(nw_graphs), function(score_id){
-    score_dt <- nw_graphs[[score_id]]
-    score_res <- lapply(names(score_dt), function(graph_id){
-        graph_dt <- score_dt[[graph_id]]
+### Gene-1MB dmr correlations
 
-        graph_weights <- abs(edge_attr(graph_dt,
-                        name = "weight"))
-        graph_adj.p.val <- edge_attr(graph_dt, name = "adj.p.value")
-        # subgraph.edges(graph_dt,
-        #             E(graph_dt)[graph_weights >= score_filters[score_id] & graph_adj.p.val <= 0.05],
-        #             delete.vertices = FALSE)
-        subgraph.edges(graph_dt,
-                    E(graph_dt)[graph_adj.p.val <= 0.05],
-                    delete.vertices = FALSE)
-    })
-    names(score_res) <- names(score_dt)
-    score_res
+```{r}
+rna_seq_dt_clean <- rna_seq_dt[!is.na(rowData(rna_seq_dt)$start_position),]
+
+overlap_samples <- intersect(colnames(rna_seq_dt_clean), colnames(dna_met_dt))
+overlap_samples
+
+rna_seq_rr <- GenomicRanges::GRanges(
+    seqnames = rowData(rna_seq_dt_clean)$chromosome_id,
+    ranges = IRanges(start = as.numeric(rowData(rna_seq_dt_clean)$start_position) - 1e6,
+    end = as.numeric(rowData(rna_seq_dt_clean)$start_position) + 1e6,
+    names = rownames(rna_seq_dt_clean)))
+
+dna_met_dt_1mb <- lapply(rownames(rna_seq_dt_clean), function(gene_id){
+    ov_dt <- findOverlaps(query = rowRanges(dna_met_dt), subject = rna_seq_rr[gene_id,])
+    dna_met_dt[ov_dt@from,]
 })
-names(nw_graphs) <- score_names
-```     
-
-```{r}
-rna_omic_id <- "RNA_Sequencing"
-dna_omic_id <- "WGB_DNA_Methylation"
-rna_node_total <- nrow(experiments(multi_omics)[[rna_omic_id]]) 
-dna_node_total <- nrow(experiments(multi_omics)[[dna_omic_id]])
-
-ids_to_map <- rowData(experiments(multi_omics)[[rna_omic_id]])[,"entrezID", drop = FALSE]
+names(dna_met_dt_1mb) <- rownames(rna_seq_dt_clean)
 ```
 
 
 ```{r}
-nw_plot_list <- lapply(nw_graphs, function(score_dt){
-    
-    lapply(score_dt, function(factor_dt){
-    
-        test <- igraph::as_long_data_frame(factor_dt)
-        rna_dna_omics <- c("RNA_Sequencing", "WGB_DNA_Methylation")
-        
-        rna_nodes <- names(V(factor_dt))[vertex_attr(factor_dt, name = "Node_Omic") == rna_omic_id]
-        dna_nodes <- names(V(factor_dt))[vertex_attr(factor_dt, name = "Node_Omic") == dna_omic_id]
-        
-        test_dna_rna <- test[(test$to_Node_Omic %in% rna_dna_omics) & 
-                 (test$from_Node_Omic %in% rna_dna_omics),]
-
-        gene_col <- ifelse(test_dna_rna$to_Node_Omic == rna_omic_id, 
-                            "to_name", "from_name")
-        gene_node <- sapply(seq_len(nrow(test_dna_rna)),
-                            function(x){test_dna_rna[x,gene_col[x]]})
-        gene_id <- gsub(paste0(rna_omic_id, "."), "", gene_node)
-        
-        dmr_col <- ifelse(test_dna_rna$to_Node_Omic == dna_omic_id, 
-                        "to_name", "from_name")
-        dmr_node <- sapply(seq_len(nrow(test_dna_rna)),
-                            function(x){test_dna_rna[x,dmr_col[x]]})
-        dmr_id <- gsub(paste0(dna_omic_id, "."), "", dmr_node)
-        
-        nw_dt <- data.frame("DMR_node" = dmr_node, "Gene_node" = gene_node, 
-                    "DMR_ID" = dmr_id, "Gene_ID" = gene_id, 
-                    "DMR_omic" = dna_omic_id, "Gene_omic" = rna_omic_id,
-                    "weight" = test_dna_rna[["weight"]])
-        
-        nw_dt$DMR_annotation <- rowData(experiments(multi_omics)[[dna_omic_id]])[nw_dt$DMR_ID,]$annotation
-        nw_dt$DMR_region <- sapply(nw_dt$DMR_annotation, function(dmr_an){
-            if(grepl("Promoter", dmr_an)){return("Promoter")
-            } else if(grepl("Intron", dmr_an)){return("Intron")
-            } else if(grepl("Exon", dmr_an)){return("Exon")
-            } else if(grepl("Downstream", dmr_an)){return("Downstream")
-            } else if(grepl("Distal Intergenic", dmr_an)){return("Distal Intergenic")
-            } else if(grepl("Upstream", dmr_an)){return("Upstream")
-            } else if(grepl("3' UTR", dmr_an)){return("3' UTR")
-            } else if(grepl("5' UTR", dmr_an)){return("5' UTR")
-            } else{"Other"}
-        })
-        
-        nw_dt$DMR_chromosome <-  as.character(seqnames(rowRanges(experiments(multi_omics)[[dna_omic_id]])[nw_dt$DMR_ID]))
-        nw_dt$Gene_chromosome <- ids_to_map[nw_dt$Gene_ID, "chromosome_name"]
-        
-        nw_dt$DMR_Gene_ID <- mapIds(x = org.Mm.eg.db, 
-                                    keys = rowData(experiments(multi_omics)[[dna_omic_id]])[nw_dt$DMR_ID,]$geneId, column = "ENSEMBL", keytype = "ENTREZID", multiVals = "first")
-        nw_dt$Same_Gene <- ifelse(nw_dt$Gene_ID == nw_dt$DMR_Gene_ID & 
-                                      !is.na(nw_dt$Gene_ID) & !is.na(nw_dt$DMR_Gene_ID), 
-                                  "Same Gene", "Other Regions")
-        nw_dt$Same_Gene_bool <- nw_dt$Same_Gene == "Same Gene"
-        nw_dt$Same_Chromosome <- ifelse(nw_dt$Gene_chromosome == nw_dt$DMR_chromosome &
-                                            !is.na(nw_dt$Gene_chromosome) & !is.na(nw_dt$DMR_chromosome), 
-                                  "Same Chromosome", "Other Chromosomes")
-        nw_dt$Same_Chromosome_bool <- nw_dt$Same_Chromosome == "Same Chromosome"
-        
-        nw_dt
+sig_gene_1MB_dmr_cors_list <- lapply(corr_methods, function(corr_name){
+    corr_list_res <- lapply(rownames(rna_seq_dt_clean), function(gene_id){
+        print(gene_id)
+        dna_met_found <- dna_met_dt_1mb[[gene_id]]
+        if(!nrow(dna_met_found)){return(NULL)}
+            corr_dt <- mia::getExperimentCrossCorrelation(
+                x = rna_seq_dt_clean[gene_id, overlap_samples],
+                experiment2 = dna_met_found[,overlap_samples],
+                method = corr_name,
+                assay.type1 = "dt1",
+                assay.type2 = "dt1",
+                test_significance = TRUE, 
+                show_warnings = FALSE, 
+                verbose = FALSE)
+        corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+        corr_dt
     })
-})
-```
-
-
-```{r}
-
-plot_list <- lapply(nw_plot_list, function(score_dt){
-    
-    lapply(score_dt, function(factor_dt){
-    
-        rna_table <- table(factor_dt$Gene_node)
-        dna_table <- table(factor_dt$DMR_node)
-        
-        rna_count_dt <- data.frame("value" = as.numeric(rna_table),
-                                   "value_perc" = as.numeric(rna_table)/dna_node_total,
-                                    "name" = names(rna_table),
-                                    "omic" = "RNA_Sequencing",
-                                    "n_vars" = paste("Nt = ", rna_node_total,
-                                                     "/ N = ", length(rna_table))
-                                )
-        
-        dna_count_dt <- data.frame("value" = as.numeric(dna_table),
-                                    "value_perc" = as.numeric(dna_table)/rna_node_total,
-                                    "name" = names(dna_table),
-                                    "omic" = "WGB_DNA_Methylation",
-                                        "n_vars" = paste("Nt =", dna_node_total,
-                                                     "/ N = ", length(dna_table))
-                                   )
-        count_merged_dt <- rbind(rna_count_dt, dna_count_dt)
-        
-        count_merged_dt$omic <- omic_names_dict[as.character(count_merged_dt$omic)]
-        count_merged_dt
-    })
+    corr_list_res <- do.call(rbind, corr_list_res)
+    corr_list_res$adj.p.value <- p.adjust(corr_list_res$p_adj, "fdr")
+    corr_list_res
 })
 
-```
+names(sig_gene_1MB_dmr_cors_list) <- corr_methods
 
-What we see makes sense as we have smaller differences in DNA methylation data than in RNA-Seq data, from 602 significant DMRs to around ~10000 significant genes.
+saveRDS(sig_gene_1MB_dmr_cors_list, 
+        paste0(corr_output_dir, "sig_genes_1MB_dmr_corr.rds"))
 
-```{r}
-pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig.pdf"))
-lapply(names(plot_list), function(score_id){
-    score_dt <- plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        line_dt <- plot_dt %>% group_by(omic) %>% 
-            summarise(mean_dt = mean(value), 
-                    median_dt = median(value))
-        
-        ggplot(plot_dt) + 
-            geom_histogram(aes(x = value, fill = omic)) +
-            geom_text(aes(x = Inf, y = Inf, label = n_vars), hjust = 1.05, vjust = 1.5, size = 3.5) + 
-            theme_minimal() + facet_grid(rows = vars(omic)) + 
-            theme(legend.position = "none") + xlab("Number of significant correlations") + 
-            scale_fill_manual(values = omic_color_dict_mod) + ggtitle(paste(score_id, factor_id,
-                                                                            "DNA-RNA correlations")) + 
-            geom_vline(data = line_dt, aes(xintercept = mean_dt)) + 
-            geom_vline(data = line_dt, aes(xintercept = median_dt), 
-                       color = "royalblue")
-    })
-})
-dev.off()
-```
-
-```{r}
-pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig_density.pdf"))
-lapply(names(plot_list), function(score_id){
-    score_dt <- plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        line_dt <- plot_dt %>% group_by(omic) %>% 
-            summarise(mean_dt = mean(value), 
-                    median_dt = median(value))
-        ggplot(plot_dt) + 
-            geom_density(aes(x = value, fill = omic)) +
-            geom_text(aes(x = Inf, y = Inf, label = n_vars), 
-                      hjust = 1.05, vjust = 1.5, size = 3.5) + 
-            theme_minimal() + facet_grid(rows = vars(omic)) + 
-            theme(legend.position = "none") + xlab("Number of significant correlations") + 
-            scale_fill_manual(values = omic_color_dict_mod) + ggtitle(paste(score_id, factor_id,
-                                                                            "DNA-RNA correlations")) + 
-            geom_vline(data = line_dt, aes(xintercept = mean_dt)) +
-            geom_vline(data = line_dt, aes(xintercept = median_dt), 
-                       color = "royalblue")
-    })
-})
-dev.off()
-```
-
-
-```{r}
-pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig_density_perc.pdf"))
-lapply(names(plot_list), function(score_id){
-    score_dt <- plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        plot_dt <- score_dt[[factor_id]]    
-        
-        line_dt <- plot_dt %>% group_by(omic) %>% 
-            summarise(mean_dt = mean(value_perc), 
-                    median_dt = median(value_perc))
-        
-        ggplot(plot_dt) + 
-            geom_density(aes(x = value_perc, fill = omic)) +
-            geom_text(aes(x = Inf, y = Inf, label = n_vars), 
-                      hjust = 1.05, vjust = 1.5, size = 3.5) + 
-            theme_minimal() + facet_grid(rows = vars(omic)) + 
-            theme(legend.position = "none") + xlab("Number of significant correlations") + 
-            scale_fill_manual(values = omic_color_dict_mod) + ggtitle(paste(score_id, factor_id,
-                                                                            "DNA-RNA correlations")) + 
-            geom_vline(data = line_dt, aes(xintercept = mean_dt)) + 
-            geom_vline(data = line_dt, aes(xintercept = median_dt), 
-                       color = "royalblue")
-    })
-})
-dev.off()
-```
-
-```{r}
-lapply(names(nw_graphs), function(score_id){
-    score_dt <- nw_graphs[[score_id]]
-    score_res <- lapply(names(score_dt), function(graph_id){
-        graph_dt <- score_dt[[graph_id]]
-
-        graph_weights <- edge_attr(graph_dt,
-                        name = "weight")
-        
-        hist(graph_weights)
-        prop.table(table(graph_weights > 0))
-    })
-})
-```
-
-##### Pos-Neg correlations
-
-```{r}
-plot_list <- lapply(nw_plot_list, function(score_dt){
-    
-    lapply(score_dt, function(factor_dt){
-        
-        rna_seq_corr_p <- factor_dt$Gene_node[factor_dt$weight > 0]
-        rna_seq_corr_n <- factor_dt$Gene_node[factor_dt$weight < 0]
-        
-        dna_seq_corr_p <- factor_dt$DMR_node[factor_dt$weight > 0]
-        dna_seq_corr_n <- factor_dt$DMR_node[factor_dt$weight < 0]
-        
-        rna_table_p <- table(rna_seq_corr_p)
-        dna_table_p <- table(dna_seq_corr_p)
-        rna_table_n <- table(rna_seq_corr_n)
-        dna_table_n <- table(dna_seq_corr_n)
-        
-        rna_count_dt <- data.frame("value" = c(as.numeric(rna_table_p), 
-                                               as.numeric(rna_table_n)*-1),
-                                    "name" = c(names(rna_table_p),
-                                               names(rna_table_n)),
-                                    "omic" = "RNA_Sequencing",
-                                    "n_vars" = paste("Nt = ", rna_node_total,
-                                                     "/ N = ", length(unique(c(names(rna_table_p)),
-                                                                             names(rna_table_n))))
-                                )
-        rna_count_dt$value_perc <- abs(rna_count_dt$value)/dna_node_total
-            
-        dna_count_dt <- data.frame("value" = c(as.numeric(dna_table_p),
-                                               as.numeric(dna_table_n)*-1),
-                                    "name" = c(names(dna_table_p),
-                                               names(dna_table_n)),
-                                    "omic" = "WGB_DNA_Methylation",
-                                    "n_vars" = paste("Nt =", dna_node_total,
-                                                     "/ N = ", length(unique(c(names(dna_table_p),
-                                                                               names(dna_table_n)))))
-                                   )
-        dna_count_dt$value_perc <- abs(dna_count_dt$value)/rna_node_total
-        
-        count_merged_dt <- rbind(rna_count_dt, dna_count_dt)
-        
-        count_merged_dt$omic <- omic_names_dict[as.character(count_merged_dt$omic)]
-        count_merged_dt
-    })
-})
-
-```
-
-```{r}
-pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig_pn.pdf"))
-lapply(names(plot_list), function(score_id){
-    score_dt <- plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        
-        nw_dt <- nw_plot_list[[score_id]][[factor_id]]
-        ids_keep <- unique(nw_dt$Gene_node[nw_dt$Gene_ID == nw_dt$DMR_Gene_ID])
-        line_dt <- plot_dt[plot_dt$name %in% ids_keep,]
-        
-        ids_keep <- unique(nw_dt$DMR_node[nw_dt$Gene_ID == nw_dt$DMR_Gene_ID])
-        line_dt_dmr <- plot_dt[plot_dt$name %in% ids_keep,]
-        
-        
-        ggplot(plot_dt) + 
-            geom_histogram(aes(x = value, fill = omic), color = "grey", binwidth = 100) +
-            geom_text(aes(x = Inf, y = Inf, label = n_vars), hjust = 1.05, vjust = 1.5, size = 3.5) + 
-            theme_minimal() + facet_grid(rows = vars(omic)) + 
-            theme(legend.position = "none") + xlab("Number of significant correlations") + 
-            scale_fill_manual(values = omic_color_dict_mod) + ggtitle(paste(score_id, factor_id,
-                                                                            "DNA-RNA correlations")) + 
-            geom_vline(aes(xintercept = 0)) +
-            geom_segment(data = line_dt, 
-                         aes(x =  value, xend = value, 
-                             y = -1000, yend = 0), alpha =0.4) +
-            geom_segment(data = line_dt_dmr, 
-                         aes(x =  value, xend = value, 
-                             y = -1000, yend = 0), alpha =0.4)
-    })
-})
-dev.off()
-```
-
-```{r, fig.height= 8, fig.width=6}
-pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig_unique_pn.pdf"))
-lapply(names(plot_list), function(score_id){
-    score_dt <- plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        line_dt <- plot_dt %>% group_by(omic) %>% 
-            summarise(mean_dt = mean(value), 
-                    median_dt = median(value))
-        rna_seq_dt <- plot_dt[plot_dt$omic == "Liver RNA Sequencing",]
-        
-        unique_order <- sapply(unique(rna_seq_dt$name), function(x){
-            corr_val <- rna_seq_dt$value[rna_seq_dt$name == x]
-            corr_val <- corr_val[corr_val < 0]
-            ifelse(length(corr_val), corr_val, 0)
-        })
-        
-        rna_seq_dt$name <- factor(rna_seq_dt$name, names(sort(unique_order, decreasing = TRUE)))
-        rna_seq_dt$color_c <- ifelse(rna_seq_dt$value < 0, "royalblue", "red")
-        
-        
-        dna_seq_dt <- plot_dt[plot_dt$omic == "Liver DNA Methylation",]
-        
-        unique_order <- sapply(unique(dna_seq_dt$name), function(x){
-            corr_val <- dna_seq_dt$value[dna_seq_dt$name == x]
-            corr_val <- corr_val[corr_val < 0]
-            ifelse(length(corr_val), corr_val, 0)
-        })
-        
-        dna_seq_dt$name <- factor(dna_seq_dt$name, names(sort(unique_order, decreasing = TRUE)))
-        dna_seq_dt$color_c <- ifelse(dna_seq_dt$value < 0, "royalblue", "red")
-        
-        p1 <- ggplot(rna_seq_dt) + 
-            geom_col(aes(x = value, y = name, fill = color_c)) +
-            geom_text(aes(x = Inf, y = Inf, label = n_vars), hjust = 1.05, vjust = 1.5, size = 3.5) + 
-            theme_minimal() + 
-            theme(legend.position = "none", axis.text.y = element_blank()) + 
-            xlab("Negative/Positive correlations") + ylab("Unique gene") +
-            ggtitle(paste(score_id, factor_id, "DNA-RNA correlations")) + 
-            geom_vline(xintercept = 0)
-        p2 <- ggplot(dna_seq_dt) + 
-            geom_col(aes(x = value, y = name, fill = color_c)) +
-            geom_text(aes(x = Inf, y = Inf, label = n_vars), hjust = 1.05, vjust = 1.5, size = 3.5) + 
-            theme_minimal() + 
-            theme(legend.position = "none", axis.text.y = element_blank()) + 
-            xlab("Negative/Positive correlations") + ylab("Unique DMR") +
-            ggtitle(paste(score_id, factor_id, "DNA-RNA correlations")) + 
-            geom_vline(xintercept = 0)
-        sapply(list(p1, p2), print)
-    })
-})
-dev.off()
-```
-
-##### Region plots
-
-Equivalent region correlations
-
-```{r}
-lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
-        ggplot(plot_dt, aes(x = abs(weight), fill = DMR_region)) + 
-            geom_density(alpha = 0.4) + 
-            theme_minimal() + theme(axis.text.x = element_text(angle = 90))
-    })
-})
-
-lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
-        ggplot(plot_dt, aes(x = DMR_region, y = abs(weight), fill = DMR_region)) +
-            geom_boxplot() +
-            theme_minimal() + theme(axis.text.x = element_text(angle = 90))
-    })
-})
-
-lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
-        
-        plot_dt %>% group_by(DMR_region) %>% summarise("mean" = mean(abs(weight)), "median" = median(abs(weight)))
-    })
-})
-
-lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
-        
-        TukeyHSD(aov(abs(plot_dt$weight) ~ plot_dt$DMR_region))
-    })
-})
-```
-
-
-
-
-```{r}
-plot_list <- lapply(nw_plot_list, function(score_dt){
-    
-    lapply(score_dt, function(factor_dt){
-        
-        
-        dna_seq_corr_p <- factor_dt$DMR_region[factor_dt$weight > 0]
-        dna_seq_corr_n <- factor_dt$DMR_region[factor_dt$weight < 0]
-        
-        dna_table_p <- table(dna_seq_corr_p)
-        dna_table_n <- table(dna_seq_corr_n)
-        
-        dna_count_dt <- data.frame("value" = c(as.numeric(dna_table_p),
-                                               as.numeric(dna_table_n)),
-                                    "name" = c(names(dna_table_p),
-                                               names(dna_table_n)),
-                                   "type" = c(rep("positive", length(dna_table_p)),
-                                              rep("negative", length(dna_table_n))),
-                                    "omic" = "WGB_DNA_Methylation",
-                                    "n_vars" = paste("Nt =", length(dna_node_total),
-                                                     "/ N = ", length(unique(c(names(dna_table_p),
-                                                                               names(dna_table_n)))))
-                                   )
-        count_merged_dt <- dna_count_dt
-        count_merged_dt$omic <- omic_names_dict[as.character(count_merged_dt$omic)]
-        count_merged_dt
-    })
-})
-
-```
-
-```{r}
-# pdf(paste0(corr_output_dir, "DNA_RNA_correlations_sig_pn.pdf"))
-lapply(names(plot_list), function(score_id){
-    score_dt <- plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        plot_dt$group <- paste(plot_dt$name, plot_dt$type)
-        ggplot(plot_dt, aes(x = name, y = value, fill = type)) + 
-            geom_col(stat = "identity", position = "dodge") + 
-            theme_minimal() + theme(axis.text.x = element_text(angle = 90)) +
-            scale_fill_manual(values = list(negative = "royalblue",
-                                            positive = "red")) + ylab("Number of correlations")
-    })
-})
-
-# lapply(names(plot_list), function(score_id){
-#     score_dt <- plot_list[[score_id]]
-#     lapply(names(score_dt), function(factor_id){
-#           
-#         plot_dt <- score_dt[[factor_id]]    
-#         plot_dt$group <- paste(plot_dt$name, plot_dt$type)
-#         ggplot(plot_dt, aes(x = name, y = value, fill = type)) + 
-#             geom_col(stat = "identity", position = "dodge") + 
-#             theme_minimal() + theme(axis.text.x = element_text(angle = 90)) +
-#             scale_fill_manual(values = list(negative = "royalblue",
-#                                             positive = "red"))
-#     })
-# })
-# dev.off()
-```
-
-```{r}
-annotation_dt <- rowData(experiments(multi_omics)[[dna_omic_id]])$annotation
-annotation_regions <- sapply(annotation_dt, function(dmr_an){
-            if(grepl("Promoter", dmr_an)){return("Promoter")
-            } else if(grepl("Intron", dmr_an)){return("Intron")
-            } else if(grepl("Exon", dmr_an)){return("Exon")
-            } else if(grepl("Downstream", dmr_an)){return("Downstream")
-            } else if(grepl("Distal Intergenic", dmr_an)){return("Distal Intergenic")
-            } else if(grepl("Upstream", dmr_an)){return("Upstream")
-            } else if(grepl("3' UTR", dmr_an)){return("3' UTR")
-            } else if(grepl("5' UTR", dmr_an)){return("5' UTR")
-            } else{"Other"}
-        })
-table(annotation_regions)
-maxim_correlations <- table(annotation_regions)*rna_node_total
-
-cor(table(nw_plot_list$pearson$All$DMR_region), maxim_correlations) 
-```
-
-```{r}
-t1 <- chisq.test(table(nw_plot_list$pearson$All$DMR_region), p = prop.table(maxim_correlations))
-t1
-t1$observed
-t1$expected
-chisq.test(table(nw_plot_list$pearson$All$Gene_ID), nw_plot_list$pearson$All$DMR_region)
-
-gene_correlations_regions <- table(nw_plot_list$pearson$All$Gene_ID, nw_plot_list$pearson$All$DMR_region)
-
-annotation_regions_table <- table(annotation_regions)
-
-chisq.test(gene_correlations_regions[1,], annotation_regions_table)
-res_lis <- apply(gene_correlations_regions, 1, function(x){
-    chisq.test(x, p = annotation_regions_table/sum(annotation_regions_table))
-})
-
-res_pvals <- p.adjust(sapply(res_lis, function(x){x$p.value}),method = "fdr")
-sig_genes <- names(res_pvals)[res_pvals <= 0.05]
-gene_correlations_regions[sig_genes,]
-
-res_lis[sig_genes][[2]]$expected
-res_lis[sig_genes][[2]]$observed
-
-```
-
-```{r}
-plot_list <- lapply(nw_plot_list, function(score_dt){
-    
-    lapply(score_dt, function(factor_dt){
-        dna_seq_corr_p <- factor_dt[factor_dt$weight > 0,]
-        dna_seq_corr_n <- factor_dt[factor_dt$weight < 0,]
-        
-        pos_sum <- dna_seq_corr_p %>% group_by(DMR_region) %>% 
-            summarise(perc = length(unique(Gene_ID))/rna_node_total, type = "positive")
-        
-        neg_sum <- dna_seq_corr_p %>% group_by(DMR_region) %>% 
-            summarise(perc = length(unique(Gene_ID))/rna_node_total, type = "negative")
-        
-        rbind(pos_sum, neg_sum)
-    })
-})
-
-plot_list <- lapply(nw_plot_list, function(score_dt){
-    lapply(score_dt, function(factor_dt){
-        factor_dt %>% group_by(DMR_region) %>% 
-            summarise(perc = length(unique(Gene_ID))/rna_node_total, type = "positive")
-    })
-})
-```
-
-
-```{r}
-plot_list <- lapply(nw_plot_list, function(score_dt){
-    
-    lapply(score_dt, function(factor_dt){
-        dna_seq_corr_p <- factor_dt[factor_dt$weight > 0,]
-        dna_seq_corr_n <- factor_dt[factor_dt$weight < 0,]
-        
-        pos_sum <- dna_seq_corr_p %>% group_by(DMR_region) %>% 
-            summarise(perc = length(unique(Gene_ID))/rna_node_total, type = "positive")
-        
-        neg_sum <- dna_seq_corr_p %>% group_by(DMR_region) %>% 
-            summarise(perc = length(unique(Gene_ID))/rna_node_total, type = "negative")
-        
-        rbind(pos_sum, neg_sum)
-    })
-})
-
-```
-
-```{r}
-lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        plot_dt$type <- ifelse(plot_dt$weight > 0, "positive", "negative")
-        plot_dt$group <- paste(plot_dt$DMR_region, plot_dt$type)
-        
-        plot_dt <- plot_dt %>% group_by(Gene_ID, type, DMR_region) %>% summarise("num" = length(DMR_annotation))
-        plot_dt <- plot_dt %>% group_by(Gene_ID) %>% summarise("num" = num, 
-                                                               "type" = type,
-                                                               "DMR_region" = DMR_region)
-        
-        neg_sum <- plot_dt %>% group_by(Gene_ID, type) %>% summarise("num" = sum(num)) 
-        neg_sum <- neg_sum %>% group_by(Gene_ID) %>% summarise("num" = num/sum(num), Gene_ID = Gene_ID, 
-                                                               type = type)    
-        order_vect <- sapply(unique(as.character(neg_sum$Gene_ID)), function(x){
-            found <- neg_sum$num[neg_sum$Gene_ID %in% x & neg_sum$type %in% "positive"]
-                if(!length(found)){
-                    return(0)
-                } else{
-                    return(found)
-                }
-        })
-        
-        neg_sum$Gene_ID <- factor(neg_sum$Gene_ID, 
-                                  levels = unique(neg_sum$Gene_ID)[order(order_vect, decreasing = TRUE)])
-        
-        
-        order_vect2 <- sapply(unique(as.character(plot_dt$Gene_ID)), function(x){
-            sum(abs(plot_dt$num[plot_dt$Gene_ID %in% x]))
-        })
-        
-        plot_dt$Gene_ID <- factor(plot_dt$Gene_ID, 
-                                  levels = unique(plot_dt$Gene_ID)[order(order_vect2, decreasing = TRUE)])
-        
-        
-        plot_dt2 <- reshape2::dcast(plot_dt, formula = )
-        
-        ggplot(plot_dt, aes(x = Gene_ID, y = num, fill = type)) +
-            geom_col() +
-            theme_minimal() +
-            theme(axis.text.x = element_blank()) +
-            scale_fill_manual(values = list(negative = "royalblue",
-                                            positive = "red"))
-        
-        ggplot(plot_dt, aes(x = group, y = perc, fill = type)) +
-            geom_col() +
-            theme_minimal() +
-            theme(axis.text.x = element_blank())
-        
-        ggplot(neg_sum, aes(x = Gene_ID, y = num, fill = type)) +
-            geom_col() +
-            theme_minimal() +
-            theme(axis.text.x = element_blank()) +
-            scale_fill_manual(values = list(negative = "royalblue",
-                                            positive = "red"))
-    })
-})
-```
-
-
-##### Same gene-DMRgene / same cromosome
-
-```{r}
-lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
-        plot_dt$group <- paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome)
-        plot_sum <- plot_dt %>% group_by(group, DMR_region) %>% 
-            summarise("Num" = length(weight))
-        # datatable(plot_sum)
-        
-    })
-})
-```
-
-
-```{r}
-lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
-        plot_dt$group <- paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome)
-        ggplot(plot_dt, aes(x = abs(weight), fill = group)) + 
-            geom_density(alpha = 0.4) + 
-            theme_minimal() + theme(axis.text.x = element_text(angle = 90))
-    })
-})
-
-lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
-        plot_dt$group <- paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome)
-        ggplot(plot_dt, aes(x = group, y = abs(weight), fill = group)) +
-            geom_boxplot() +
-            theme_minimal() + theme(axis.text.x = element_text(angle = 90), legend.position = "none")
-    })
-})
-
-lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
-        table(paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome))
-    })
-})
-
-```
-
-
-```{r, fig.height=10}
-lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
-        plot_dt$group <- paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome)
-        ggplot(plot_dt, aes(x = abs(weight), fill = group)) + 
-            geom_density(alpha = 0.4) + facet_grid(rows = vars(DMR_region)) + 
-            theme_minimal() + theme(axis.text.x = element_text(angle = 90))
-    })
-})
-
-lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        # plot_dt$type <- ifelse(plot_dt$weight > 0 , "positive", "negative")
-        plot_dt$group <- paste0(plot_dt$Same_Gene, plot_dt$Same_Chromosome)
-        ggplot(plot_dt, aes(x = DMR_region, y = abs(weight), fill = group)) +
-            geom_boxplot() +
-            theme_minimal() + theme(axis.text.x = element_text(angle = 90))
-    })
-})
-
-```
-
-```{r}
-plot_list <- lapply(nw_plot_list, function(score_dt){
-    
-    lapply(score_dt, function(factor_dt){
-        factor_dt <- factor_dt[factor_dt$DMR_chromosome == factor_dt$Gene_chromosome,]
-        
-        dna_seq_corr_p <- factor_dt$DMR_region[factor_dt$weight > 0]
-        dna_seq_corr_n <- factor_dt$DMR_region[factor_dt$weight < 0]
-        
-        dna_table_p <- table(dna_seq_corr_p)
-        dna_table_n <- table(dna_seq_corr_n)
-        
-        dna_count_dt <- data.frame("value" = c(as.numeric(dna_table_p),
-                                               as.numeric(dna_table_n)),
-                                    "name" = c(names(dna_table_p),
-                                               names(dna_table_n)),
-                                   "type" = c(rep("positive", length(dna_table_p)),
-                                              rep("negative", length(dna_table_n))),
-                                    "omic" = "WGB_DNA_Methylation",
-                                    "n_vars" = paste("Nt =", length(dna_node_total),
-                                                     "/ N = ", length(unique(c(names(dna_table_p),
-                                                                               names(dna_table_n)))))
-                                   )
-        count_merged_dt <- dna_count_dt
-        count_merged_dt$omic <- omic_names_dict[as.character(count_merged_dt$omic)]
-        count_merged_dt
-    })
-})
 
 ```
 
 
 ```{r}
-lapply(names(plot_list), function(score_id){
-    score_dt <- plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        plot_dt$group <- paste(plot_dt$name, plot_dt$type)
-        ggplot(plot_dt, aes(x = name, y = value, fill = type)) + 
-            geom_col(stat = "identity", position = "dodge") + 
-            theme_minimal() + theme(axis.text.x = element_text(angle = 90)) +
-            scale_fill_manual(values = list(negative = "royalblue",
-                                            positive = "red")) + ylab("Number of correlations") + xlab("Genes and the regions in the same chromosome")
-    })
-})
-```
+sig_gene_1MB_dmr_cors_list <- readRDS(paste0(corr_output_dir, "sig_genes_1MB_dmr_corr.rds"))
 
-```{r}
-plot_list <- lapply(nw_plot_list, function(score_dt){
-    
-    lapply(score_dt, function(factor_dt){
-        factor_dt <- factor_dt[factor_dt$Same_Gene_bool,]
-        
-        dna_seq_corr_p <- factor_dt$DMR_region[factor_dt$weight > 0]
-        dna_seq_corr_n <- factor_dt$DMR_region[factor_dt$weight < 0]
-        
-        dna_table_p <- table(dna_seq_corr_p)
-        dna_table_n <- table(dna_seq_corr_n)
-        
-        dna_count_dt <- data.frame("value" = c(as.numeric(dna_table_p),
-                                               as.numeric(dna_table_n)),
-                                    "name" = c(names(dna_table_p),
-                                               names(dna_table_n)),
-                                   "type" = c(rep("positive", length(dna_table_p)),
-                                              rep("negative", length(dna_table_n))),
-                                    "omic" = "WGB_DNA_Methylation",
-                                    "n_vars" = paste("Nt =", length(dna_node_total),
-                                                     "/ N = ", length(unique(c(names(dna_table_p),
-                                                                               names(dna_table_n)))))
-                                   )
-        count_merged_dt <- dna_count_dt
-        count_merged_dt$omic <- omic_names_dict[as.character(count_merged_dt$omic)]
-        count_merged_dt
-    })
+sig_gene_1MB_dmr_cors_list_filt <- lapply(sig_gene_1MB_dmr_cors_list, function(score_dt){
+    score_dt[abs(score_dt$cor) > 0.6 & score_dt$adj.p.value <= 0.05,]
 })
 
-```
+lima_dmrreg_dmrs <- as.character(unique(sig_gene_1MB_dmr_cors_list_filt$pearson$Var2))
+lima_dmrreg_genes <- as.character(unique(sig_gene_1MB_dmr_cors_list_filt$pearson$Var1))
+
+lima_dmrreg_dmrs
+
+lima_gfcv_lima_dmrreg_microb <- intersect(lima_dmrs_microb_dmr_reg, lima_dmrreg_dmrs)
 
 
-```{r}
-lapply(names(plot_list), function(score_id){
-    score_dt <- plot_list[[score_id]]
-    lapply(names(score_dt), function(factor_id){
-        
-        plot_dt <- score_dt[[factor_id]]    
-        plot_dt$group <- paste(plot_dt$name, plot_dt$type)
-        ggplot(plot_dt, aes(x = name, y = value, fill = type)) + 
-            geom_col(stat = "identity", position = "dodge") + 
-            theme_minimal() + theme(axis.text.x = element_text(angle = 90)) +
-            scale_fill_manual(values = list(negative = "royalblue",
-                                            positive = "red")) + ylab("Number of correlations") + xlab("Genes and their direct DMRs correlations")
-    })
-})
-```
+lima_gfcv_lima_dmrreg_microb_genes <- unique(as.character(sig_gene_1MB_dmr_cors_list_filt$pearson$Var1[sig_gene_1MB_dmr_cors_list_filt$pearson$Var2 %in%
+                                                            lima_gfcv_lima_dmrreg_microb]))
+
+View(as.data.frame(rowData(omic_dt[["RNA_Sequencing"]][lima_gfcv_lima_dmrreg_microb_genes,])))
 
 
-###### Gene Enrichments
+View(as.data.frame(rowData(omic_dt[["WGB_DNA_Methylation"]][lima_dmrreg_dmrs,])))
+View(as.data.frame(rowData(omic_dt[["WGB_DNA_Methylation"]][lima_gfcv_lima_dmrreg_microb,])))
 
-```{r}
-enrich_exp_list <- lapply(names(nw_plot_list), function(score_id){
-    score_dt <- nw_plot_list[[score_id]]
-    score_res <- lapply(names(score_dt), function(factor_id){
-    sheet_name <- paste0(score_id, ".", factor_id)
-        plot_dt <- score_dt[[factor_id]]
-        rowData(experiments(multi_omics)[[rna_omic_id]][unique(plot_dt$Gene_ID[plot_dt$Same_Gene_bool & !is.na(plot_dt$Same_Gene)]),])
-    })
-    score_res[[1]]
-})
-names(enrich_exp_list) <- names(nw_plot_list)
-enrich_exp_list$combined <- rowData(experiments(multi_omics)[[rna_omic_id]][union(rownames(enrich_exp_list$pearson),                                                                        rownames(enrich_exp_list$spearman)),])
-xfun::Rscript_call(rmarkdown::render,
-    args = list(
-        input = "../Multi_Omics_Analysis/RNA_Sequencing_Enrichments.Rmd",
-        output_file = enrich_file,
-        params = list(
-            exp_list = enrich_exp_list,
-            output_dir = enrich_dir,
-            ora_filter = NULL,
-            gsea_cols_list = NULL,
-            gsea = FALSE,
-            custom_gene_set = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",],
-            custom_descriptions = kegg_db_list$term2name,
-            custom_name = "custom",
-            universe = NULL,
-            order_column = "HFD-CNT.adj.p.value",
-            results_name = "correlated_gene_enrich",
-            legend_name = "Fold Change (log2)",
-            random_seed = 1234
-        )
-    )
-)
 
-enrich_dir <- corr_output_dir
-enrich_file <- paste0(enrich_dir, "correlated_gene_enrich_detected_universe.html")
-xfun::Rscript_call(rmarkdown::render,
-    args = list(
-        input = "../Multi_Omics_Analysis/RNA_Sequencing_Enrichments.Rmd",
-        output_file = enrich_file,
-        params = list(
-            exp_list = enrich_exp_list,
-            output_dir = enrich_dir,
-            ora_filter = NULL,
-            gsea_cols_list = NULL,
-            gsea = FALSE,
-            custom_gene_set = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",],
-            custom_descriptions = kegg_db_list$term2name,
-            custom_name = "custom",
-            universe = universe_list_ids$RNA_Sequencing,
-            order_column = "HFD-CNT.adj.p.value",
-            results_name = "correlated_gene_enrich_detected_universe",
-            legend_name = "Fold Change (log2)",
-            random_seed = 1234
-        )
-    )
-)
+lima_dmrreg_microb <- intersect(rownames(lima_microb_dmrs), lima_dmrreg_dmrs)
+
+lima_dmrreg_microb
+View(as.data.frame(rowData(omic_dt[["WGB_DNA_Methylation"]][lima_dmrreg_microb,])))
 
 ```
 
@@ -3890,18 +2711,14 @@ corr_dt_list_reg_regions_2 <- lapply(corr_dt_list_reg_regions_2, function(x){
 })
 names(corr_dt_list_reg_regions_2) <- corr_vect
 
-saveRDS(corr_dt_list_reg_regions_2, "../../outputs/Multi_Omics_Analysis/test_reg_regions_1MB_cors.rds")
+saveRDS(corr_dt_list_reg_regions_2, "../../outputs/Multi_Omics_Analysis/test_reg_regions_1MB_cors_lima.rds")
 ```
 
 
 
 ```{r}
-reg_elements_cor <- readRDS("../../outputs/Multi_Omics_Analysis/test_reg_regions_1MB_cors.rds")
-reg_elements_cor
+reg_elements_cor <- readRDS("../../outputs/Multi_Omics_Analysis/test_reg_regions_1MB_cors_lima.rds")
 
-```
-
-```{r}
 ensembl_2_start <- rowData(multi_omics[["RNA_Sequencing"]])$start_position
 names(ensembl_2_start) <- rownames(multi_omics[["RNA_Sequencing"]])
 
@@ -3961,10 +2778,10 @@ dmr_reg_1MB_genes <- lapply(reg_elements_cor_filt, function(score_dt){
     unique(score_dt$Var1)
 })
 
-dmr_reg_f1 <- dmr_reg_1MB_genes$pearson[dmr_reg_1MB_genes$pearson %in% f1_mofa_vars]
+dmr_reg_f1 <- dmr_reg_1MB_genes$pearson[dmr_reg_1MB_genes$pearson %in% f1_mofa_vars_full]
 
 dmr_reg_f2 <- dmr_reg_1MB_genes$pearson[dmr_reg_1MB_genes$pearson %in% f2_mofa_vars]
-
+dmr_reg_f2 <- dmr_reg_1MB_genes$pearson[dmr_reg_1MB_genes$pearson %in% f2_mofa_vars_full]
 
 pheatmap::pheatmap(as.matrix(assay(rna_seq_dt[as.character(dmr_reg_f1),])))
 
@@ -3973,24 +2790,6 @@ pheatmap::pheatmap(as.matrix(assay(rna_seq_dt[as.character(dmr_reg_f2),])), show
 lapply(as.character(dmr_reg_f2), function(x){
     boxplot(as.numeric(assay(rna_seq_dt[x,])) ~ rna_seq_dt$group, ylab = x)
 })
-```
-
-```{r}
-
-rna_seq_weights["ENSMUSG00000038521",]
-rna_seq_weights["ENSMUSG00000022206",]
-
-rna_seq_weights["ENSMUSG00000028655",]
-rna_seq_weights["ENSMUSG00000086389",]
-
-
-angles["ENSMUSG00000022206"]
-angles["ENSMUSG00000038521"]
-
-angles["ENSMUSG00000028655"]
-angles["ENSMUSG00000086389"]
-
-
 ```
 
 
@@ -4062,6 +2861,29 @@ openxlsx::saveWorkbook(wb = output_wb, file = "../../outputs/Multi_Omics_Analysi
 
 ```{r}
 f1_vars_mofa_extra %in% reg_elements_cor_filt$pearson$
+```
+
+#### GFCV DMR regulated
+
+```{r}
+gfcv_reg_regions_int <- readRDS("../../outputs/Multi_Omics_Analysis/test_reg_regions_gfcv.rds")
+
+
+microb_diet_reg <- intersect(rownames(gfcv_reg_regions_int$GFCV_sig),
+                            rownames(reg_elements_exp_filt))
+
+rowData(reg_elements_exp_filt[microb_diet_reg,])
+
+reg_cor_found <- reg_elements_cor$pearson[reg_elements_cor$pearson$Var2 %in% microb_diet_reg,]
+
+boxplot(as.numeric(assay(rna_seq_dt[as.character(reg_cor_found$Var1[58]),])) ~ rna_seq_dt$group)
+
+boxplot(as.numeric(assay(reg_elements_exp_filt[as.character(reg_cor_found$Var2[58]),])) ~ reg_elements_exp_filt$group)
+
+reg_cor_found <- reg_cor_found[reg_cor_found$adj.p.value <= 0.05,]
+
+which(reg_cor_found$Var1 %in% f2_mofa_vars_extra)
+
 ```
 
 
@@ -5700,6 +4522,7 @@ plot_dt <- as.data.frame(table(weight_dt$omic_id, weight_dt$which_07))
 ggplot(plot_dt) + geom_col(aes(x = Var1, y = Freq, fill = Var2))
 ```
 
+#### Gene Classification
 
 ```{r}
 rna_seq_factors <- rowData(omic_dt[["RNA_Sequencing"]])[,c("Factor_1_weights",
@@ -5722,7 +4545,8 @@ other_genes_f2 <- rownames(rna_seq_factors_b)[rna_seq_factors_b[,2] > 0.5 &
 ```
 
 ```{r}
-ph1 <- pheatmap::pheatmap(rna_seq_weights[other_genes_f2,], 
+set.seed(1234)
+ph1 <- pheatmap::pheatmap(rna_seq_factors[other_genes_f2,], 
                         show_rownames = FALSE, cutree_rows = 4)
 
 c1_tree <- cutree(ph1$tree_row, 4)
@@ -5741,7 +4565,8 @@ f3_mofa_vars <- c(c1_tree_list[["1"]], c1_tree_list[["3"]])
 ```
 
 ```{r}
-ph2 <- pheatmap::pheatmap(rna_seq_weights[other_genes_f1,], show_rownames = FALSE, cutree_rows = 4)
+set.seed(1234)
+ph2 <- pheatmap::pheatmap(rna_seq_factors[other_genes_f1,], show_rownames = FALSE, cutree_rows = 4)
 
 c1_tree <- cutree(ph2$tree_row, 4)
 
@@ -5754,14 +4579,16 @@ lapply(c1_tree_list, function(x){
     return(NULL)
 })
 
-f1_mofa_vars_extra <- c(c1_tree_list[["3"]], c1_tree_list[["4"]])
-f3_mofa_vars_extra <- c(c1_tree_list[["1"]], c1_tree_list[["2"]])
+f1_mofa_vars_extra <- c(c1_tree_list[["1"]], c1_tree_list[["4"]])
+f3_mofa_vars_extra <- c(c1_tree_list[["2"]], c1_tree_list[["3"]])
 ```
 
 ```{r}
 f1_mofa_vars_full <- c(f1_mofa_vars, f1_mofa_vars_extra)
 f2_mofa_vars_full <- c(f2_mofa_vars, f2_mofa_vars_extra)
 f3_mofa_vars_full <- c(f3_mofa_vars, f3_mofa_vars_extra)
+
+group_var <- as.data.frame(colData(rna_seq_dt))[,"group", drop = FALSE]
 
 pheatmap::pheatmap(as.matrix(assay(rna_seq_dt[f1_mofa_vars_full,])), show_rownames = FALSE, annotation_col = group_var)
 
@@ -5775,9 +4602,6 @@ length(f3_mofa_vars_full)
 
 ```
 
-
-
-
 ```{r}
 rowData(omic_dt[["RNA_Sequencing"]])$Full_Factor <- NA
 
@@ -5789,6 +4613,102 @@ rowData(omic_dt[["RNA_Sequencing"]])$Full_Factor[rownames(omic_dt[["RNA_Sequenci
 
 table(rowData(omic_dt[["RNA_Sequencing"]])$Full_Factor)
 ```
+
+#### DMR Classification
+
+```{r}
+wgb_seq_factors <- rowData(omic_dt[["WGB_DNA_Methylation"]])[,c("Factor_1_weights",
+                                        "Factor_2_weights")]
+
+f1_mofa_vars_dmrs <- rownames(omic_dt[["WGB_DNA_Methylation"]])[rowData(omic_dt[["WGB_DNA_Methylation"]])$Factor_1_weights_sig]
+
+f2_mofa_vars_dmrs <- rownames(omic_dt[["WGB_DNA_Methylation"]])[rowData(omic_dt[["WGB_DNA_Methylation"]])$Factor_2_weights_sig]
+
+wgb_seq_factors_b <- t(apply(as.matrix(wgb_seq_factors), 1, function(x){abs(x)/sum(abs(x))}))
+
+f1_mofa_vars_dmrs <- rownames(wgb_seq_factors_b)[wgb_seq_factors_b[,1] >  0.8]
+f2_mofa_vars_dmrs <- rownames(wgb_seq_factors_b)[wgb_seq_factors_b[,2] >  0.8]
+
+other_genes_f1 <- rownames(wgb_seq_factors_b)[wgb_seq_factors_b[,1] > 0.5 & 
+                                                  wgb_seq_factors_b[,1] < 0.8]
+
+other_genes_f2 <- rownames(wgb_seq_factors_b)[wgb_seq_factors_b[,2] > 0.5 & 
+                                                  wgb_seq_factors_b[,2] < 0.8]
+```
+
+```{r}
+set.seed(1234)
+ph1 <- pheatmap::pheatmap(wgb_seq_factors[other_genes_f2,], 
+                        show_rownames = FALSE, cutree_rows = 4)
+
+c1_tree <- cutree(ph1$tree_row, 4)
+
+c1_tree_list <- tapply(names(c1_tree), c1_tree, function(x){x})
+
+lapply(c1_tree_list, function(x){
+    pheatmap::pheatmap(as.matrix(assay(multi_omics[["WGB_DNA_Methylation"]][x,])),
+                annotation_col = as.data.frame(colData(multi_omics[["WGB_DNA_Methylation"]]))[,"group", drop = FALSE],
+                show_rownames = FALSE)
+    return(NULL)
+})
+
+f2_mofa_vars_dmrs_extra <- c(c1_tree_list[["1"]], c1_tree_list[["3"]])
+f3_mofa_vars_dmrs <- c(c1_tree_list[["2"]], c1_tree_list[["4"]])
+```
+
+```{r}
+set.seed(1234)
+ph2 <- pheatmap::pheatmap(wgb_seq_factors[other_genes_f1,], show_rownames = FALSE, cutree_rows = 4)
+
+c1_tree <- cutree(ph2$tree_row, 4)
+
+c1_tree_list <- tapply(names(c1_tree), c1_tree, function(x){x})
+
+lapply(c1_tree_list, function(x){
+    pheatmap::pheatmap(as.matrix(assay(multi_omics[["WGB_DNA_Methylation"]][x,])),
+                annotation_col = as.data.frame(colData(multi_omics[["WGB_DNA_Methylation"]]))[,"group", drop = FALSE],
+                show_rownames = FALSE)
+    return(NULL)
+})
+```
+
+
+```{r}
+f1_mofa_vars_dmrs_extra <- c(c1_tree_list[["1"]], c1_tree_list[["4"]])
+f3_mofa_vars_dmrs_extra <- c(c1_tree_list[["2"]], c1_tree_list[["3"]])
+```
+
+```{r}
+f1_mofa_vars_dmrs_full <- c(f1_mofa_vars_dmrs, f1_mofa_vars_dmrs_extra)
+f2_mofa_vars_dmrs_full <- c(f2_mofa_vars_dmrs, f2_mofa_vars_dmrs_extra)
+f3_mofa_vars_dmrs_full <- c(f3_mofa_vars_dmrs, f3_mofa_vars_dmrs_extra)
+
+group_var <- as.data.frame(colData(dna_met_dt))[,"group",drop = FALSE]
+pheatmap::pheatmap(as.matrix(assay(dna_met_dt[f1_mofa_vars_dmrs_full,])), show_rownames = FALSE, annotation_col = group_var)
+
+pheatmap::pheatmap(as.matrix(assay(dna_met_dt[f2_mofa_vars_dmrs_full,])), show_rownames = FALSE, annotation_col = group_var)
+
+pheatmap::pheatmap(as.matrix(assay(dna_met_dt[f3_mofa_vars_dmrs_full,])), show_rownames = FALSE, annotation_col = group_var)
+
+length(f1_mofa_vars_dmrs_full)
+length(f2_mofa_vars_dmrs_full)
+length(f3_mofa_vars_dmrs_full)
+
+```
+
+```{r}
+rowData(omic_dt[["WGB_DNA_Methylation"]])$Full_Factor <- NA
+
+rowData(omic_dt[["WGB_DNA_Methylation"]])$Full_Factor[rownames(omic_dt[["WGB_DNA_Methylation"]]) %in% f1_mofa_vars_dmrs_full] <- "Factor_1"
+
+rowData(omic_dt[["WGB_DNA_Methylation"]])$Full_Factor[rownames(omic_dt[["WGB_DNA_Methylation"]]) %in% f2_mofa_vars_dmrs_full] <- "Factor_2"
+
+rowData(omic_dt[["WGB_DNA_Methylation"]])$Full_Factor[rownames(omic_dt[["WGB_DNA_Methylation"]]) %in% f3_mofa_vars_dmrs_full] <- "Factor_3"
+
+table(rowData(omic_dt[["WGB_DNA_Methylation"]])$Full_Factor)
+```
+
+
 ### MOFA Criteria 0.8 + Clustered 
 
 #### MOFA factor enrichment
@@ -5892,7 +4812,7 @@ mofa_factor_chebi_enrich <- lapply(enrich_exp_list, function(factor_dt){
 output_wb <- openxlsx::createWorkbook()
 
 lapply(names(mofa_factor_go_enrich), function(factor_id){
-    factor_dt <- mofa_factor_kegg_enrich[[factor_id]]
+    factor_dt <- mofa_factor_go_enrich[[factor_id]]
     lapply(names(factor_dt), function(weight_id){
         weight_dt <- factor_dt[[weight_id]] 
         
@@ -5930,8 +4850,8 @@ lapply(names(mofa_factor_chebi_enrich), function(factor_id){
     })
 })
 
-openxlsx::saveWorkbook(wb = output_wb, 
-                    file = "../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/enrich_results/factor_test_enrich_results.xlsx")
+openxlsx::saveWorkbook(wb = output_wb, overwrite = TRUE,
+                    file = "../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/enrich_results/factor_08clu_enrich_results.xlsx")
 ```
 
 
@@ -6209,7 +5129,7 @@ mofa_factor_chebi_enrich <- lapply(enrich_exp_list, function(factor_dt){
 output_wb <- openxlsx::createWorkbook()
 
 lapply(names(mofa_factor_go_enrich), function(factor_id){
-    factor_dt <- mofa_factor_kegg_enrich[[factor_id]]
+    factor_dt <- mofa_factor_go_enrich[[factor_id]]
     lapply(names(factor_dt), function(weight_id){
         weight_dt <- factor_dt[[weight_id]] 
         
@@ -6235,7 +5155,7 @@ lapply(names(mofa_factor_kegg_enrich), function(factor_id){
 })
 
 lapply(names(mofa_factor_chebi_enrich), function(factor_id){
-    factor_dt <- mofa_factor_kegg_enrich[[factor_id]]
+    factor_dt <- mofa_factor_chebi_enrich[[factor_id]]
     lapply(names(factor_dt), function(weight_id){
         weight_dt <- factor_dt[[weight_id]]
         
@@ -6247,7 +5167,7 @@ lapply(names(mofa_factor_chebi_enrich), function(factor_id){
     })
 })
 
-openxlsx::saveWorkbook(wb = output_wb, 
+openxlsx::saveWorkbook(wb = output_wb,  overwrite = TRUE,
                     file = "../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/enrich_results/factor_enrich_08.xlsx")
 ```
 
@@ -6512,6 +5432,567 @@ lapply(names(mofa_factor_chebi_enrich), function(factor_id){
 openxlsx::saveWorkbook(wb = output_wb, 
                     file = "../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/enrich_results/wgb_1MB_factor_enrich_results.xlsx")
 ```
+
+
+### Factor DMR-Gene overlap
+
+```{r}
+rna_seq_f2 <- multi_omics[["RNA_Sequencing"]][f2_mofa_vars,]
+rna_seq_f2 <- rna_seq_f2[!is.na(rowData(rna_seq_f2)$chromosome_id),]
+
+dmr_met_f2 <- multi_omics[["WGB_DNA_Methylation"]][f2_mofa_vars_dmrs,]
+
+rna_seq_rr <- GenomicRanges::GRanges(
+    seqnames = rowData(rna_seq_f2)$chromosome_id,
+    ranges = IRanges(start = as.numeric(rowData(rna_seq_f2)$start_position) - 1e6,
+    end = as.numeric(rowData(rna_seq_f2)$start_position) + 1e6,
+    names = rownames(rna_seq_f2)))
+
+dna_met_dt_1mb <- lapply(rownames(rna_seq_f2), function(gene_id){
+    ov_dt <- findOverlaps(query = rowRanges(dmr_met_f2), subject = rna_seq_rr[gene_id,])
+    found_dmrs <- rownames(dna_met_dt[ov_dt@from,])
+    if(!length(found_dmrs)){return(NULL)}
+    data.frame("DMR_ID" = found_dmrs, "Gene_ID" = gene_id)
+})
+
+names(dna_met_dt_1mb) <- rownames(rna_seq_f2)
+
+
+dna_met_dt_1mb <- do.call(rbind, dna_met_dt_1mb)
+length(unique(dna_met_dt_1mb$Gene_ID))
+length(unique(dna_met_dt_1mb$DMR_ID))
+
+length(f2_mofa_vars)
+
+View(as.data.frame(rowData(dna_met_dt[unique(dna_met_dt_1mb$DMR_ID),])))
+```
+
+```{r}
+rna_seq_f2 <- multi_omics[["RNA_Sequencing"]][f2_mofa_vars_full,]
+rna_seq_f2 <- rna_seq_f2[!is.na(rowData(rna_seq_f2)$chromosome_id),]
+
+dmr_met_f2 <- multi_omics[["WGB_DNA_Methylation"]][f2_mofa_vars_dmrs_full,]
+
+rna_seq_rr <- GenomicRanges::GRanges(
+    seqnames = rowData(rna_seq_f2)$chromosome_id,
+    ranges = IRanges(start = as.numeric(rowData(rna_seq_f2)$start_position) - 1e6,
+    end = as.numeric(rowData(rna_seq_f2)$start_position) + 1e6,
+    names = rownames(rna_seq_f2)))
+
+dna_met_dt_1mb_full <- lapply(rownames(rna_seq_f2), function(gene_id){
+    ov_dt <- findOverlaps(query = rowRanges(dmr_met_f2), subject = rna_seq_rr[gene_id,])
+    found_dmrs <- rownames(dmr_met_f2[ov_dt@from,])
+    if(!length(found_dmrs)){return(NULL)}
+    data.frame("DMR_ID" = found_dmrs, "Gene_ID" = gene_id)
+})
+
+names(dna_met_dt_1mb_full) <- rownames(rna_seq_f2)
+
+
+dna_met_dt_1mb_full <- do.call(rbind, dna_met_dt_1mb_full)
+length(unique(dna_met_dt_1mb_full$Gene_ID))
+length(unique(dna_met_dt_1mb_full$DMR_ID))
+
+length(f2_mofa_vars)
+
+View(as.data.frame(rowData(dna_met_dt[unique(dna_met_dt_1mb_full$DMR_ID),])))
+View(as.data.frame(rowData(rna_seq_dt[unique(dna_met_dt_1mb_full$Gene_ID),])))
+
+pheatmap::pheatmap(as.matrix(assay(dna_met_dt[unique(dna_met_dt_1mb_full$DMR_ID),])), show_rownames = FALSE)
+
+pheatmap::pheatmap(as.matrix(assay(rna_seq_dt[unique(dna_met_dt_1mb_full$Gene_ID),])),
+                   show_rownames = FALSE)
+
+View(as.data.frame(rowData(omic_dt[["WGB_DNA_Methylation"]][unique(dna_met_dt_1mb_full$DMR_ID)])))
+
+
+```
+```{r}
+table(dna_met_dt_1mb_full$DMR_ID)
+dnamet
+```
+ 
+  
+```{r}
+rna_seq_f1 <- multi_omics[["RNA_Sequencing"]][f1_mofa_vars,]
+rna_seq_f1 <- rna_seq_f1[!is.na(rowData(rna_seq_f1)$chromosome_id),]
+
+dmr_met_f1 <- multi_omics[["WGB_DNA_Methylation"]][f1_mofa_vars_dmrs,]
+
+rna_seq_rr <- GenomicRanges::GRanges(
+    seqnames = rowData(rna_seq_f1)$chromosome_id,
+    ranges = IRanges(start = as.numeric(rowData(rna_seq_f1)$start_position) - 1e6,
+    end = as.numeric(rowData(rna_seq_f1)$start_position) + 1e6,
+    names = rownames(rna_seq_f1)))
+
+dna_met_dt_1mb_f1 <- lapply(rownames(rna_seq_f1), function(gene_id){
+    ov_dt <- findOverlaps(query = rowRanges(dmr_met_f1), subject = rna_seq_rr[gene_id,])
+    found_dmrs <- rownames(dna_met_dt[ov_dt@from,])
+    if(!length(found_dmrs)){return(NULL)}
+    data.frame("DMR_ID" = found_dmrs, "Gene_ID" = gene_id)
+})
+
+names(dna_met_dt_1mb_f1) <- rownames(rna_seq_f1)
+
+
+dna_met_dt_1mb_f1 <- do.call(rbind, dna_met_dt_1mb_f1)
+length(unique(dna_met_dt_1mb_f1$Gene_ID))
+length(unique(dna_met_dt_1mb_f1$DMR_ID))
+```
+
+```{r}
+rna_seq_f1 <- multi_omics[["RNA_Sequencing"]][f1_mofa_vars_full,]
+rna_seq_f1 <- rna_seq_f1[!is.na(rowData(rna_seq_f1)$chromosome_id),]
+
+dmr_met_f1 <- multi_omics[["WGB_DNA_Methylation"]][f1_mofa_vars_dmrs_full,]
+
+rna_seq_rr <- GenomicRanges::GRanges(
+    seqnames = rowData(rna_seq_f1)$chromosome_id,
+    ranges = IRanges(start = as.numeric(rowData(rna_seq_f1)$start_position) - 1e6,
+    end = as.numeric(rowData(rna_seq_f1)$start_position) + 1e6,
+    names = rownames(rna_seq_f1)))
+
+dna_met_dt_1mb_full_f1 <- lapply(rownames(rna_seq_f1), function(gene_id){
+    ov_dt <- findOverlaps(query = rowRanges(dmr_met_f1), subject = rna_seq_rr[gene_id,])
+    found_dmrs <- rownames(dmr_met_f1[ov_dt@from,])
+    if(!length(found_dmrs)){return(NULL)}
+    data.frame("DMR_ID" = found_dmrs, "Gene_ID" = gene_id)
+})
+
+names(dna_met_dt_1mb_full_f1) <- rownames(rna_seq_f1)
+
+
+dna_met_dt_1mb_full_f1 <- do.call(rbind, dna_met_dt_1mb_full_f1)
+
+length(unique(dna_met_dt_1mb_full_f1$Gene_ID))
+length(unique(dna_met_dt_1mb_full_f1$DMR_ID))
+
+
+View(as.data.frame(rowData(dna_met_dt[unique(dna_met_dt_1mb_full_f1$DMR_ID),])))
+View(as.data.frame(rowData(rna_seq_dt[unique(dna_met_dt_1mb_full_f1$Gene_ID),])))
+
+pheatmap::pheatmap(as.matrix(assay(dna_met_dt[unique(dna_met_dt_1mb_full_f1$DMR_ID),])), show_rownames = FALSE)
+
+pheatmap::pheatmap(as.matrix(assay(rna_seq_dt[unique(dna_met_dt_1mb_full_f1$Gene_ID),])),
+                   show_rownames = FALSE)
+
+View(as.data.frame(rowData(omic_dt[["WGB_DNA_Methylation"]][unique(dna_met_dt_1mb_full$DMR_ID)])))
+
+
+```
+
+#### DMR regulated enrich MOFA factor 1MB
+
+```{r}
+enrich_exp_list <- lapply(expr_list, function(factor_expr){
+    range_dt <- rowData(experiments(omic_dt)$RNA_Sequencing)
+    lapply(factor_expr, function(expr_c){
+        range_dt <- range_dt[eval(expr = parse(text = expr_c), 
+                      envir = as.data.frame(range_dt)),]
+        if(grepl("1", expr_c)){
+            return(range_dt[rownames(range_dt) %in% unique(dna_met_dt_1mb_full_f1$Gene_ID),])
+        } else{
+            return(range_dt[rownames(range_dt) %in% unique(dna_met_dt_1mb_full$Gene_ID),])    
+        }
+    })
+})
+```
+
+```{r}
+overlap_samples <- intersect(colnames(reg_elements_exp_filt),
+                            colnames(multi_omics[["RNA_Sequencing"]]))
+apply(f2_cors, 1, function(x){
+    gene_dt <- multi_omics[["RNA_Sequencing"]][x[["Var1"]], overlap_samples]
+    dmr_dt <- reg_elements_exp_filt[x[["Var2"]], overlap_samples]
+    v1 <- as.numeric(assay(gene_dt))
+    v2 <- as.numeric(assay(dmr_dt))
+    
+    ggplot() + geom_point(aes(x = v1, y = v2, color = gene_dt$group)) + 
+        xlab(x[["Var1"]]) + ylab(x[["Var2"]])
+})
+```
+
+##### GO enrich
+
+```{r}
+mofa_factor_go_enrich <- lapply(enrich_exp_list, function(factor_dt){
+    lapply(factor_dt, function(weight_dt){
+        enrich_res <- enrichGO(gene = rownames(weight_dt), OrgDb = org.Mm.eg.db, 
+                                keyType = "ENSEMBL", 
+                                ont = "ALL", pvalueCutoff = 0.05, pAdjustMethod = "fdr", 
+                                universe = NULL, maxGSSize = 500)
+        enrich_res <- clusterProfiler::simplify(enrich_res)
+        
+        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+        enrich_res    
+    })
+})
+```
+
+##### KEGG enrich
+
+```{r}
+mofa_factor_kegg_enrich <- lapply(enrich_exp_list, function(factor_dt){
+    lapply(factor_dt, function(weight_dt){
+        entrez_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
+                             column = "ENTREZID", keytype = "ENSEMBL")
+        enrich_res <- enricher(gene = entrez_ids,
+                                TERM2GENE = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",], 
+                                TERM2NAME =  kegg_db_list$term2name,
+                                universe = NULL, maxGSSize = 500)
+        if(is.null(enrich_res) | nrow(enrich_res@result) == 0){return(NULL)}
+        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+        enrich_res
+    })
+})
+```
+
+
+##### Chebi enrich 
+
+```{r}
+mofa_factor_chebi_enrich <- lapply(enrich_exp_list, function(factor_dt){
+    lapply(factor_dt, function(weight_dt){
+        symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
+                             column = "SYMBOL", keytype = "ENSEMBL")
+        
+        enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05, 
+                pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
+                universe = NULL, maxGSSize = Inf)
+        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+        enrich_res
+    })
+})
+```
+
+```{r}
+output_wb <- openxlsx::createWorkbook()
+
+lapply(names(mofa_factor_go_enrich), function(factor_id){
+    factor_dt <- mofa_factor_go_enrich[[factor_id]]
+    lapply(names(factor_dt), function(weight_id){
+        weight_dt <- factor_dt[[weight_id]] 
+        
+        sheet_name <- paste0("go.", factor_id,".", weight_id)
+        openxlsx::addWorksheet(wb = output_wb, 
+                            sheetName = sheet_name)       
+        openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
+                    x = weight_dt)
+    })
+})
+
+lapply(names(mofa_factor_kegg_enrich), function(factor_id){
+    factor_dt <- mofa_factor_kegg_enrich[[factor_id]]
+    lapply(names(factor_dt), function(weight_id){
+        weight_dt <- factor_dt[[weight_id]]
+        
+        sheet_name <- paste0("kegg.", factor_id,".", weight_id)
+        openxlsx::addWorksheet(wb = output_wb, 
+                            sheetName = sheet_name)       
+        openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
+                    x = weight_dt)
+    })
+})
+
+lapply(names(mofa_factor_chebi_enrich), function(factor_id){
+    factor_dt <- mofa_factor_chebi_enrich[[factor_id]]
+    lapply(names(factor_dt), function(weight_id){
+        weight_dt <- factor_dt[[weight_id]]
+        
+        sheet_name <- paste0("chebi.", factor_id,".", weight_id)
+        openxlsx::addWorksheet(wb = output_wb, 
+                            sheetName = sheet_name)       
+        openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
+                    x = weight_dt)
+    })
+})
+
+openxlsx::saveWorkbook(wb = output_wb, 
+                    file = "../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/enrich_results/wgb_1MB_MOFA_factor_enrich_results.xlsx")
+```
+
+
+#### DMR Regulated, factor & microbiota affected
+
+```{r}
+enrich_exp_list <- lapply(expr_list, function(factor_expr){
+    range_dt <- rowData(experiments(omic_dt)$RNA_Sequencing)
+    lapply(factor_expr, function(expr_c){
+        range_dt <- range_dt[eval(expr = parse(text = expr_c), 
+                      envir = as.data.frame(range_dt)),]
+        range_dt <- range_dt[rownames(range_dt) %in%
+                                rownames(gfcv_vars$`GFM-CVM`$RNA_Sequencing),]
+        
+        if(grepl("1", expr_c)){
+            return(range_dt[rownames(range_dt) %in% unique(dna_met_dt_1mb_full_f1$Gene_ID),])
+        } else{
+            return(range_dt[rownames(range_dt) %in% unique(dna_met_dt_1mb_full$Gene_ID),])    
+        }
+    })
+})
+```
+
+```{r}
+overlap_samples <- intersect(colnames(reg_elements_exp_filt),
+                            colnames(multi_omics[["RNA_Sequencing"]]))
+apply(f2_cors, 1, function(x){
+    gene_dt <- multi_omics[["RNA_Sequencing"]][x[["Var1"]], overlap_samples]
+    dmr_dt <- reg_elements_exp_filt[x[["Var2"]], overlap_samples]
+    v1 <- as.numeric(assay(gene_dt))
+    v2 <- as.numeric(assay(dmr_dt))
+    
+    ggplot() + geom_point(aes(x = v1, y = v2, color = gene_dt$group)) + 
+        xlab(x[["Var1"]]) + ylab(x[["Var2"]])
+})
+```
+
+##### GO enrich
+
+
+```{r}
+mofa_factor_go_enrich <- lapply(enrich_exp_list, function(factor_dt){
+    lapply(factor_dt, function(weight_dt){
+        enrich_res <- enrichGO(gene = rownames(weight_dt), OrgDb = org.Mm.eg.db, 
+                                keyType = "ENSEMBL", 
+                                ont = "ALL", pvalueCutoff = 0.05, pAdjustMethod = "fdr", 
+                                universe = NULL, maxGSSize = 500)
+        if(is.null(enrich_res)){return(NULL)}
+        enrich_res <- clusterProfiler::simplify(enrich_res)
+        
+        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+        enrich_res    
+    })
+})
+```
+
+##### KEGG enrich
+
+```{r}
+mofa_factor_kegg_enrich <- lapply(enrich_exp_list, function(factor_dt){
+    lapply(factor_dt, function(weight_dt){
+        if(!nrow(weight_dt)){return(NULL)}
+        entrez_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
+                             column = "ENTREZID", keytype = "ENSEMBL")
+        enrich_res <- enricher(gene = entrez_ids,
+                                TERM2GENE = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",], 
+                                TERM2NAME =  kegg_db_list$term2name,
+                                universe = NULL, maxGSSize = 500)
+        if(is.null(enrich_res) | nrow(enrich_res@result) == 0){return(NULL)}
+        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+        enrich_res
+    })
+})
+```
+
+
+##### Chebi enrich 
+
+```{r}
+mofa_factor_chebi_enrich <- lapply(enrich_exp_list, function(factor_dt){
+    lapply(factor_dt, function(weight_dt){
+        if(!nrow(weight_dt)){return(NULL)}
+        symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
+                             column = "SYMBOL", keytype = "ENSEMBL")
+        
+        enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05, 
+                pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
+                universe = NULL, maxGSSize = Inf)
+        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+        enrich_res
+    })
+})
+```
+
+```{r}
+output_wb <- openxlsx::createWorkbook()
+
+lapply(names(mofa_factor_go_enrich), function(factor_id){
+    factor_dt <- mofa_factor_go_enrich[[factor_id]]
+    lapply(names(factor_dt), function(weight_id){
+        weight_dt <- factor_dt[[weight_id]] 
+        
+        sheet_name <- paste0("go.", factor_id,".", weight_id)
+        openxlsx::addWorksheet(wb = output_wb, 
+                            sheetName = sheet_name)       
+        openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
+                    x = weight_dt)
+    })
+})
+
+lapply(names(mofa_factor_kegg_enrich), function(factor_id){
+    factor_dt <- mofa_factor_kegg_enrich[[factor_id]]
+    lapply(names(factor_dt), function(weight_id){
+        weight_dt <- factor_dt[[weight_id]]
+        
+        sheet_name <- paste0("kegg.", factor_id,".", weight_id)
+        openxlsx::addWorksheet(wb = output_wb, 
+                            sheetName = sheet_name)       
+        openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
+                    x = weight_dt)
+    })
+})
+
+lapply(names(mofa_factor_chebi_enrich), function(factor_id){
+    factor_dt <- mofa_factor_chebi_enrich[[factor_id]]
+    lapply(names(factor_dt), function(weight_id){
+        weight_dt <- factor_dt[[weight_id]]
+        
+        sheet_name <- paste0("chebi.", factor_id,".", weight_id)
+        openxlsx::addWorksheet(wb = output_wb, 
+                            sheetName = sheet_name)       
+        openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
+                    x = weight_dt)
+    })
+})
+
+openxlsx::saveWorkbook(wb = output_wb, 
+                    file = "../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/enrich_results/wgb_1MB_MOFA_gfm_cvm_factor_enrich_results.xlsx")
+``` 
+
+### DMR Regulated, factor & microbiota affected
+
+
+```{r}
+gfcv_vars <- readRDS("../../outputs/Multi_Omics_Analysis_GFCV/gfcv_interesting_vars.rds")
+
+length(gfcv_vars$DMRregulated)
+
+gfcv_dmrreg <- lapply(gfcv_vars$Correlations, function(score_dt){
+    score_dt[score_dt$adj.p.value <= 0.05 & abs(score_dt$cor) > 0.6,]
+})
+
+
+microb_reg_lima_dmrs_ov <- findOverlaps(
+    query = omic_dt[["WGB_DNA_Methylation"]], 
+    subject = gfcv_vars$`GFM-CVM`[["WGB_DNA_Methylation"]])
+
+microb_reg_lima_dmrs <- omic_dt[["WGB_DNA_Methylation"]][microb_reg_lima_dmrs_ov@from,]
+microb_reg_lima_dmrs
+```
+
+```{r}
+length(rownames(microb_reg_lima_dmrs)[rownames(microb_reg_lima_dmrs) %in% f2_mofa_vars_dmrs])
+
+rowData(microb_reg_lima_dmrs[rownames(microb_reg_lima_dmrs) %in% f2_mofa_vars_dmrs,])[,"ensemblId"]
+
+length(rownames(microb_reg_lima_dmrs)[rownames(microb_reg_lima_dmrs) %in% f2_mofa_vars_dmrs_full])
+
+length(rownames(microb_reg_lima_dmrs)[rownames(microb_reg_lima_dmrs) %in% f1_mofa_vars_dmrs])
+
+length(rownames(microb_reg_lima_dmrs)[rownames(microb_reg_lima_dmrs) %in% f1_mofa_vars_dmrs_full])
+
+```
+
+
+```{r}
+colnames(rowData(microb_reg_lima_dmrs))
+
+gene_gfcv_dmrreg <- unique(as.character(gfcv_dmrreg$pearson$Var1))
+dmr_gfcv_dmrreg <- unique(as.character(gfcv_dmrreg$pearson$Var2))
+
+gene_lima_dmrreg <- unique(as.character(sig_gene_1MB_dmr_cors_list_filt$pearson$Var1))
+dmr_lima_dmrreg <- unique(as.character(sig_gene_1MB_dmr_cors_list_filt$pearson$Var2))
+
+length(gene_gfcv_dmrreg)
+length(dmr_gfcv_dmrreg)
+
+length(dmr_lima_dmrreg)
+length(gene_lima_dmrreg)
+
+## DMR analysis
+dmr_reg_lima_gfcv <- intersect(gene_gfcv_dmrreg, gene_lima_dmrreg)
+dmr_reg_lima_gfcv_microb <- intersect(dmr_reg_lima_gfcv,
+                                    rownames(gfcv_vars$`GFM-CVM`[["RNA_Sequencing"]]))
+
+length(dmr_reg_lima_gfcv)
+length(dmr_reg_lima_gfcv_microb)
+length(dmr_reg_lima_gfcv_microb)
+
+rowData(multi_omics[["RNA_Sequencing"]][dmr_reg_lima_gfcv_microb,])$gene_lab
+rowData(omic_dt[["RNA_Sequencing"]][dmr_reg_lima_gfcv_microb,])
+
+
+dmr_reg_lima_gfcv_microb %in% f2_mofa_vars_full
+dmr_reg_lima_gfcv_microb %in% f3_mofa_vars_full
+dmr_reg_lima_gfcv_microb %in% f1_mofa_vars_full
+
+
+dmr_reg_lima_gfcv_microb_genes <- omic_dt[["RNA_Sequencing"]][dmr_reg_lima_gfcv_microb,]
+
+######
+
+dmrs_dmr_reg_lima_gfcv_ov <- findOverlaps(query = omic_dt[["WGB_DNA_Methylation"]][dmr_lima_dmrreg,], 
+                                         subject = gfcv_vars$Full_dt[["WGB_DNA_Methylation"]][dmr_gfcv_dmrreg,])
+
+dmrs_dmr_reg_lima_gfcv <- omic_dt[["WGB_DNA_Methylation"]][dmrs_dmr_reg_lima_gfcv_ov@from,]
+
+dmrs_reg_lima_gfcv_microb_ov <- findOverlaps(dmrs_dmr_reg_lima_gfcv,
+                                            gfcv_vars$`GFM-CVM`[["WGB_DNA_Methylation"]])
+dmrs_reg_lima_gfcv_microb <- dmrs_dmr_reg_lima_gfcv[dmrs_reg_lima_gfcv_microb_ov@from,]
+
+rowData(dmrs_reg_lima_gfcv_microb)
+table(rowData(dmrs_dmr_reg_lima_gfcv)$Full_Factor)
+######
+
+rowData(dmrs_reg_lima_gfcv_microb)
+rownames(dmr_reg_lima_gfcv_microb_genes)
+
+table(rowData(dmr_reg_lima_gfcv_microb_genes)$Full_Factor)
+
+factor_int_genes <- lapply(unique(rowData(dmr_reg_lima_gfcv_microb_genes)$Full_Factor), function(x){
+    dmr_reg_lima_gfcv_microb_genes[rowData(dmr_reg_lima_gfcv_microb_genes)$Full_Factor == x,]
+})
+
+gene_lima_dmrreg %in% claudia_genes
+sum(gene_lima_dmrreg %in% claudia_genes)
+rownames(dmr_reg_lima_gfcv_microb_genes) %in% claudia_genes
+```
+
+
+```{r}
+lapply(unique(rowData(dmr_reg_lima_gfcv_microb_genes)$Full_Factor), function(x){
+    factor_genes <- dmr_reg_lima_gfcv_microb_genes[rowData(dmr_reg_lima_gfcv_microb_genes)$Full_Factor == x,]
+    pdf(paste0("./dmr_reg_microb_genes_", x, ".pdf"))
+    lapply(rownames(factor_genes), function(x){
+        num_dt <- as.numeric(assay(factor_genes[x,]))
+        p1 <- ggplot() + geom_boxplot(aes(x = factor_genes$group, y = num_dt, 
+                                    fill = factor_genes$group)) + ylab(x)
+        print(p1)
+        return(NULL)
+    })
+    dev.off()
+})
+```
+
+
+```{r}
+## DMRs that are altered by the microbiota and regulate LIMA genes
+dmr_microbiota_reg_ov <- findOverlaps(query = lima_dmr_reg_dmrs,
+                            subject = gfcv_vars$`GFM-CVM`[["WGB_DNA_Methylation"]], 
+                            type = "any")
+dmr_microbiota_reg <- lima_dmr_reg_dmrs[dmr_microbiota_reg_ov@from,]
+dmr_microbiota_reg
+
+## DMRs that regulate LIMA and GFCV genes
+gfcv_lima_ov <- findOverlaps(query = lima_dmr_reg_dmrs,
+                            subject = gfcv_vars$Full_dt[["WGB_DNA_Methylation"]][dmr_gfcv_dmrreg,], 
+                            type = "any")
+
+dmr_regulated_both <- rownames(lima_dmr_reg_dmrs[gfcv_lima_ov@from,])
+dmr_regulated_both
+
+length(dmr_regulated_both)
+```
+
+
+```{r}
+dmr_regulated_both_sig_gfm <- intersect(dmr_regulated_both,
+                                        rownames(gfcv_vars$`GFM-CVM`$RNA_Sequencing))
+
+length(dmr_regulated_both_sig_gfm)
+```
+
+
 
 
 ### Data Heatmaps
@@ -8693,7 +8174,7 @@ ggsave(filename = "../../outputs/Paper_Figures/figure_13_b.png", plot = p1)
 ```{r}
 sel_multi_omics_mofa <- grep("RNA|WGB|Histone|Untargeted|Targeted", multi_omics_selected, value = TRUE)
 
-score_filter <- 0.7
+score_filter <- 0.8
 num_factors <- 2
 
 mofa_dir_name <- "sig_int_thr07_paper_met"
@@ -8747,12 +8228,122 @@ factors_ids_07 <- lapply(seq_len(num_factors), function(factor_id){
 # sum(rownames(rna_rd)[rna_rd$dmr_regulated] %in% factors_ids_07[[2]]$RNA_Sequencing)
 ```
 
+#### Metabolite Classification
+
+```{r}
+unt_met_factors <- rowData(omic_dt[["Untargeted_Metabolomics"]])[,c("Factor_1_weights",
+                                        "Factor_2_weights")]
+
+f1_mofa_vars_dmrs <- rownames(omic_dt[["Untargeted_Metabolomics"]])[rowData(omic_dt[["Untargeted_Metabolomics"]])$Factor_1_weights_sig]
+
+f2_mofa_vars_dmrs <- rownames(omic_dt[["Untargeted_Metabolomics"]])[rowData(omic_dt[["Untargeted_Metabolomics"]])$Factor_2_weights_sig]
+
+unt_met_factors_b <- t(apply(as.matrix(unt_met_factors), 1, function(x){abs(x)/sum(abs(x))}))
+
+f1_mofa_vars_met <- rownames(unt_met_factors_b)[unt_met_factors_b[,1] >  0.8]
+f2_mofa_vars_met <- rownames(unt_met_factors_b)[unt_met_factors_b[,2] >  0.8]
+
+other_genes_f1 <- rownames(unt_met_factors_b)[unt_met_factors_b[,1] > 0.5 & 
+                                                  unt_met_factors_b[,1] < 0.8]
+
+other_genes_f2 <- rownames(unt_met_factors_b)[unt_met_factors_b[,2] > 0.5 & 
+                                                  unt_met_factors_b[,2] < 0.8]
+```
+
+```{r}
+set.seed(1234)
+ph1 <- pheatmap::pheatmap(unt_met_factors[other_genes_f2,], 
+                        show_rownames = FALSE, cutree_rows = 4)
+
+c1_tree <- cutree(ph1$tree_row, 4)
+
+c1_tree_list <- tapply(names(c1_tree), c1_tree, function(x){x})
+
+lapply(c1_tree_list, function(x){
+    pheatmap::pheatmap(as.matrix(assay(multi_omics[["Untargeted_Metabolomics"]][x,])),
+                annotation_col = as.data.frame(colData(multi_omics[["Untargeted_Metabolomics"]]))[,"group", drop = FALSE],
+                show_rownames = FALSE)
+    return(NULL)
+})
+
+f2_mofa_vars_met_extra <- c(c1_tree_list[["1"]], c1_tree_list[["2"]])
+f3_mofa_vars_met <- c(c1_tree_list[["3"]], c1_tree_list[["4"]])
+```
+
+```{r}
+set.seed(1234)
+ph2 <- pheatmap::pheatmap(unt_met_factors[other_genes_f1,], show_rownames = FALSE, cutree_rows = 4)
+
+c1_tree <- cutree(ph2$tree_row, 4)
+
+c1_tree_list <- tapply(names(c1_tree), c1_tree, function(x){x})
+
+lapply(c1_tree_list, function(x){
+    pheatmap::pheatmap(as.matrix(assay(multi_omics[["Untargeted_Metabolomics"]][x,])),
+                annotation_col = as.data.frame(colData(multi_omics[["Untargeted_Metabolomics"]]))[,"group", drop = FALSE],
+                show_rownames = FALSE)
+    return(NULL)
+})
+```
+
+
+```{r}
+f1_mofa_vars_met_extra <- c(c1_tree_list[["1"]], c1_tree_list[["4"]])
+f3_mofa_vars_met_extra <- c(c1_tree_list[["2"]], c1_tree_list[["3"]])
+```
+
+```{r}
+f1_mofa_vars_met_full <- c(f1_mofa_vars_met, f1_mofa_vars_met_extra)
+f2_mofa_vars_met_full <- c(f2_mofa_vars_met, f2_mofa_vars_met_extra)
+f3_mofa_vars_met_full <- c(f3_mofa_vars_met, f3_mofa_vars_met_extra)
+
+group_var <- as.data.frame(colData(unt_metabo_dt))[,"group",drop = FALSE]
+pheatmap::pheatmap(as.matrix(assay(unt_metabo_dt[f1_mofa_vars_met_full,])), show_rownames = FALSE, annotation_col = group_var)
+
+pheatmap::pheatmap(as.matrix(assay(unt_metabo_dt[f2_mofa_vars_met_full,])), show_rownames = FALSE, annotation_col = group_var)
+
+pheatmap::pheatmap(as.matrix(assay(unt_metabo_dt[f3_mofa_vars_met_full,])), show_rownames = FALSE, annotation_col = group_var)
+
+length(f1_mofa_vars_met_full)
+length(f2_mofa_vars_met_full)
+length(f3_mofa_vars_met_full)
+
+```
+
+```{r}
+rowData(omic_dt[["Untargeted_Metabolomics"]])$Full_Factor <- NA
+
+rowData(omic_dt[["Untargeted_Metabolomics"]])$Full_Factor[rownames(omic_dt[["Untargeted_Metabolomics"]]) %in% f1_mofa_vars_met_full] <- "Factor_1"
+
+rowData(omic_dt[["Untargeted_Metabolomics"]])$Full_Factor[rownames(omic_dt[["Untargeted_Metabolomics"]]) %in% f2_mofa_vars_met_full] <- "Factor_2"
+
+rowData(omic_dt[["Untargeted_Metabolomics"]])$Full_Factor[rownames(omic_dt[["Untargeted_Metabolomics"]]) %in% f3_mofa_vars_met_full] <- "Factor_3"
+
+table(rowData(omic_dt[["Untargeted_Metabolomics"]])$Full_Factor)
+```
+
+
 ### MetaboAnalyst Mummichog analysis
 
 ```{r}
 library(MetaboAnalystR)
 library(SummarizedExperiment)
 
+expr_list <- lapply(seq_len(num_factors), function(factor_id){
+    factor_expr <- paste0("Full_Factor == 'Factor_", factor_id, "'")
+    
+    list("All Weights" = as.expression(factor_expr),
+         "Positive Weights" = as.expression(paste0(factor_expr, " & Factor_", 
+                                                   factor_id, "_weights > 0")),
+         "Negative Weights" = as.expression(paste0(factor_expr, " & Factor_", 
+                                                   factor_id, "_weights < 0")))
+})
+names(expr_list) <- paste0("Factor_", seq_len(num_factors))
+
+expr_list$Factor_3$`All Weights` <- "Full_Factor == 'Factor_3'"
+expr_list$Factor_3$`Positive Weights` <- "Full_Factor == 'Factor_3' & Factor_1_weights > 0"
+expr_list$Factor_3$`Negative Weights` <- "Full_Factor == 'Factor_3' & Factor_1_weights < 0"
+expr_list
 # enrich_exp_list <- lapply(expr_list, function(factor_expr){
 #     range_dt <- rowData(experiments(omic_dt)$RNA_Sequencing)
 #     lapply(factor_expr, function(expr_c){
@@ -8792,8 +8383,11 @@ unt_met_dt <- lapply(names(expr_list), function(factor_id){
 names(unt_met_dt) <- names(expr_list)
 
 old_dir <- getwd()
-mummichog_dir <- paste0(output_dir, "mummichog_metaboanalyst/")
+mummichog_dir <- paste0(output_dir, "mummichog_metaboanalyst_full/")
+```
 
+
+```{r}
 if(!dir.exists(mummichog_dir)){dir.create(mummichog_dir)}
 
 for(factor_id in names(unt_met_dt)){
@@ -8801,7 +8395,8 @@ for(factor_id in names(unt_met_dt)){
         results_output <- paste0(mummichog_dir, factor_id, "_", weight_id, "/")
         if(!dir.exists(results_output)){dir.create(results_output)}
         setwd(results_output)
-        write.table(unt_met_dt[[factor_id]][[weight_id]], row.names = FALSE,
+        write.table(unt_met_dt[[factor_id]][[weight_id]], 
+                    row.names = FALSE,
                     file = "./mummichog_dt.txt", sep = ",")
 
         mSet <- InitDataObjects("mass_all", "mummichog", FALSE)
@@ -8833,7 +8428,7 @@ for(factor_id in names(unt_met_dt)){
 met_pathway_res <- lapply(names(expr_list), function(factor_id){
     expr_dt <- expr_list[[factor_id]]
     lapply(names(expr_dt), function(weight_id){
-        read.table(paste0(output_dir, "mummichog_metaboanalyst/", factor_id, "_", weight_id,
+        read.table(paste0(output_dir, "mummichog_metaboanalyst_full/", factor_id, "_", weight_id,
                           "/mummichog_pathway_enrichment_mummichog.csv"), sep = ",", header = TRUE)
     })
 })
@@ -8848,7 +8443,7 @@ kegg_db_list <- readRDS(kegg_db_enrich_path)
 term2name_dt <- kegg_db_list$term2name
 integ_enrich_db <- kegg_db_list$term2gene
 
-enrich_name <- "metabolite_enrich"
+enrich_name <- "metabolite_enrich_full"
 enrich_nw_dir <- paste0(output_dir, enrich_name, "/")
 
 if(!dir.exists(enrich_nw_dir)){dir.create(enrich_nw_dir)}
@@ -9337,6 +8932,84 @@ lapply(targ_dt_names, function(omic_id){
 })
 ```
 
+
+### GFM-CVM Vars
+
+
+```{r}
+full_dt <- rowData(multi_omics_full[["Untargeted_Metabolomics"]])
+universe_ids <- full_dt[["compounds_kegg_merged"]]
+universe_ids <- unlist(strsplit(universe_ids, ";"))
+universe_ids <- universe_ids[!is.na(universe_ids)]
+
+range_dt <- as.data.frame(rowData(experiments(omic_dt)$Untargeted_Metabolomics))
+range_dt <- range_dt[rownames(range_dt) %in% rownames(gfcv_vars$`GFM-CVM`$Untargeted_Metabolomics),]
+
+range_dt_g <- as.data.frame(rowData(experiments(omic_dt)$RNA_Sequencing))
+range_dt_g <- range_dt_g[rownames(range_dt_g) %in%
+                            rownames(gfcv_vars$`GFM-CVM`$RNA_Sequencing),]
+    
+universe_ids_g <- rowData(rna_seq_all)$entrezID
+
+feature_dict_g <- as.list(rowData(omic_dt[["RNA_Sequencing"]])$entrezID)
+feature_dict_met <- as.list(rowData(omic_dt[["Untargeted_Metabolomics"]])$compounds_kegg_merged)
+names(feature_dict_met) <- rownames(omic_dt[["Untargeted_Metabolomics"]])
+feature_dict_met <- feature_dict_met[!is.na(feature_dict_met)]
+feature_dict_met <- lapply(feature_dict_met, function(x){strsplit(x, split = ";")[[1]]})
+
+set.seed(123)
+met_gene_enrich_results_gfm_cvm <- lapply(names(expr_list), function(factor_id){
+    
+    factor_expr <- expr_list[[factor_id]]
+    
+    factor_res <- lapply(factor_expr, function(expr_c){
+        sig_ids <- range_dt[eval(expr = parse(text = expr_c), 
+                                envir = as.data.frame(range_dt)),]$compounds_kegg_merged
+        sig_ids <- unlist(strsplit(sig_ids, ";"))
+        sig_ids <- sig_ids[!is.na(sig_ids)]
+        
+        sig_ids_g <- range_dt_g[eval(expr = parse(text = expr_c), 
+                                envir = as.data.frame(range_dt_g)),]$entrezID
+        sig_ids_g <- unlist(strsplit(sig_ids_g, ";"))
+        sig_ids_g <- sig_ids_g[!is.na(sig_ids_g)]
+        
+        sig_ids_merge <- c(sig_ids_g, sig_ids)
+        enrich_m <- enricher(gene = sig_ids_merge, universe = NULL, 
+                            pvalueCutoff = 0.05, pAdjustMethod = "fdr", 
+                            TERM2GENE = kegg_db_list$term2gene,
+                            TERM2NAME = kegg_db_list$term2name)
+        
+        enrich_m <- setReadable_custom(enrich_res = enrich_m, 
+                                        featureDict = c(feature_dict_g,
+                                                        feature_dict_met), 
+                                        dt_type = "ora")
+        enrich_m@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_m))
+        enrich_m
+    })
+    factor_res
+})
+
+names(met_gene_enrich_results_gfm_cvm) <- names(expr_list)
+
+
+
+results_wb <- openxlsx::createWorkbook()
+for(factor_id in names(met_gene_enrich_results_gfm_cvm)){
+    factor_dt <- met_gene_enrich_results_gfm_cvm[[factor_id]]
+    for(weight_id in names(factor_dt)){
+        weight_dt <- factor_dt[[weight_id]]
+    
+        sheet_name <- paste(factor_id, weight_id, sep = ".")
+        openxlsx::addWorksheet(wb = results_wb,
+                                sheetName = sheet_name)
+        openxlsx::writeData(wb = results_wb, sheet = sheet_name,
+                            x = as.data.frame(weight_dt))
+    }
+}
+openxlsx::saveWorkbook(results_wb, 
+                        file = paste0(enrich_nw_dir, "met_gene_gfm_cvm_enrich_results.xlsx"), 
+                        overwrite = TRUE)
+```
 
 ## Complete MOFA model
 

@@ -4,8 +4,8 @@ author: "Jordi Rofes Herrera"
 date: "2023-01-30"
 output: html_document
 params:
-    input_dir: "../../inputs/16S_Metagenomics/"
-    output_dir: "../../outputs/16S_Metagenomics/"
+    input_dir: "../../inputs/X16S_Metagenomics/"
+    output_dir: "../../outputs/X16S_Metagenomics/"
 
 ---
 
@@ -18,6 +18,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(dplyr)
 library(stringi)
+library(stringr)
 library(mixOmics)
 library(sva)
 library(SummarizedExperiment)
@@ -25,7 +26,10 @@ library(mia)
 library(TreeSummarizedExperiment)
 library(DESeq2)
 library(plotly)
-source("../Utility_Functions/utilities.R")
+library(miaViz)
+library(scater)
+library(patchwork)
+source("../../scripts/Utility_Functions/utilities.R")
 ```
 
 ## Initial processing
@@ -42,13 +46,23 @@ organ_dt_list <- lapply(organ_dir[1], function(organ_dt){
     meta_files <- list.files(organ_dt, pattern = ".txt$|.csv$", full.names = TRUE)
     
     meta_files_proc <- lapply(meta_files, function(meta_file_path){
+        col_names <- readLines(meta_file_path, n = 1)
+        col_names <- strsplit(col_names, ",")[[1]]
+        col_names <- col_names[2:length(col_names)]
+        
         meta_f <- read.table(file = meta_file_path, sep = ",", row.names = 1, header = TRUE)
+        # rownames(meta_f) <- sapply(strsplit(rownames(meta_f), "-"), function(x){x[2]})
+        # 
+        # meta_f <- subset(meta_f, rownames(meta_f) != "667")
+        meta_f <- subset(meta_f, grepl("GF", x = project))
+
+        num_cols <- sapply(meta_f, is.numeric)
+
+        meta_f <- meta_f[,num_cols]
+        colnames(meta_f) <- col_names[num_cols]
         
-        meta_f <- subset(meta_f, grepl("GF_vs_CV", project))
-        meta_f <- dplyr::select(meta_f, where(is.numeric))
-        
-        # colnames(meta_f) <- gsub("X_", "", colnames(meta_f))
-        meta_f <- meta_f %>% select_if(colSums(.) != 0)
+        # rownames(meta_f) <- name_vect[rownames(meta_f)]
+        meta_f <- meta_f %>% select_if(colSums(.) != 0 & !grepl("Unassigned", colnames(.)))
         as.data.frame(t(meta_f))
     })
     names(meta_files_proc) <- gsub(pattern = ".txt$|.csv$", "", basename(meta_files))
@@ -61,53 +75,63 @@ names(organ_dt_list) <- basename(organ_dir[1])
 ```
 
 ```{r}
-gfcv_16s_cond <- data.frame(samplename= colnames(organ_dt_list$cecum$Phylum))
+# name_vect <- colnames(organ_dt_list[[1]]$Phylum)
+# names(name_vect) <- substr(name_vect, start = 2, stop = 4)
 
-gfcv_16s_cond$type_gfcv <- stri_sub(gfcv_16s_cond$samplename,1,2)
+gfcv_colon_dt <- lapply(organ_dir[2], function(organ_dt){
+    
+    meta_files <- list.files(grep("P190161", list.dirs(organ_dt), value = TRUE), full.names = TRUE)
+    
+    meta_files_proc <- lapply(meta_files, function(meta_file_path){
+        col_names <- readLines(meta_file_path, n = 1)
+        col_names <- strsplit(col_names, ",")[[1]]
+        col_names <- col_names[2:length(col_names)]
+        
+        meta_f <- read.table(file = meta_file_path, sep = ",", row.names = 1, header = TRUE)
+        # rownames(meta_f) <- sapply(strsplit(rownames(meta_f), "-"), function(x){x[2]})
+        # 
+        # meta_f <- subset(meta_f, rownames(meta_f) != "667")
+        # meta_f <- subset(meta_f, grepl("GF", x = project))
 
-gfcv_16s_cond$group <- stri_sub(gfcv_16s_cond$samplename,1,1)
+        num_cols <- sapply(meta_f, is.numeric)
 
-gfcv_16s_cond$sex <- stri_sub(gfcv_16s_cond$samplename,2,2)
+        meta_f <- meta_f[,num_cols]
+        colnames(meta_f) <- col_names[num_cols]
+        
+        # rownames(meta_f) <- name_vect[rownames(meta_f)]
+        meta_f <- meta_f %>% select_if(colSums(.) != 0 & !grepl("Unassigned", colnames(.)))
+        as.data.frame(t(meta_f))
+    })
+    names(meta_files_proc) <- gsub(pattern = "\\.txt$|\\.csv$", "", basename(meta_files))
+    names(meta_files_proc) <- names_dict[names(meta_files_proc)]
 
-gfcv_16s_cond$batch <- stri_sub(gfcv_16s_cond$samplename,4,4)
-
-gfcv_16s_cond$all <- paste0(gfcv_16s_cond$type_gfcv,stri_sub(gfcv_16s_cond$samplename,4,4))
-
-rownames(gfcv_16s_cond) <- gfcv_16s_cond$samplename
-
-gfcv_16s_cond_cec <- dplyr::select(gfcv_16s_cond, -samplename)
+    meta_files_proc
+})
+names(gfcv_colon_dt) <- "colon"
+organ_dt_list <- c(organ_dt_list, gfcv_colon_dt)
 ```
 
+
 ```{r}
-# gfcv_16s_cond <- data.frame(samplename= colnames(organ_dt_list$colon$feature_table_class))
-# 
-# gfcv_16s_cond$type_gfcv <- stri_sub(gfcv_16s_cond$samplename,1,2)
-# 
-# gfcv_16s_cond$group <- stri_sub(gfcv_16s_cond$samplename,1,1)
-# 
-# gfcv_16s_cond$sex <- stri_sub(gfcv_16s_cond$samplename,2,2)
-# 
-# gfcv_16s_cond$batch <- stri_sub(gfcv_16s_cond$samplename,4,4)
-# 
-# gfcv_16s_cond$all <- paste0(gfcv_16s_cond$type_gfcv,stri_sub(gfcv_16s_cond$samplename,4,4))
-# 
-# rownames(gfcv_16s_cond) <- gfcv_16s_cond$samplename
-# 
-# gfcv_16s_cond_col <- dplyr::select(gfcv_16s_cond, -samplename)
 
-# metadata_list <- list(gfcv_16s_cond_cec, gfcv_16s_cond_col)
-metadata_list <- list(gfcv_16s_cond_cec)
+metadata_list <- lapply(organ_dt_list, function(organ_dt){
+    gfcv_16s_cond <- data.frame(samplename= colnames(organ_dt$Phylum))
 
-names(metadata_list) <- names(organ_dt_list)
-
-metadata_list <- lapply(metadata_list, function(organ_dt){
-    organ_dt$gfcv <- factor(organ_dt$group, levels = c("C", "G"))
-    organ_dt$sex <- factor(organ_dt$sex, levels = c("M", "F"))
-    organ_dt$group <- factor(organ_dt$type_gfcv, levels = c("CM", "CF"), labels = c("CVM", "CVF"))
-    organ_dt
+    gfcv_16s_cond$type_gfcv <- stri_sub(gfcv_16s_cond$samplename,1,2)
+    
+    gfcv_16s_cond$group <- stri_sub(gfcv_16s_cond$samplename,1,1)
+    
+    gfcv_16s_cond$sex <- stri_sub(gfcv_16s_cond$samplename,2,2)
+    
+    gfcv_16s_cond$batch <- stri_sub(gfcv_16s_cond$samplename,4,4)
+    
+    gfcv_16s_cond$all <- paste0(gfcv_16s_cond$type_gfcv,stri_sub(gfcv_16s_cond$samplename,4,4))
+    
+    rownames(gfcv_16s_cond) <- gfcv_16s_cond$samplename
+    
+    gfcv_16s_cond_cec <- dplyr::select(gfcv_16s_cond, -samplename)
+    gfcv_16s_cond_cec
 })
-
-# saveRDS(metadata_list, "16S_metadata_list.rds")
 ```
 
 ```{r}
@@ -125,7 +149,86 @@ organ_exp <- lapply(names(organ_dt_list), function(organ_name){
         
         hierarchy_ids <- hierarchy_ids[seq_len(max_rank)]
         hierarchy_ranks <- hierarchy_ranks[seq_len(max_rank)]
+        hierarchycal_tree <- lapply(rownames(hierarchy), function(sp_name){
+
+            hierarchy_found <- c()
+            
+            for(h_id_num in seq_along(hierarchy_ids)){
+                h_id <- hierarchy_ids[h_id_num]
+                
+                found_id <- grep(paste0("^", h_id, "__"), 
+                                strsplit(sp_name, ";")[[1]], value = TRUE)
+                
+                if(length(found_id)){
+                    found_dt <- gsub(paste0(h_id, "__"), "", found_id)
+                    found_dt <- gsub("\\[|\\]", "", found_dt)
+
+                    if(found_dt == "" || grepl("uncultured|unknown|unidentified|metagenome", found_dt, ignore.case = TRUE)){
+                        # hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]),
+                        #                                     hierarchy_found[h_id_num - 1],
+                        #                                     paste("Unknown", hierarchy_found[h_id_num - 1]))
+                        hierarchy_found[h_id_num] <- NA
+                    } else{
+                        hierarchy_found[h_id_num] <- found_dt
+                    }
+                } else{
+                    # hierarchy_found[h_id_num] <- ifelse(grepl("Unknown", hierarchy_found[h_id_num - 1]),
+                    #                                         hierarchy_found[h_id_num - 1],
+                    #                                         paste("Unknown", hierarchy_found[h_id_num - 1]))
+                    hierarchy_found[h_id_num] <- NA
+
+                }    
+            }
+            return(hierarchy_found)
+        })
+
+        hierarchycal_tree <- do.call(rbind, hierarchycal_tree)
+        colnames(hierarchycal_tree) <- hierarchy_ranks
+        hierarchy <- TreeSummarizedExperiment(assays = list("counts" = as.matrix(hierarchy)),
+                            colData = hierarchy_metadata,
+                            rowData = hierarchycal_tree)
+        rowData(hierarchy)$old_names <- rownames(hierarchy)
+
+        hierarchy <- mia::agglomerateByRank(x = hierarchy, rank = hierarchy_ranks[max_rank])
+        hierarchy <- mia::addTaxonomyTree(hierarchy)
         
+        rowData(hierarchy)$prevalence <- getPrevalence(hierarchy, 
+                                                    detection = 1/100, 
+                                                    sort = FALSE,
+                                                    assay.type = "counts", 
+                                                    as_relative = TRUE)
+        
+        rowData(hierarchy)$specie_names <- rownames(hierarchy)
+        rowData(hierarchy)$readable_name <- str_replace(paste("16S", organ_name, rownames(hierarchy)), 
+                                                        "^\\w{1}", toupper)
+
+        
+        hierarchy
+    })
+    # names(organ) <- sapply(strsplit(names(organ), "_"), function(x){x[[3]]})
+
+    names(organ_tree) <- names(organ)
+    organ_tree
+})
+names(organ_exp) <- names(organ_dt_list)
+```
+
+
+```{r}
+organ_exp <- lapply(names(organ_dt_list), function(organ_name){
+    organ <- organ_dt_list[[organ_name]]
+    
+    organ_tree <- lapply(names(organ), function(hierarchy_name){
+        hierarchy <- organ[[hierarchy_name]]
+        hierarchy_metadata <- metadata_list[[organ_name]]
+        
+        hierarchy_ids <- c("D_0", "D_1", "D_2", "D_3", "D_4", "D_5", "D_6")
+        hierarchy_ranks <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+        
+        max_rank <- grep(stringr::str_to_title(hierarchy_name), hierarchy_ranks)
+        
+        hierarchy_ids <- hierarchy_ids[seq_len(max_rank)]
+        hierarchy_ranks <- hierarchy_ranks[seq_len(max_rank)]
         hierarchycal_tree <- lapply(rownames(hierarchy), function(sp_name){
             hierarchy_found <- c()
             
@@ -133,7 +236,7 @@ organ_exp <- lapply(names(organ_dt_list), function(organ_name){
                 h_id <- hierarchy_ids[h_id_num]
                 
                 found_id <- grep(paste0("^", h_id, "__"), 
-                                strsplit(sp_name, "\\.")[[1]], value = TRUE)
+                                strsplit(sp_name, "\\;")[[1]], value = TRUE)
                 
                 if(length(found_id)){
                     found_dt <- gsub(paste0(h_id, "__"), "", found_id)
@@ -186,9 +289,9 @@ lapply(names(organ_exp), function(organ_name){
         hierarchy <- organ[[hierarchy_name]]
         raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = assay(hierarchy),
                                       colData = colData(hierarchy),
-                                      design= ~ 0 + group)
+                                      design= ~ 0 + type_gfcv)
         vst_dt <- t(assay(varianceStabilizingTransformation(raw_lima_DESeq, blind = FALSE)))
-        vst_pca <- prcomp(vst_dt, scale. = FALSE)
+        vst_pca <- prcomp(vst_dt, scale. = TRUE)
         
         p1 <- pca_plot(pca_data = vst_pca, pc_x = 1, pc_y = 2, 
                 group_var = hierarchy$group, 
@@ -217,7 +320,7 @@ lapply(names(organ_exp), function(organ_names){
     organ <- organ_exp[[organ_names]]
     lapply(names(organ), function(hierarchy_names){
         
-        group_var <- colData(organ[[hierarchy_names]])[["group"]]
+        group_var <- colData(organ[[hierarchy_names]])[["type_gfcv"]]
         hierarchy <- organ[[hierarchy_names]]
         alpha_div <- vegan::diversity(x = assay(hierarchy), index = "shannon", MARGIN = 2)
         
@@ -262,7 +365,7 @@ lapply(names(organ_dt_list_fil), function(organ_name){
         hierarchy <- organ[[hierarchy_name]]
         raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = assay(hierarchy),
                                       colData = colData(hierarchy),
-                                      design= ~ 0 + group)
+                                      design= ~ 0 + type_gfcv)
         vst_dt <- t(assay(varianceStabilizingTransformation(raw_lima_DESeq, blind = FALSE)))
         vst_pca <- prcomp(vst_dt, scale. = FALSE)
         
@@ -296,15 +399,15 @@ lapply(names(organ_dt_list_fil), function(organ_name){
         hierarchy <- organ[[hierarchy_name]]
         raw_lima_DESeq <- DESeqDataSetFromMatrix(countData = assay(hierarchy),
                                       colData = colData(hierarchy),
-                                      design= ~ 0 + group)
+                                      design= ~ 0 + type_gfcv)
         vst_dt <- assay(varianceStabilizingTransformation(raw_lima_DESeq, blind = FALSE))
-        vst_dt <- t(limma::removeBatchEffect(x = vst_dt, batch = hierarchy$batch, design = model.matrix(~ gfcv + sex, data = colData(hierarchy))))
+        vst_dt <- t(limma::removeBatchEffect(x = vst_dt, batch = hierarchy$batch, design = model.matrix(~ sex, data = colData(hierarchy))))
         
         vst_pca <- prcomp(vst_dt, scale. = FALSE)
         
         p1 <- pca_plot(pca_data = vst_pca, pc_x = 1, pc_y = 2, 
-                group_var = hierarchy$group, 
-                ellipse_var = hierarchy$group, allElipse = TRUE)
+                group_var = hierarchy$type_gfcv, 
+                ellipse_var = hierarchy$type_gfcv, allElipse = TRUE)
         print(p1)
         p2 <- pca_plot(pca_data = vst_pca, pc_x = 1, pc_y = 2, 
                  group_var = hierarchy$batch, 
@@ -328,9 +431,9 @@ lapply(names(organ_dt_list_fil), function(organ_names){
     organ <- organ_dt_list_fil[[organ_names]]
     lapply(names(organ), function(hierarchy_names){
         hierarchy <- organ[[hierarchy_names]]
-        group_var <- hierarchy$group
+        group_var <- hierarchy$type_gfcv
         
-        hierarchy_corr <- ComBat_seq(counts = assay(hierarchy), batch = hierarchy$batch, group = hierarchy$group)
+        hierarchy_corr <- ComBat_seq(counts = assay(hierarchy), batch = hierarchy$batch, group = hierarchy$type_gfcv)
         
         alpha_div <- vegan::diversity(x = hierarchy_corr, index = "shannon", MARGIN = 2)
         
@@ -429,35 +532,32 @@ x16s_exp <- lapply(names(organ_dt_list_fil), function(organ_name){
     organ_results <- lapply(names(organ_data), function(hierarchy_name){
         hierarchy <- organ_data[[hierarchy_name]]
         hierarchy_meta <- colData(hierarchy)
-        
-        names_comp <- apply(t(combn(levels(hierarchy_meta$group), m = 2))[,2:1, drop = FALSE], 1, paste, collapse = "-")
-        
+        names_comp <- apply(t(combn(levels(as.factor(hierarchy_meta$type_gfcv)), m = 2))[,2:1, drop = FALSE], 
+                            1, paste, collapse = "-")
         hierarchy_deseq <- DESeqDataSetFromMatrix(countData = as.data.frame(assay(hierarchy)),
-                                                  colData = hierarchy_meta, design = ~ group + batch + 0)
+                                                  colData = hierarchy_meta, design = ~ type_gfcv + batch + 0)
         hierarchy_deseq <- DESeq(hierarchy_deseq, test = "Wald")
         ## Pairwise
         results_list <- lapply(names_comp, function(comp_name){
-            comp_vec <- c("group", strsplit(comp_name, "-")[[1]])
+            comp_vec <- c("type_gfcv", strsplit(comp_name, "-")[[1]])
             results(hierarchy_deseq, contrast = comp_vec, pAdjustMethod = "fdr")
         })
         names(results_list) <- names_comp
         
         ## Coefs
-        coef_names <- paste0("group", levels(hierarchy_meta$group))
-        
+        coef_names <- paste0("type_gfcv", levels(as.factor(hierarchy_meta$type_gfcv)))
+
         results_gfcv <- lapply(coef_names, function(comp_id){
             results(hierarchy_deseq, name = comp_id)
         })
-        names(results_gfcv) <- c("CVM_GFM", "CVF_GFF")
+        names(results_gfcv) <- c("GFM_CVM", "GFF_CVF")
         ## Full gfcv
         hierarchy_deseq <- DESeqDataSetFromMatrix(countData = as.data.frame(assay(hierarchy)),
-                                                  colData = hierarchy_meta, design = ~ sex + batch)
+                                                  colData = hierarchy_meta, design = ~ type_gfcv + batch + 0)
         hierarchy_deseq <- DESeq(hierarchy_deseq, test = "Wald")
         
-        coef_names <- c("Intercept")
-        results_gfcv_full <- lapply(coef_names, function(comp_id){
-            results(hierarchy_deseq, name = comp_id)
-        })
+
+        results_gfcv_full <- list(results(hierarchy_deseq, contrast = c(1,1,0)))
         names(results_gfcv_full) <- c("GF_CV_Full")
         # hierarchy_ancombc2 <- SummarizedExperiment(assays = hierarchy, 
         #                                            colData = hierarchy_meta)

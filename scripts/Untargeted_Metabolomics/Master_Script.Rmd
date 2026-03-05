@@ -82,7 +82,7 @@ for(id in column_ids){
     untargeted_lima_output <- paste0(output_path, "xcms_hermes_exp_lima.rds")
     untargeted_gfcv_output <- paste0(output_path, "xcms_hermes_exp_gfcv.rds")
     
-    if(file.exists(untargeted_lima_output)){
+    if(!file.exists(untargeted_lima_output)){
         param_list <- list(
             metadata_file = metadata_path,
             xcms_hermes_file = xcms_hermes_output_path,
@@ -119,9 +119,101 @@ gfcv_exp <- Reduce(combineRows, gfcv_exp)
 assay(gfcv_exp) <- as.data.frame(assay(gfcv_exp))
 
 
+library(MetaboAnalystR)
 
+results_output <- paste0(params$output_dir, "Mummichog_results/")
+
+if(!dir.exists(results_output)){dir.create(results_output)}
+
+mummichog_input <- as.data.frame(rowData(gfcv_exp))[,c("mzmed", "rtmed", 
+                                                    "GF_CV.p.value", 
+                                                    "GF_CV.p.value")]
+mummichog_input$mode <- tolower(gsub("^.*_", "", gsub("\\..*$", "", 
+                                                rownames(mummichog_input))))
+
+colnames(mummichog_input) <- c("mz", "rt", "t.score", "p.value", "mode")
+
+mummichog_input$p.value <- p.adjust(mummichog_input$p.value, "fdr")
+
+if(!dir.exists(results_output)){dir.create(results_output)}
+old_dir <- getwd()
+setwd(results_output)
+write.table(mummichog_input, row.names = FALSE, 
+            file = "./mummichog_dt.txt", sep = ",")
+
+mSet <- InitDataObjects("mass_all", "mummichog", FALSE)
+mSet <- UpdateInstrumentParameters(mSet, 10.0, "mixed", "yes", 0.05)
+mSet <- Read.PeakListData(mSet, "mummichog_dt.txt")
+mSet <- SetRTincluded(mSet, "seconds")
+mSet <- SanityCheckMummichogData(mSet)
+mSet <- SetPeakEnrichMethod(mSet, "mum", "v2")
+mSet <- SetMummichogPval(mSet, cutoff = 0.05)
+mSet <- PerformPSEA(mSet, "mmu_kegg", "current", 3 , 100)
+
+mSet<-PlotPeaks2Paths(mSet, "peaks_to_paths_0_", "png", 72, width=NA)
+saveRDS(mSet, file = "./metaboanalyst_obj.rds")
+rm(mSet)
+
+test <- readLines("https://rest.kegg.jp/list/compound")
+test <- strsplit(test, "\t")
+test <- as.data.frame(do.call(rbind, test))
+    
+kegg_compound <- test$V2
+names(kegg_compound) <- test$V1
+
+metaboanalyst_obj <- readRDS("./metaboanalyst_obj.rds")
+setwd(old_dir)
+
+# cp_list <- sapply(rowData(lima_exp)$mzmed, function(mz){
+#     found <- sapply(metaboanalyst_obj$ec_exp_dict, function(cp_mzs){
+#         any(sapply(cp_mzs, function(mz_c){
+#             isTRUE(all.equal(mz_c, mz))
+#             
+#         }))
+#     })
+#     names(metaboanalyst_obj$ec_exp_dict)[found]
+# })
+
+cp_list <- metaboanalyst_obj$mz2cpd_dict[as.character(rowData(gfcv_exp)$mzmed)]
+    
+name_list <- sapply(cp_list, function(x){
+    found <- kegg_compound[x]
+    found <- found[!is.na(found)]
+    if(length(found)){
+        return(paste0(found, collapse = ";"))    
+    } else{
+        return(NA)
+    }
+    
+})
+
+rowData(gfcv_exp)$metabo_analyst_cp <- sapply(cp_list, function(x){
+    if(length(x)){
+        return(paste0(x, collapse = ";"))
+    } else{
+        return(NA)
+    }
+})
+rowData(gfcv_exp)$metaboanalyst_compound_names <- name_list
+
+library(stringr)
+rowData(gfcv_exp)$compounds_merged <- rowData(gfcv_exp)$compound_names
+
+rowData(gfcv_exp)$compounds_merged[is.na(rowData(gfcv_exp)$compounds_merged)] <- rowData(gfcv_exp)$PutativeMetabolitesKEGG[is.na(rowData(gfcv_exp)$compounds_merged)]
+
+
+rowData(gfcv_exp)$compounds_merged_readable <- str_trunc(rowData(gfcv_exp)$compounds_merged, 75)
+rowData(gfcv_exp)$compounds_merged_readable[!is.na(rowData(gfcv_exp)$compounds_merged_readable) & rowData(gfcv_exp)$compounds_merged_readable != ""] <- base::make.unique(rowData(gfcv_exp)$compounds_merged_readable[!is.na(rowData(gfcv_exp)$compounds_merged_readable) & rowData(gfcv_exp)$compounds_merged_readable != ""])    
+
+
+rowData(gfcv_exp)$compounds_kegg_merged <- rowData(gfcv_exp)$compounds
+rowData(gfcv_exp)$compounds_kegg_merged[is.na(rowData(gfcv_exp)$compounds_kegg_merged)] <- rowData(gfcv_exp)$kegg_id[is.na(rowData(gfcv_exp)$compounds_kegg_merged)]
 
 saveRDS(gfcv_exp, paste0(params$output_dir, "Untargeted_Metabolomics_exp_gfcv.rds"))
+```
+
+
+```{r}
 ####
 lima_exp <- Reduce(combineRows, lima_exp)
 assay(lima_exp) <- as.data.frame(assay(lima_exp))

@@ -41,7 +41,7 @@ output_dir <- "../../outputs/"
 
 if(!dir.exists(output_dir)){dir.create(output_dir)}
 
-omic_list <- list("16S_Metagenomics", "Histone_Modifications_Proteomics", 
+omic_list <- list("X16S_Metagenomics", "Histone_Modifications_Proteomics", 
                   "Metallomics", "RNA_Sequencing", "Shotgun_Metagenomics", 
                   "Targeted_Metabolomics", "Untargeted_Metabolomics", 
                   "WGB_DNA_Methylation")
@@ -148,7 +148,7 @@ names(gfcv_exp_list_proc) <- names(gfcv_exp_list)
 gfcv_multi_exp <- MultiAssayExperiment(experiments = gfcv_exp_list_proc, 
                                     colData = omics_metadata)
 
-saveRDS(gfcv_multi_exp, paste0(multi_omic_dir, "Multi_Omics_Analysis_exp_gfcv.rds"))
+saveRDS(gfcv_multi_exp, paste0(multi_omic_dir, "../Multi_Omics_Analysis_GFCV/Multi_Omics_Analysis_exp_gfcv.rds"))
 
 #### LIMA merge
 search_pattern <- "_exp_lima.rds"
@@ -225,6 +225,12 @@ names(lima_exp_list_proc) <- names(lima_exp_list)
 
 lima_multi_exp <- MultiAssayExperiment(experiments = lima_exp_list_proc, 
                                     colData = omics_metadata)
+
+rowData(experiments(lima_multi_exp)[["WGB_DNA_Methylation"]])$ensemblId <- mapIds(
+    x = org.Mm.eg.db,
+    keys = rowData(experiments(lima_multi_exp)[["WGB_DNA_Methylation"]])$geneId,
+    column = "ENSEMBL", keytype = "ENTREZID", multiVals = "first")
+
 saveRDS(lima_multi_exp, paste0(multi_omic_dir, "Multi_Omics_Analysis_exp_lima.rds"))
 ```
 
@@ -277,7 +283,7 @@ proc_omics <- lapply(names(experiments(lima_multi_exp)), function(omic_name){
         function_list <- list(scale_assay)
     }
     if(grepl("16S|Shotgun_Metagenomics", omic_name)){
-        function_list <- list(clr_proc, scale_assay)
+        function_list <- list(count_vst_deseq2, scale_assay)
     }
     if(grepl("Metallomics", omic_name)){
         function_list <- list(scale_assay)
@@ -295,8 +301,6 @@ experiments(lima_multi_exp) <- ExperimentList(proc_omics)
 saveRDS(lima_multi_exp, paste0(multi_omic_dir, "Multi_Omics_Analysis_MA_exp_lima.rds"))
 ```
 
-
-
 ### GFCV
 
 ```{r}
@@ -313,10 +317,12 @@ proc_omics <- lapply(names(experiments(gfcv_multi_exp)), function(omic_name){
     }
     if(grepl("RNA_Seq", omic_name)){
         function_list <- list(count_vst_deseq2, ComBat_norm, scale_assay)
+        param_list$design <- ~ group + 0
     }
     if(grepl("Untargeted", omic_name)){
         function_list <- list(impute_knn_assay, count_vst_deseq2, 
                                 ComBat_norm, scale_assay)
+        param_list$design <- ~ group + 0
     }
     if(grepl("Targeted", omic_name)){
         function_list <- list(impute_knn_assay, ComBat_norm, scale_assay)
@@ -325,7 +331,8 @@ proc_omics <- lapply(names(experiments(gfcv_multi_exp)), function(omic_name){
         function_list <- list(ComBat_norm, scale_assay)
     }
     if(grepl("16S|Shotgun", omic_name)){
-        function_list <- list(clr_proc, ComBat_norm, scale_assay)
+        function_list <- list(count_vst_deseq2, ComBat_norm, scale_assay)
+        param_list$design <- ~ type_gfcv + 0
     }
     if(grepl("Metallomics", omic_name)){
         function_list <- list(ComBat_norm, scale_assay)
@@ -341,6 +348,6 @@ proc_omics <- lapply(names(experiments(gfcv_multi_exp)), function(omic_name){
 names(proc_omics) <- names(assays(gfcv_multi_exp))
 experiments(gfcv_multi_exp) <- ExperimentList(proc_omics)
 
-saveRDS(gfcv_multi_exp, paste0(multi_omic_dir, "Multi_Omics_Analysis_MA_exp_gfcv.rds"))
+saveRDS(gfcv_multi_exp, paste0(multi_omic_dir, "../Multi_Omics_Analysis_GFCV/Multi_Omics_Analysis_MA_exp_gfcv.rds"))
 ```
 

@@ -3,8 +3,8 @@ title: "16S LIMA Processing"
 output: html_document
 date: "2023-04-17"
 params:
-    input_dir: "../../inputs/16S_Metagenomics/"
-    output_dir: "../../outputs/16S_Metagenomics/"
+    input_dir: "../../inputs/X16S_Metagenomics/"
+    output_dir: "../../outputs/X16S_Metagenomics/"
 ---
 
 ```{r setup, include=FALSE}
@@ -52,9 +52,18 @@ organ_dt_list <- lapply(organ_dir[1], function(organ_dt){
     meta_files <- list.files(organ_dt, pattern = "\\.txt$|\\.csv$", full.names = TRUE, recursive = FALSE)
     
     meta_files_proc <- lapply(meta_files, function(meta_file_path){
+        col_names <- readLines(meta_file_path, n = 1)
+        col_names <- strsplit(col_names, ",")[[1]]
+        col_names <- col_names[2:length(col_names)]
+        
         meta_f <- read.table(file = meta_file_path, sep = ",", row.names = 1, header = TRUE)
+        
         meta_f <- subset(meta_f, grepl("LIMA", x = project))
-        meta_f <- dplyr::select(meta_f, where(is.numeric))
+        
+        num_cols <- sapply(meta_f, is.numeric)
+        
+        meta_f <- meta_f[,num_cols]
+        colnames(meta_f) <- col_names[num_cols]
         rownames(meta_f) <- make.names(rownames(meta_f))
         
         meta_f <- meta_f %>% select_if(colSums(.) != 0)
@@ -80,11 +89,19 @@ lima_colon_dt <- lapply(organ_dir[2], function(organ_dt){
     meta_files <- list.files(grep("P190100", list.dirs(organ_dt), value = TRUE), full.names = TRUE)
     
     meta_files_proc <- lapply(meta_files, function(meta_file_path){
+        col_names <- readLines(meta_file_path, n = 1)
+        col_names <- strsplit(col_names, ",")[[1]]
+        col_names <- col_names[2:length(col_names)]
+        
         meta_f <- read.table(file = meta_file_path, sep = ",", row.names = 1, header = TRUE)
         rownames(meta_f) <- sapply(strsplit(rownames(meta_f), "-"), function(x){x[2]})
         
         meta_f <- subset(meta_f, rownames(meta_f) != "667")
-        meta_f <- dplyr::select(meta_f, where(is.numeric))
+        
+        num_cols <- sapply(meta_f, is.numeric)
+
+        meta_f <- meta_f[,num_cols]
+        colnames(meta_f) <- col_names[num_cols]
         
         rownames(meta_f) <- name_vect[rownames(meta_f)]
         meta_f <- meta_f %>% select_if(colSums(.) != 0 & !grepl("Unassigned", colnames(.)))
@@ -151,7 +168,7 @@ organ_exp <- lapply(names(organ_dt_list), function(organ_name){
                 h_id <- hierarchy_ids[h_id_num]
                 
                 found_id <- grep(paste0("^", h_id, "__"), 
-                                strsplit(sp_name, "\\.")[[1]], value = TRUE)
+                                strsplit(sp_name, ";")[[1]], value = TRUE)
                 
                 if(length(found_id)){
                     found_dt <- gsub(paste0(h_id, "__"), "", found_id)
@@ -328,7 +345,10 @@ organ_dt_list_fil <- lapply(seq_along(organ_exp), function(organ_id){
             row_keep[,gr_id] <- rowSums(group_zero_mat) < (ncol(group_zero_mat)*perc_thr)
         }
         row_keep <- apply(row_keep, 1, any)
-        hierarchy[row_keep,]
+        hierarchy <- hierarchy[row_keep,]
+        rowData(hierarchy)$mean_abundance <- rowMeans(assay(hierarchy))
+        rowData(hierarchy)$mean_abundance_pc <- rowData(hierarchy)$mean_abundance/sum(rowMeans(assay(hierarchy)))
+        hierarchy
     })
 })
 
@@ -407,9 +427,9 @@ lapply(names(organ_dt_list_fil), function(organ_name){
 lapply(organ_exp, function(organ_dt){
     lapply(names(organ_dt), function(hierarchy_names){
         hierarchy_dt <- organ_dt[[hierarchy_names]]
-    
+        hierarchy_dt <- hierarchy_dt[grepl(hierarchy_names, rownames(hierarchy_dt)),]
         hierarchy_dt <- transformAssay(hierarchy_dt, assay.type = "counts", method = "relabundance")
-    
+            
         # Getting top taxa on a Phylum level
         top_taxa <- getTopFeatures(hierarchy_dt,top = 5, assay.type = "relabundance")
         
@@ -524,7 +544,7 @@ x16s_exp <- lapply(names(organ_dt_list_fil), function(organ_name){
 })
 names(x16s_exp) <- names(organ_dt_list_fil)
 
-saveRDS(x16s_exp, paste0(params$output_dir, "16S_Metagenomics_exp_lima.rds"))
+saveRDS(x16s_exp, paste0(params$output_dir, "X16S_Metagenomics_exp_lima.rds"))
 ```
 
 

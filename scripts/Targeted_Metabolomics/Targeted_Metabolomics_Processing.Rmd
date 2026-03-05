@@ -283,9 +283,21 @@ tissue_noqc_file_list <- lapply(noqc_file_list, function(organ_dt){
     if(is.null(organ_dt$Tissue_mg)){return(organ_dt)}
     
     sample_index <- organ_dt$Metabolite_Metadata$mg/mean(organ_dt$Metabolite_Metadata$mg)
+    
+    
     organ_dt$Metabolite_Data <- as.data.frame(t(t(organ_dt$Metabolite_Data)/sample_index))
     organ_dt
 })
+
+# tissue_noqc_file_list$cecum$Metabolite_Data["NAD_NADH_ratio",] <- tissue_noqc_file_list$cecum$Metabolite_Data["NAD",]/tissue_noqc_file_list$cecum$Metabolite_Data["NADH",]
+# tissue_noqc_file_list$cecum$Metabolite_Data["ADP_AMP_ratio",] <- tissue_noqc_file_list$cecum$Metabolite_Data["ADP",]/tissue_noqc_file_list$cecum$Metabolite_Data["AMP",]
+# 
+# 
+# tissue_noqc_file_list$liver$Metabolite_Data["NAD_NADH_ratio",] <- tissue_noqc_file_list$liver$Metabolite_Data["NAD_t1",]/tissue_noqc_file_list$liver$Metabolite_Data["NADH_t1",]
+# 
+# tissue_noqc_file_list$liver$Metabolite_Data["ATP_ADP_ratio",] <- tissue_noqc_file_list$liver$Metabolite_Data["ATP",]/tissue_noqc_file_list$liver$Metabolite_Data["ADP",]
+# 
+# tissue_noqc_file_list$liver$Metabolite_Data["SAM_SAH_ratio",] <- tissue_noqc_file_list$liver$Metabolite_Data["SAM",]/tissue_noqc_file_list$liver$Metabolite_Data["SAH",]
 ```
 
 ```{r}
@@ -310,6 +322,7 @@ mapply(function(pca_dt, group_dt){
 ## Summarizing the data
 
 ```{r}
+
 summarized_data <- lapply(names(tissue_noqc_file_list), function(organ_name){
     organ_data <- tissue_noqc_file_list[[organ_name]]
     # rownames(organ_data$Metabolite_Data) <- paste0(organ_name, "_", rownames(organ_data$Metabolite_Data))
@@ -335,6 +348,8 @@ summarized_data$liver_scfa <- SummarizedExperiment(assays = tissue_noqc_file_lis
                                                                                                                    tissue_noqc_file_list$liver$Metabolite_Metadata$samplename),])
 ```
 
+
+
 ### GF/CV data subset
 
 ```{r}
@@ -351,9 +366,9 @@ gf_cv_data_list <- lapply(summarized_data, function(organ_dt){
 ```{r}
 pca_dt_list <- lapply(gf_cv_data_list, function(organ_data){
     met_data <- assay(organ_data)
-    met_data <- impute::impute.knn(t(met_data))$data
+    met_data <- impute::impute.knn(as.matrix(met_data))$data
     
-    dt_pca <- DESeqDataSetFromMatrix(round(t(met_data)), colData = colData(organ_data), design = ~ group)
+    dt_pca <- DESeqDataSetFromMatrix(round(met_data), colData = colData(organ_data), design = ~ group)
     
     dt_pca <- estimateSizeFactors(dt_pca)
     dt_pca <- estimateDispersions(dt_pca)
@@ -362,7 +377,8 @@ pca_dt_list <- lapply(gf_cv_data_list, function(organ_data){
 })
 
 mapply(function(pca_dt, group_dt){
-    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = colData(group_dt)$batch))
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, 
+                   group_var = colData(group_dt)$batch))
 }, pca_dt = pca_dt_list, group_dt = gf_cv_data_list)
 ```
 
@@ -380,7 +396,7 @@ pca_dt_list <- lapply(gf_cv_data_list, function(organ_data){
     dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
     dt_pca <- ComBat(dat = dt_pca, batch = colData(organ_data)$batch)
     
-    prcomp(t(dt_pca))
+    prcomp(t(dt_pca), scale = TRUE)
 })
 
 mapply(function(pca_dt, group_dt){
@@ -388,7 +404,7 @@ mapply(function(pca_dt, group_dt){
 }, pca_dt = pca_dt_list, group_dt = gf_cv_data_list)
 
 mapply(function(pca_dt, group_dt){
-    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = paste0(colData(group_dt)$group, colData(group_dt)$sex)))
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = paste0(colData(group_dt)$group)))
 }, pca_dt = pca_dt_list, group_dt = gf_cv_data_list)
 
 mapply(function(pca_dt, group_dt){
@@ -401,12 +417,50 @@ mapply(function(pca_dt, group_dt){
 
 ```{r}
 gf_cv_data_list$colon <- gf_cv_data_list$colon[,!gf_cv_data_list$colon$samplename %in% c("GF11", "CF11")]
+
+gf_cv_data_list$serum <- gf_cv_data_list$serum[,!gf_cv_data_list$serum$samplename %in% c("CF31")]
+```
+
+```{r}
+gf_cv_data_list <- lapply(gf_cv_data_list, function(organ_data){
+    organ_data[!apply(assay(organ_data), 1, function(x){sum(is.na(x))/length(x)}) >= 0.6,]
+})
+```
+
+
+```{r}
+pca_dt_list <- lapply(gf_cv_data_list, function(organ_data){
+    met_data <- assay(organ_data)
+    met_data <- impute::impute.knn(as.matrix(met_data))$data
+    
+    dt_pca <- DESeqDataSetFromMatrix(round(met_data), colData = colData(organ_data), design = ~ group)
+    
+    dt_pca <- estimateSizeFactors(dt_pca)
+    dt_pca <- estimateDispersions(dt_pca)
+    dt_pca <- assay(varianceStabilizingTransformation(dt_pca, blind=TRUE))
+    dt_pca <- ComBat(dat = dt_pca, batch = colData(organ_data)$batch)
+    
+    prcomp(t(dt_pca), scale = TRUE)
+})
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = colData(group_dt)$group))
+}, pca_dt = pca_dt_list, group_dt = gf_cv_data_list)
+
+mapply(function(pca_dt, group_dt){
+    print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = paste0(colData(group_dt)$group)))
+}, pca_dt = pca_dt_list, group_dt = gf_cv_data_list)
+
+mapply(function(pca_dt, group_dt){
+        print(pca_plot(pca_data = pca_dt, pc_x = 1, pc_y = 2, group_var = colData(group_dt)$samplename))
+}, pca_dt = pca_dt_list, group_dt = gf_cv_data_list)
 ```
 
 #### Anova Results
 
 ```{r}
 tukey_results <- lapply(gf_cv_data_list, function(organ_data){
+
     apply(assay(organ_data), 1, function(dt_var){
         anova_results <- aov(dt_var ~ batch + sex + gfcv + sex:gfcv, data = colData(organ_data))
         anova_results2 <- aov(dt_var ~ batch + sex + gfcv, data = colData(organ_data))
@@ -490,6 +544,14 @@ for(organ_name in names(gf_cv_data_list)){
                                                                         "^\\w{1}", toupper)
 }
 
+gf_cv_data_list$liver_scfa <- gf_cv_data_list[["liver_scfa"]][,match(colnames(gf_cv_data_list[["liver"]]),
+                                                                    colnames(gf_cv_data_list[["liver_scfa"]]))]
+
+gf_cv_data_list$liver <- rbind(gf_cv_data_list$liver, gf_cv_data_list$liver_scfa)
+
+gf_cv_data_list[c("liver_scfa")] <- NULL
+
+
 saveRDS(gf_cv_data_list, paste0(params$output_dir, "Targeted_Metabolomics_exp_gfcv.rds"))
 ```
 
@@ -507,7 +569,7 @@ lima_data_list <- lapply(summarized_data, function(organ_dt){
 ### Adding mice data
 
 ```{r}
-mice_dt <- readRDS("../../inputs/Mice_Data/processed_mice_dt.rds")
+mice_dt <- readRDS("../../outputs/Mice_Data/processed_mice_dt.rds")
 
 lima_data_list <- lapply(lima_data_list, function(organ_dt){
     colData(organ_dt)$samplename <- make.names(colData(organ_dt)$samplename)
@@ -572,10 +634,10 @@ int_vars <- c("Sacrifice", "BW.g.", "Liver.g.", "WATep.g.")
 # }, pca_dt = pca_dt_list, group_dt = lima_data_list)
 
 
-mapply(function(pca_dt, group_dt){
-    if(is.null(pca_dt)){return(NULL)}
-    cor(x = t(assay(group_dt)), as.data.frame(colData(group_dt)[,int_vars]), na.rm = T)
-}, pca_dt = pca_dt_list, group_dt = lima_data_list)
+# mapply(function(pca_dt, group_dt){
+#     if(is.null(pca_dt)){return(NULL)}
+#     cor(x = t(assay(group_dt)), as.data.frame(colData(group_dt)[,int_vars]), na.rm = T)
+# }, pca_dt = pca_dt_list, group_dt = lima_data_list)
 ```
 
 ```{r}
@@ -686,10 +748,10 @@ mapply(function(pca_dt, group_dt){
 
 int_vars <- c("Sacrifice", "BW.g.", "Liver.g.", "WATep.g.")
 
-mapply(function(pca_dt, group_dt){
-    if(is.null(pca_dt)){return(NULL)}
-    cor(x = pca_dt$x[,1:2], as.data.frame(colData(group_dt)[,int_vars]))
-}, pca_dt = pca_dt_list, group_dt = lima_data_list_out)
+# mapply(function(pca_dt, group_dt){
+#     if(is.null(pca_dt)){return(NULL)}
+#     cor(x = pca_dt$x[,1:2], as.data.frame(colData(group_dt)[,int_vars]))
+# }, pca_dt = pca_dt_list, group_dt = lima_data_list_out)
 ```
 
 ```{r, fig.width=8, fig.height=8}
@@ -758,6 +820,8 @@ p <- lapply(lima_data_list_out, function(organ_dt){
 ```
 
 ```{r}
+boxplot(as.numeric(assay(lima_data_list_out$liver["methionine",])) ~ lima_data_list_out$liver$group)
+
 comp_names <- apply(t(combn(levels(lima_data_list_out$cecum$group), m = 2))[,2:1], 1, 
                     paste, collapse = "-")
 comp_matrix <- matrix(NA, nrow = length(comp_names), ncol = 2)
@@ -846,9 +910,31 @@ results_list$liver <- rbind(results_list$liver, results_list$liver_scfa)
 results_list[c("liver_scfa")] <- NULL
 
 targ_meta_data <- lapply(names(lima_data_list_out), function(organ_name){
+
     organ <- lima_data_list_out[[organ_name]]
     organ_results <- results_list[[organ_name]]
+    
+    rownames(organ) <- gsub("liver_scfa_", "", rownames(organ))
     rowData(organ) <- organ_results
+    
+    possible_remove <- grepl("_t1$|_t2$|_1$|_2$", rownames(organ))
+    
+    met_names <- gsub("_t1$|_t2$|_1$|_2$", "", rownames(organ))
+    # met_names <- sapply(strsplit(rownames(organ), "_"), function(x){paste0(x[1:(length(x)-1)], collapse = "_")})
+    
+    select_names <- paste0(met_names[duplicated(met_names) & possible_remove], "_")
+    
+    ids_to_remove <- sapply(select_names, function(x){
+        met_id <- grep(x, rownames(organ))
+        if(length(met_id) != 2){print("Something weird happened")}
+        
+        met_id[grep("2$", rownames(organ)[met_id])]
+    })
+    found_met <- grep(paste0(select_names, collapse = "|"), rownames(organ))
+    rownames(organ)[found_met] <- gsub("_t1$|_t2$|_1$|_2$", "", rownames(organ)[found_met])
+    
+    organ <- organ[!seq_len(nrow(organ)) %in% ids_to_remove]
+    
     rowData(organ)$readable_name <- str_replace(paste(organ_name, rownames(organ)), 
                                         "^\\w{1}", toupper)
     organ

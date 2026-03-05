@@ -2,6 +2,9 @@
 title: "RNA_Seq_DMR_Analysis"
 output: html_document
 date: "2024-10-09"
+params:
+    input_dir: "../../inputs/"
+    output_dir: "../../outputs/Multi_Omics_Analysis/"
 ---
 
 ```{r setup, include=FALSE}
@@ -11,38 +14,2240 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Loading the data
 
 ```{r}
+library(SummarizedExperiment)
+library(methrix)
+library(ggplot2)
+library(MultiAssayExperiment)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+source("../Utility_Functions/utilities.R")
+```
+
+```{r}
 lima_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/merged_methrix.rds")
-lima_rna_seq <- readRDS("../../outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_MA_exp_lima.rds")
-lima_rna_seq <- lima_rna_seq@ExperimentList$RNA_Sequencing
+gfcv_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/GFCV/merged_methrix.rds")
+lima_multi_exp <- readRDS("../../outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_MA_exp_lima.rds")
+lima_rna_seq <- lima_multi_exp@ExperimentList$RNA_Sequencing
+lima_dna_met <- lima_multi_exp@ExperimentList$WGB_DNA_Methylation
+# lima_dna_met005 <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_005/WGB_DNA_Methylation_exp_lima.rds")
+
+rna_seq_raw <- readRDS("../../outputs/RNA_Sequencing/lima_raw_counts.rds")
+```
+
+```{r}
+tf_db <- read.table("../../inputs/RNA_Sequencing/export_tfcheckpoint.txt", sep = "\t", header = TRUE)
+# length(tf_db$Mouse_entrez[!is.na(tf_db$Mouse_entrez)])
+
+# tf_ids <- tf_db$Mouse_entrez[!is.na(tf_db$Mouse_entrez)]
+# sum(tf_ids %in% rowData(lima_rna_seq_filt)$entrezID)
+# sum(tf_ids %in% rowData(lima_rna_seq)$entrezID)
+# 
+# tf_ids_found <- tf_ids[tf_ids %in% rowData(lima_rna_seq_filt)$entrezID]
+
+# sum(tf_ids_found %in%
+#         rowData(dna_met_exp_non_smoothed_001.group.reduced)$geneId)
+# sum(tf_ids_found %in%
+#         rowData(dna_met_exp_non_smoothed.reduced.group.reduced)$geneId)
+# sum(tf_ids_found %in%
+#         rowData(dna_met_exp_non_smoothed_005.group.reduced)$geneId)
+# 
+# sum(tf_db$Mouse_entrez %in%
+#         rowData(dna_met_exp_non_smoothed_001.group.reduced)$geneId)
+# 
+# 
+# table(rowData(dna_met_exp_non_smoothed_005.group.reduced[rowData(dna_met_exp_non_smoothed_005.group.reduced)$geneId %in% 
+#     tf_ids_found,])$annotation)
+
+```
+
+```{r}
+p_val_dt <- rowData(lima_rna_seq)[,grepl("adj.p.value", colnames(rowData(lima_rna_seq)))]
+p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+lima_rna_seq_filt <- lima_rna_seq[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
 ```
 
 ```{r}
 library(GenomicFeatures)
-library(TxDb.Mmusculus.UCSC.mm39.refGene)
+library(TxDb.Mmusculus.UCSC.mm39.knownGene)
 library(SummarizedExperiment)
-txdb_mm39 <- TxDb.Mmusculus.UCSC.mm39.refGene
-keys <- rowData(lima_rna_seq)$entrezID
-mapped_tx <- AnnotationDbi::select(txdb_mm39, keys = keys, columns="TXNAME", keytype="GENEID")
+txdb_mm39 <- TxDb.Mmusculus.UCSC.mm39.knownGene
+```
+
+## Promotor Information
+
+```{r}
+keys_ids <- keys(TxDb.Mmusculus.UCSC.mm39.knownGene, keytype = "GENEID")
+
+mapped_tx <- AnnotationDbi::select(txdb_mm39, keys = keys_ids, columns="TXNAME", keytype="GENEID")
+
+length(unique(mapped_tx$TXNAME))
 
 gene_list <- transcriptsBy(x = txdb_mm39, by = "gene")
 gene_promotors <- promoters(x = txdb_mm39)
 
 found_promotors <- gene_promotors[gene_promotors$tx_name %in% mapped_tx$TXNAME]
 
-gene_granges <- gene_list[names(gene_list) %in% keys]
-gene_granges
-```
-```{r}
-prom_methrix <- methrix::get_region_summary(lima_methrix, found_promotors, overlap_type = "any")
+gene_granges <- gene_list[names(gene_list) %in% keys_ids]
+
+prom_methrix <- methrix::get_region_summary(lima_methrix, found_promotors, 
+                                            overlap_type = "any")
 num_m <- prom_methrix[,6:41]
 seq_dt <- prom_methrix[,1:5]
 
 found_info <- found_promotors[seq_dt$rid]
 
-matched_genes <- sapply(found_info$tx_name, function(x){unique(mapped_tx$GENEID[mapped_tx$TXNAME == x & !is.na(mapped_tx$TXNAME)])})
+matched_genes <- sapply(found_info$tx_name, function(x){
+    unique(mapped_tx$GENEID[mapped_tx$TXNAME == x &
+                                !is.na(mapped_tx$TXNAME)])
+})
+seq_dt$geneID <- matched_genes
 which(lengths(matched_genes) != 1)
 
+colnames(lima_methrix) <- gsub("X652C", "X642C", colnames(lima_methrix))
+colnames(num_m) <- gsub("X652C", "X642C", colnames(num_m))
+
+outlier_samples <- c("X670E", "X594C")
+
+num_m <- as.data.frame(num_m)[,!colnames(num_m) %in% outlier_samples]
+# num_m <- num_m[,intersect(colData(lima_rna_seq)$samplename, colnames(num_m))]
+
+dna_met_prom_exp <- SummarizedExperiment(assays = list("dt1" = num_m), 
+                                        rowData = seq_dt, 
+                                        colData = colData(lima_methrix)[match(colnames(num_m),
+                                                                                  colnames(lima_methrix)),])
+
+dna_met_prom_exp <- dna_met_prom_exp[,dna_met_prom_exp$group != "HFE"]
+dna_met_prom_exp
+
+keep_ids <- apply(num_m, 1, function(x){
+    sum(is.na(x)) <= 0.8
+})
+
+dna_met_prom_exp <- dna_met_prom_exp[keep_ids,]
+
+saveRDS(dna_met_prom_exp, "../../outputs/WGB_DNA_Methylation/Test_Promotors_DB.rds")
+
+mean_meth <- tapply(X = seq_len(nrow(seq_dt)), INDEX = seq_dt$geneID, function(x){
+    rowMeans(num_m[x,], na.rm = TRUE)
+})
+
+mean_meth_found <- mean_meth[names(mean_meth) %in% 
+                                    rowData(lima_rna_seq)$entrezID]
+mean_meth_not_found <- mean_meth[!names(mean_meth) %in%
+                                    rowData(lima_rna_seq)$entrezID] 
+
+mean_meth_sig <- mean_meth_found[names(mean_meth_found) %in%
+                                     rowData(lima_rna_seq_filt)$entrezID]
+mean_meth_no_sig <- mean_meth_found[!names(mean_meth_found) %in%
+                                        rowData(lima_rna_seq_filt)$entrezID]
+```
+
+
+```{r}
+
+plot_dt <- rbind(data.frame("mean_methylation" = unlist(mean_meth),
+                      "group" = "All Genes"),
+                 data.frame("mean_methylation" = unlist(mean_meth_found),
+                      "group" = "Expressed"),
+                 data.frame("mean_methylation" = unlist(mean_meth_not_found),
+                      "group" = "Not Expressed"),
+                 data.frame("mean_methylation" = unlist(mean_meth_sig),
+                      "group" = "Expressed Significant"),
+                 data.frame("mean_methylation" = unlist(mean_meth_no_sig),
+                      "group" = "Expressed Not Significant"))
+library(ggplot2)
+p1 <- ggplot(plot_dt) + 
+    geom_violin(aes(x = group, y = mean_methylation)) + 
+    geom_boxplot(aes(x = group, y = mean_methylation), width = 0.05) +
+    theme_minimal() + theme(axis.text.x = element_text(size = 7)) + 
+    xlab(NULL) + ylab("Promotors mean methylation")
+p1
+ggsave(filename = "../../outputs/Paper_Figures/figure_7.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_7.png", plot = p1)
+```
+
+### Promotor gene correlations
+
+```{r}
+intersect_samples <- intersect(colnames(lima_rna_seq_filt), colnames(num_m))
+
+assayNames(lima_rna_seq_filt) <- "dt1"
+corr_vect <- c("pearson", "spearman")
+
+
+test <- lapply(rownames(lima_rna_seq_filt), function(gene_id){
+    rna_seq_gene <- lima_rna_seq_filt[gene_id,]
+    
+    entrez_id <- rowData(rna_seq_gene)$entrezID
+    if(is.na(entrez_id)){return(NULL)}
+    dna_met_prom_exp[rowData(dna_met_prom_exp)$geneID == entrez_id,]
+})
+
+corr_dt_list <- lapply(corr_vect, function(corr_name){
+    
+    list_prom <- lapply(rownames(lima_rna_seq_filt), function(gene_id){
+        rna_seq_gene <- lima_rna_seq_filt[gene_id,]
+        
+        entrez_id <- rowData(rna_seq_gene)$entrezID
+        if(is.na(entrez_id)){return(NULL)}
+        own_dmrs <- dna_met_prom_exp[rowData(dna_met_prom_exp)$geneID == entrez_id,]
+        print(gene_id)
+        if(!nrow(own_dmrs)){return(NULL)}
+        
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene[,intersect_samples], 
+                                            experiment2 = own_dmrs[,intersect_samples],
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE)
+    })
+    do.call(rbind, list_prom)
+})
+names(corr_dt_list) <- corr_vect
+
+saveRDS(corr_dt_list, "../../outputs/Multi_Omics_Analysis/test_dmr_cors.rds")
+```
+
+
+```{r}
+corr_dt_list <- readRDS("../../outputs/Multi_Omics_Analysis/test_dmr_cors.rds")
+
+corr_dt_filt <- lapply(corr_dt_list, function(corr_dt){
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt[abs(corr_dt$cor) >= 0.7,]
+})
+
+
+mofa_res_dt <- readRDS("../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/multi_omics_filtered.rds")
+
+dmr_regulated_genes <- mofa_res_dt@ExperimentList$RNA_Sequencing[union(corr_dt_filt$pearson$Var1,
+                                                            corr_dt_filt$spearman$Var1),]
+
+View(as.data.frame(dmr_regulated_genes))
+
+factor_vect <- c("Factor_1", "Factor_2", "No factor")
+
+mofa_factor_genes <- lapply(factor_vect, function(factor_id){
+    
+    gene_rd <- rowData(mofa_res_dt[["RNA_Sequencing"]])
+    
+    if(factor_id == "No factor"){
+        return(rownames(gene_rd)[!gene_rd[["Factor_1_weights_sig"]] & 
+                                     !gene_rd[["Factor_2_weights_sig"]]])
+    } else{
+        return(rownames(gene_rd)[gene_rd[[paste0(factor_id, "_weights_sig")]]])    
+    }
+})
+names(mofa_factor_genes) <- factor_vect
+
+
+f1_vars <- rownames(mofa_res_dt[["RNA_Sequencing"]])[abs(rowData(mofa_res_dt[["RNA_Sequencing"]])[,"Factor_1_weights"]) > 0.3]
+
+f2_vars <- rownames(mofa_res_dt[["RNA_Sequencing"]])[abs(rowData(mofa_res_dt[["RNA_Sequencing"]])[,"Factor_2_weights"]) > 0.4]
+# 
+# intersect(f1_vars, f2_vars)
+# 
+# pheatmap::pheatmap(as.matrix(assay(mofa_res_dt[["RNA_Sequencing"]][f1_vars,])), show_rownames = FALSE)
+# 
+# pheatmap::pheatmap(as.matrix(assay(mofa_res_dt[["RNA_Sequencing"]][f2_vars,])), show_rownames = FALSE)
+# 
+# 
+f1_vars_mofa <- rownames(mofa_res_dt[["RNA_Sequencing"]])[rowData(mofa_res_dt[["RNA_Sequencing"]])$Factor_1_weights_sig]
+
+f2_vars_mofa <- rownames(mofa_res_dt[["RNA_Sequencing"]])[rowData(mofa_res_dt[["RNA_Sequencing"]])$Factor_2_weights_sig]
+# 
+# pheatmap::pheatmap(as.matrix(assay(mofa_res_dt[["RNA_Sequencing"]][f1_vars_mofa,])), show_rownames = FALSE)
+# 
+# pheatmap::pheatmap(as.matrix(assay(mofa_res_dt[["RNA_Sequencing"]][f2_vars_mofa,])), show_rownames = FALSE)
+# 
+# length(intersect(f1_vars, f1_vars_mofa))
+# length(intersect(f2_vars, f2_vars_mofa))
+
+```
+
+```{r}
+group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(mofa_res_dt$group))), 
+                                             name = "Set2")
+names(group_color_dict) <- levels(droplevels(mofa_res_dt$group))
+
+lapply(names(mofa_factor_genes), function(factor_id){
+    pdf(paste0("../../outputs/Multi_Omics_Analysis/gene_dmr_correlations_test/",
+                "dmrs_dmr_regulated_promotors_", factor_id, ".pdf"))
+    factor_gene_ids <- mofa_factor_genes[[factor_id]]
+    plot_exp_genes <- rownames(dmr_regulated_genes)[rownames(dmr_regulated_genes) %in%
+                                                        factor_gene_ids]
+    
+    found_dmrs <- sapply(plot_exp_genes, function(x){
+        union(corr_dt_filt$pearson$Var2[corr_dt_filt$pearson$Var1 == x], 
+                  corr_dt_filt$spearman$Var2[corr_dt_filt$spearman$Var1 == x])
+    })
+    lapply(names(found_dmrs), function(gene_id){
+        dmr_ids <- found_dmrs[[gene_id]]
+        found_dmrs_exp <- dna_met_prom_exp[dmr_ids,]
+
+        lapply(rownames(found_dmrs_exp), function(x){
+            plot_dt <- as.data.frame(cbind(t(assay(found_dmrs_exp[x,])),
+                                        colData(found_dmrs_exp)["group"]))
+            colnames(plot_dt) <- c("DMR", "group")
+            
+            # plot_dt_gfcv <- cbind(t(assay(claudia_gfcv_dt[x,])), colData(claudia_gfcv_dt)["group"])
+            p1 <- ggplot(plot_dt) + geom_boxplot(aes(x = group, y = DMR, fill = group)) + 
+                theme_minimal() + scale_fill_manual(values = group_color_dict) + 
+                ggtitle(paste(gene_id, "promotor"))
+            # p2 <- ggplot(plot_dt_gfcv) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+            #     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+            print(p1)
+            # print(p2)
+            
+            return(NULL)
+        })
+    })
+    dev.off()
+
+    return(NULL)
+})
+
+```
+
+```{r}
+lapply(names(mofa_factor_genes), function(factor_id){
+    pdf(paste0("../../outputs/Multi_Omics_Analysis/gene_dmr_correlations_test/",
+                "genes_dmr_regulated_promotors_", factor_id, ".pdf"))
+    factor_gene_ids <- mofa_factor_genes[[factor_id]]
+    plot_exp_genes <- dmr_regulated_genes[rownames(dmr_regulated_genes) %in% 
+                                                factor_gene_ids]
+    lapply(rownames(plot_exp_genes), function(x){
+
+        plot_dt <- cbind(t(assay(plot_exp_genes[x,])), colData(plot_exp_genes)["group"])
+    
+        # plot_dt_gfcv <- cbind(t(assay(claudia_gfcv_dt[x,])), colData(claudia_gfcv_dt)["group"])
+        
+        p1 <- ggplot(plot_dt) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+            theme_minimal() + scale_fill_manual(values = group_color_dict)
+        # p2 <- ggplot(plot_dt_gfcv) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+        #     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+        print(p1)
+        # print(p2)
+        
+        return(NULL)
+    })
+    dev.off()
+
+    return(NULL)
+})
+```
+
+
+```{r}
+length(unique(corr_dt_filt$pearson$Var1))
+length(unique(corr_dt_filt$spearman$Var1))
+```
+
+```{r}
+# dmr_regulated <- readRDS("../../outputs/Multi_Omics_Analysis/dmr_regulated_vect.rds")
+# intersect(rownames(dmr_regulated_genes), dmr_regulated)
+```
+
+
+## Intron Information
+
+```{r}
+keys_ids <- keys(TxDb.Mmusculus.UCSC.mm39.knownGene, keytype = "GENEID")
+
+mapped_tx <- AnnotationDbi::select(txdb_mm39, keys = keys_ids, columns="TXNAME", keytype="GENEID")
+
+length(unique(mapped_tx$TXNAME))
+
+gene_list <- transcriptsBy(x = txdb_mm39, by = "gene")
+gene_introns <- intronicParts(txdb = txdb_mm39, 
+                            linked.to.single.gene.only = TRUE)
+
+found_introns <- gene_introns[sapply(gene_introns$tx_name %in%
+                                        mapped_tx$TXNAME, any)]
+
+gene_granges <- gene_list[names(gene_list) %in% keys_ids]
+
+prom_methrix <- methrix::get_region_summary(lima_methrix, found_introns, 
+                                            overlap_type = "any")
+num_m <- prom_methrix[,6:41]
+seq_dt <- prom_methrix[,1:5]
+
+found_info <- found_introns[seq_dt$rid]
+
+# matched_genes <- sapply(found_info$tx_name, function(x){
+#     unique(mapped_tx$GENEID[mapped_tx$TXNAME == x[[1]] &
+#                                 !is.na(mapped_tx$TXNAME)])
+# })
+# seq_dt$geneID <- matched_genes
+seq_dt$geneID <- found_info$gene_id
+
+# which(lengths(matched_genes) != 1)
+
+colnames(lima_methrix) <- gsub("X652C", "X642C", colnames(lima_methrix))
+colnames(num_m) <- gsub("X652C", "X642C", colnames(num_m))
+
+outlier_samples <- c("X670E", "X594C")
+
+num_m <- as.data.frame(num_m)[,!colnames(num_m) %in% outlier_samples]
+# num_m <- num_m[,intersect(colData(lima_rna_seq)$samplename, colnames(num_m))]
+
+dna_met_introns_exp <- SummarizedExperiment(assays = list("dt1" = num_m), 
+                                        rowData = seq_dt, 
+                                        colData = colData(lima_methrix)[match(colnames(num_m),
+                                                                            colnames(lima_methrix)),])
+
+rm(lima_methrix)
+dna_met_introns_exp <- dna_met_introns_exp[,dna_met_introns_exp$group != "HFE"]
+dna_met_introns_exp
+
+keep_ids <- apply(num_m, 1, function(x){
+    sum(is.na(x)) <= 0.8
+})
+
+dna_met_introns_exp <- dna_met_introns_exp[keep_ids,]
+
+saveRDS(dna_met_introns_exp, "../../outputs/WGB_DNA_Methylation/Test_Introns_DB.rds")
+
+
+mean_meth <- tapply(X = seq_len(nrow(seq_dt)), INDEX = seq_dt$geneID, function(x){
+    rowMeans(num_m[x,], na.rm = TRUE)
+})
+
+mean_meth_found <- mean_meth[names(mean_meth) %in% 
+                                    rowData(lima_rna_seq)$entrezID]
+mean_meth_not_found <- mean_meth[!names(mean_meth) %in%
+                                    rowData(lima_rna_seq)$entrezID] 
+
+mean_meth_sig <- mean_meth_found[names(mean_meth_found) %in%
+                                     rowData(lima_rna_seq_filt)$entrezID]
+mean_meth_no_sig <- mean_meth_found[!names(mean_meth_found) %in%
+                                        rowData(lima_rna_seq_filt)$entrezID]
+```
+
+
+```{r}
+
+plot_dt <- rbind(data.frame("mean_methylation" = unlist(mean_meth),
+                      "group" = "All Genes"),
+                 data.frame("mean_methylation" = unlist(mean_meth_found),
+                      "group" = "Expressed"),
+                 data.frame("mean_methylation" = unlist(mean_meth_not_found),
+                      "group" = "Not Expressed"),
+                 data.frame("mean_methylation" = unlist(mean_meth_sig),
+                      "group" = "Expressed Significant"),
+                 data.frame("mean_methylation" = unlist(mean_meth_no_sig),
+                      "group" = "Expressed Not Significant"))
+library(ggplot2)
+p1 <- ggplot(plot_dt) + 
+    geom_violin(aes(x = group, y = mean_methylation)) + 
+    geom_boxplot(aes(x = group, y = mean_methylation), width = 0.05) +
+    theme_minimal() + theme(axis.text.x = element_text(size = 7)) + 
+    xlab(NULL) + ylab("introns mean methylation")
+p1
+ggsave(filename = "../../outputs/Paper_Figures/figure_7_intron.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_7_intron.png", plot = p1)
+```
+
+### Intron gene correlations
+
+```{r}
+intersect_samples <- intersect(colnames(lima_rna_seq_filt), colnames(num_m))
+
+assayNames(lima_rna_seq_filt) <- "dt1"
+corr_vect <- c("pearson", "spearman")
+
+# test <- lapply(rownames(lima_rna_seq_filt), function(gene_id){
+#     rna_seq_gene <- lima_rna_seq_filt[gene_id,]
+#     
+#     entrez_id <- rowData(rna_seq_gene)$entrezID
+#     if(is.na(entrez_id)){return(NULL)}
+#     dna_met_introns_exp[rowData(dna_met_introns_exp)$geneID == entrez_id,]
+# })
+
+corr_dt_list_intron <- lapply(corr_vect, function(corr_name){
+    
+    list_prom <- lapply(rownames(lima_rna_seq_filt), function(gene_id){
+        rna_seq_gene <- lima_rna_seq_filt[gene_id,]
+        
+        entrez_id <- rowData(rna_seq_gene)$entrezID
+        if(is.na(entrez_id)){return(NULL)}
+        own_dmrs <- dna_met_introns_exp[rowData(dna_met_introns_exp)$geneID == entrez_id,]
+        if(!nrow(own_dmrs)){return(NULL)}
+        
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene[,intersect_samples], 
+                                            experiment2 = own_dmrs[,intersect_samples],
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE, 
+                                            verbose = FALSE)
+    })
+    do.call(rbind, list_prom)
+})
+names(corr_dt_list_intron) <- corr_vect
+
+saveRDS(corr_dt_list_intron, "../../outputs/Multi_Omics_Analysis/test_dmr_intron_cors.rds")
+```
+
+
+```{r}
+corr_dt_list_intron <- readRDS("../../outputs/Multi_Omics_Analysis/test_dmr_intron_cors.rds")
+
+corr_dt_filt_intron <- lapply(corr_dt_list_intron, function(corr_dt){
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt[abs(corr_dt$cor) >= 0.7 & !is.na(corr_dt$cor),]
+})
+
+
+mofa_res_dt <- readRDS("../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/multi_omics_filtered.rds")
+
+dmr_regulated_genes <- mofa_res_dt@ExperimentList$RNA_Sequencing[union(corr_dt_filt_intron$pearson$Var1,
+                                                            corr_dt_filt_intron$spearman$Var1),]
+
+factor_vect <- c("Factor_1", "Factor_2", "No factor")
+
+mofa_factor_genes <- lapply(factor_vect, function(factor_id){
+    
+    gene_rd <- rowData(mofa_res_dt[["RNA_Sequencing"]])
+    
+    if(factor_id == "No factor"){
+        return(rownames(gene_rd)[!gene_rd[["Factor_1_weights_sig"]] & 
+                                     !gene_rd[["Factor_2_weights_sig"]]])
+    } else{
+        return(rownames(gene_rd)[gene_rd[[paste0(factor_id, "_weights_sig")]]])    
+    }
+})
+names(mofa_factor_genes) <- factor_vect
+```
+
+```{r}
+group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(mofa_res_dt$group))), 
+                                             name = "Set2")
+names(group_color_dict) <- levels(droplevels(mofa_res_dt$group))
+
+lapply(names(mofa_factor_genes), function(factor_id){
+    pdf(paste0("../../outputs/Multi_Omics_Analysis/gene_dmr_correlations_test/",
+                "dmrs_dmr_regulated_introns_", factor_id, ".pdf"))
+    factor_gene_ids <- mofa_factor_genes[[factor_id]]
+    plot_exp_genes <- rownames(dmr_regulated_genes)[rownames(dmr_regulated_genes) %in%
+                                                        factor_gene_ids]
+    
+    found_dmrs <- sapply(plot_exp_genes, function(x){
+        union(corr_dt_filt_intron$pearson$Var2[corr_dt_filt_intron$pearson$Var1 == x], 
+                  corr_dt_filt_intron$spearman$Var2[corr_dt_filt_intron$spearman$Var1 == x])
+    })
+    lapply(names(found_dmrs), function(gene_id){
+        dmr_ids <- found_dmrs[[gene_id]]
+        found_dmrs_exp <- dna_met_introns_exp[dmr_ids,]
+
+        lapply(rownames(found_dmrs_exp), function(x){
+            plot_dt <- as.data.frame(cbind(t(assay(found_dmrs_exp[x,])),
+                                        colData(found_dmrs_exp)["group"]))
+            colnames(plot_dt) <- c("DMR", "group")
+            
+            # plot_dt_gfcv <- cbind(t(assay(claudia_gfcv_dt[x,])), colData(claudia_gfcv_dt)["group"])
+            p1 <- ggplot(plot_dt) + geom_boxplot(aes(x = group, y = DMR, fill = group)) + 
+                theme_minimal() + scale_fill_manual(values = group_color_dict) + 
+                ggtitle(paste(gene_id, "promotor"))
+            # p2 <- ggplot(plot_dt_gfcv) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+            #     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+            print(p1)
+            # print(p2)
+            
+            return(NULL)
+        })
+    })
+    dev.off()
+
+    return(NULL)
+})
+
+```
+
+```{r}
+lapply(names(mofa_factor_genes), function(factor_id){
+    pdf(paste0("../../outputs/Multi_Omics_Analysis/gene_dmr_correlations_test/",
+                "genes_dmr_regulated_introns_", factor_id, ".pdf"))
+    factor_gene_ids <- mofa_factor_genes[[factor_id]]
+    plot_exp_genes <- dmr_regulated_genes[rownames(dmr_regulated_genes) %in% 
+                                                factor_gene_ids]
+    lapply(rownames(plot_exp_genes), function(x){
+
+        plot_dt <- cbind(t(assay(plot_exp_genes[x,])), colData(plot_exp_genes)["group"])
+    
+        # plot_dt_gfcv <- cbind(t(assay(claudia_gfcv_dt[x,])), colData(claudia_gfcv_dt)["group"])
+        
+        p1 <- ggplot(plot_dt) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+            theme_minimal() + scale_fill_manual(values = group_color_dict)
+        # p2 <- ggplot(plot_dt_gfcv) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+        #     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+        print(p1)
+        # print(p2)
+        
+        return(NULL)
+    })
+    dev.off()
+
+    return(NULL)
+})
+```
+
+
+```{r}
+length(unique(corr_dt_filt_intron$pearson$Var1))
+length(unique(corr_dt_filt_intron$spearman$Var1))
+```
+
+```{r}
+table(corr_dt_filt_intron$pearson[corr_dt_filt_intron$pearson$Var1 %in% f1_vars_mofa,]$cor < 0)
+
+table(corr_dt_filt_intron$spearman[corr_dt_filt_intron$spearman$Var1 %in% f1_vars_mofa,]$cor < 0)
+
+table(corr_dt_filt_intron$pearson[corr_dt_filt_intron$pearson$Var1 %in% f1_vars_mofa,]$cor < 0)
+
+table(corr_dt_filt_intron$spearman[corr_dt_filt_intron$spearman$Var1 %in% f1_vars_mofa,]$cor < 0)
+
+
+length(union(corr_dt_filt_intron$pearson$Var1[corr_dt_filt_intron$pearson$Var1 %in% f1_vars_mofa],
+            corr_dt_filt_intron$pearson$Var1[corr_dt_filt_intron$spearman$Var1 %in% f1_vars_mofa]))
+
+length(union(corr_dt_filt_intron$pearson$Var1[corr_dt_filt_intron$pearson$Var1 %in% f2_vars_mofa],
+            corr_dt_filt_intron$pearson$Var1[corr_dt_filt_intron$spearman$Var1 %in% f2_vars_mofa]))
+
+```
+
+## Exon Information
+
+```{r}
+keys_ids <- keys(TxDb.Mmusculus.UCSC.mm39.knownGene, keytype = "GENEID")
+
+mapped_tx <- AnnotationDbi::select(txdb_mm39, keys = keys_ids, columns="TXNAME", keytype="GENEID")
+
+length(unique(mapped_tx$TXNAME))
+
+gene_list <- transcriptsBy(x = txdb_mm39, by = "gene")
+gene_exons <- exonicParts(txdb = txdb_mm39,
+                            linked.to.single.gene.only = TRUE)
+
+# gene_exons <- exons(x = txdb_mm39)
+
+found_exons <- gene_exons[sapply(gene_exons$tx_name %in%
+                                        mapped_tx$TXNAME, any)]
+
+gene_granges <- gene_list[names(gene_list) %in% keys_ids]
+
+prom_methrix <- methrix::get_region_summary(lima_methrix, found_exons, 
+                                            overlap_type = "any")
+num_m <- prom_methrix[,6:41]
+seq_dt <- prom_methrix[,1:5]
+
+found_info <- found_exons[seq_dt$rid]
+
+# matched_genes <- sapply(found_info$tx_name, function(x){
+#     unique(mapped_tx$GENEID[mapped_tx$TXNAME == x[[1]] &
+#                                 !is.na(mapped_tx$TXNAME)])
+# })
+# seq_dt$geneID <- matched_genes
+seq_dt$geneID <- found_info$gene_id
+
+# which(lengths(matched_genes) != 1)
+
+colnames(lima_methrix) <- gsub("X652C", "X642C", colnames(lima_methrix))
+colnames(num_m) <- gsub("X652C", "X642C", colnames(num_m))
+
+outlier_samples <- c("X670E", "X594C")
+
+num_m <- as.data.frame(num_m)[,!colnames(num_m) %in% outlier_samples]
+# num_m <- num_m[,intersect(colData(lima_rna_seq)$samplename, colnames(num_m))]
+
+dna_met_exons_exp <- SummarizedExperiment(assays = list("dt1" = num_m), 
+                                        rowData = seq_dt, 
+                                        colData = colData(lima_methrix)[match(colnames(num_m),
+                                                                            colnames(lima_methrix)),])
+
+rm(lima_methrix)
+dna_met_exons_exp <- dna_met_exons_exp[,dna_met_exons_exp$group != "HFE"]
+dna_met_exons_exp
+
+keep_ids <- apply(num_m, 1, function(x){
+    sum(is.na(x)) <= 0.8
+})
+
+dna_met_exons_exp <- dna_met_exons_exp[keep_ids,]
+
+saveRDS(dna_met_exons_exp, "../../outputs/WGB_DNA_Methylation/Test_Exon_DB.rds")
+
+mean_meth <- tapply(X = seq_len(nrow(seq_dt)), INDEX = seq_dt$geneID, function(x){
+    rowMeans(num_m[x,], na.rm = TRUE)
+})
+
+mean_meth_found <- mean_meth[names(mean_meth) %in% 
+                                    rowData(lima_rna_seq)$entrezID]
+mean_meth_not_found <- mean_meth[!names(mean_meth) %in%
+                                    rowData(lima_rna_seq)$entrezID] 
+
+mean_meth_sig <- mean_meth_found[names(mean_meth_found) %in%
+                                     rowData(lima_rna_seq_filt)$entrezID]
+mean_meth_no_sig <- mean_meth_found[!names(mean_meth_found) %in%
+                                        rowData(lima_rna_seq_filt)$entrezID]
+```
+
+
+```{r}
+
+plot_dt <- rbind(data.frame("mean_methylation" = unlist(mean_meth),
+                      "group" = "All Genes"),
+                 data.frame("mean_methylation" = unlist(mean_meth_found),
+                      "group" = "Expressed"),
+                 data.frame("mean_methylation" = unlist(mean_meth_not_found),
+                      "group" = "Not Expressed"),
+                 data.frame("mean_methylation" = unlist(mean_meth_sig),
+                      "group" = "Expressed Significant"),
+                 data.frame("mean_methylation" = unlist(mean_meth_no_sig),
+                      "group" = "Expressed Not Significant"))
+library(ggplot2)
+p1 <- ggplot(plot_dt) + 
+    geom_violin(aes(x = group, y = mean_methylation)) + 
+    geom_boxplot(aes(x = group, y = mean_methylation), width = 0.05) +
+    theme_minimal() + theme(axis.text.x = element_text(size = 7)) + 
+    xlab(NULL) + ylab("exons mean methylation")
+p1
+ggsave(filename = "../../outputs/Paper_Figures/figure_7_exons.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_7_exons.png", plot = p1)
+```
+
+### Exon gene correlations
+
+```{r}
+intersect_samples <- intersect(colnames(lima_rna_seq_filt), colnames(num_m))
+
+assayNames(lima_rna_seq_filt) <- "dt1"
+corr_vect <- c("pearson", "spearman")
+
+# test <- lapply(rownames(lima_rna_seq_filt), function(gene_id){
+#     rna_seq_gene <- lima_rna_seq_filt[gene_id,]
+#     
+#     entrez_id <- rowData(rna_seq_gene)$entrezID
+#     if(is.na(entrez_id)){return(NULL)}
+#     dna_met_exons_exp[rowData(dna_met_exons_exp)$geneID == entrez_id,]
+# })
+
+corr_dt_list_exons <- lapply(corr_vect, function(corr_name){
+    
+    list_prom <- lapply(rownames(lima_rna_seq_filt), function(gene_id){
+        rna_seq_gene <- lima_rna_seq_filt[gene_id,]
+        
+        entrez_id <- rowData(rna_seq_gene)$entrezID
+        if(is.na(entrez_id)){return(NULL)}
+        own_dmrs <- dna_met_exons_exp[rowData(dna_met_exons_exp)$geneID == entrez_id,]
+        if(!nrow(own_dmrs)){return(NULL)}
+        
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene[,intersect_samples], 
+                                            experiment2 = own_dmrs[,intersect_samples],
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE, 
+                                            verbose = FALSE)
+    })
+    do.call(rbind, list_prom)
+})
+names(corr_dt_list_exons) <- corr_vect
+
+saveRDS(corr_dt_list_exons, "../../outputs/Multi_Omics_Analysis/test_dmr_exons_cors.rds")
+
+corr_dt_filt_exons <- lapply(corr_dt_list_exons, function(corr_dt){
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt[abs(corr_dt$cor) >= 0.7 & !is.na(corr_dt$cor),]
+})
+
+
+mofa_res_dt <- readRDS("../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/multi_omics_filtered.rds")
+
+dmr_regulated_genes <- mofa_res_dt@ExperimentList$RNA_Sequencing[union(corr_dt_filt_exons$pearson$Var1,
+                                                            corr_dt_filt_exons$spearman$Var1),]
+
+factor_vect <- c("Factor_1", "Factor_2", "No factor")
+
+mofa_factor_genes <- lapply(factor_vect, function(factor_id){
+    
+    gene_rd <- rowData(mofa_res_dt[["RNA_Sequencing"]])
+    
+    if(factor_id == "No factor"){
+        return(rownames(gene_rd)[!gene_rd[["Factor_1_weights_sig"]] & 
+                                     !gene_rd[["Factor_2_weights_sig"]]])
+    } else{
+        return(rownames(gene_rd)[gene_rd[[paste0(factor_id, "_weights_sig")]]])    
+    }
+})
+names(mofa_factor_genes) <- factor_vect
+```
+
+```{r}
+group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(mofa_res_dt$group))), 
+                                             name = "Set2")
+names(group_color_dict) <- levels(droplevels(mofa_res_dt$group))
+
+lapply(names(mofa_factor_genes), function(factor_id){
+    pdf(paste0("../../outputs/Multi_Omics_Analysis/gene_dmr_correlations_test/",
+                "dmrs_dmr_regulated_exons_", factor_id, ".pdf"))
+    factor_gene_ids <- mofa_factor_genes[[factor_id]]
+    plot_exp_genes <- rownames(dmr_regulated_genes)[rownames(dmr_regulated_genes) %in%
+                                                        factor_gene_ids]
+    
+    found_dmrs <- sapply(plot_exp_genes, function(x){
+        union(corr_dt_filt_exons$pearson$Var2[corr_dt_filt_exons$pearson$Var1 == x], 
+                  corr_dt_filt_exons$spearman$Var2[corr_dt_filt_exons$spearman$Var1 == x])
+    })
+    lapply(names(found_dmrs), function(gene_id){
+        dmr_ids <- found_dmrs[[gene_id]]
+        found_dmrs_exp <- dna_met_exons_exp[dmr_ids,]
+
+        lapply(rownames(found_dmrs_exp), function(x){
+            plot_dt <- as.data.frame(cbind(t(assay(found_dmrs_exp[x,])),
+                                        colData(found_dmrs_exp)["group"]))
+            colnames(plot_dt) <- c("DMR", "group")
+            
+            # plot_dt_gfcv <- cbind(t(assay(claudia_gfcv_dt[x,])), colData(claudia_gfcv_dt)["group"])
+            p1 <- ggplot(plot_dt) + geom_boxplot(aes(x = group, y = DMR, fill = group)) + 
+                theme_minimal() + scale_fill_manual(values = group_color_dict) + 
+                ggtitle(paste(gene_id, "promotor"))
+            # p2 <- ggplot(plot_dt_gfcv) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+            #     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+            print(p1)
+            # print(p2)
+            
+            return(NULL)
+        })
+    })
+    dev.off()
+
+    return(NULL)
+})
+
+```
+
+```{r}
+lapply(names(mofa_factor_genes), function(factor_id){
+    pdf(paste0("../../outputs/Multi_Omics_Analysis/gene_dmr_correlations_test/",
+                "genes_dmr_regulated_exons_", factor_id, ".pdf"))
+    factor_gene_ids <- mofa_factor_genes[[factor_id]]
+    plot_exp_genes <- dmr_regulated_genes[rownames(dmr_regulated_genes) %in% 
+                                                factor_gene_ids]
+    lapply(rownames(plot_exp_genes), function(x){
+
+        plot_dt <- cbind(t(assay(plot_exp_genes[x,])), colData(plot_exp_genes)["group"])
+    
+        # plot_dt_gfcv <- cbind(t(assay(claudia_gfcv_dt[x,])), colData(claudia_gfcv_dt)["group"])
+        
+        p1 <- ggplot(plot_dt) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+            theme_minimal() + scale_fill_manual(values = group_color_dict)
+        # p2 <- ggplot(plot_dt_gfcv) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+        #     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+        print(p1)
+        # print(p2)
+        
+        return(NULL)
+    })
+    dev.off()
+
+    return(NULL)
+})
+```
+
+```{r}
+dna_met_exons_exp <- readRDS( "../../outputs/WGB_DNA_Methylation/Test_Exon_DB.rds")
+dna_met_introns_exp <- readRDS( "../../outputs/WGB_DNA_Methylation/Test_Introns_DB.rds")
+dna_met_prom_exp <- readRDS( "../../outputs/WGB_DNA_Methylation/Test_Promotors_DB.rds")
+
+
+
+```
+
+
+## DMR regulated tests
+
+```{r}
+dmr_regulated <- unique(c(corr_dt_filt$pearson$Var1, 
+                          corr_dt_filt$spearman$Var1,
+                          corr_dt_filt_exons$pearson$Var1, 
+                          corr_dt_filt_exons$spearman$Var1,
+                          corr_dt_filt_intron$pearson$Var1, 
+                          corr_dt_filt_intron$spearman$Var1)) 
+dmr_regulated
+```
+
+```{r}
+# length(intersect(dmr_regulated, f1_vars_mofa))
+# length(intersect(dmr_regulated, f2_vars_mofa))
+# 
+# 
+# length(intersect(dmr_regulated, f1_vars))
+# length(intersect(dmr_regulated, f2_vars))
+```
+
+
+```{r}
+sum(rownames(lima_multi_exp[["RNA_Sequencing"]]) %in% dmr_regulated)
+dmr_regulated
+
+
+dmr_regulated_exp <- mofa_res_dt[["RNA_Sequencing"]][as.character(dmr_regulated),]
+View(as.data.frame(rowData(dmr_regulated_exp)))
+```
+
+## DMR regulated factor enrichments
+
+```{r}
+library(clusterProfiler)
+kegg_db_enrich_path <- paste0(params$output_dir, "kegg_enrich_db_red.rds")
+kegg_db_list <- readRDS(kegg_db_enrich_path)
+```
+
+### DMR regulated KEGG enrich 
+
+
+
+```{r}
+num_factors <- 2
+expr_list <- lapply(seq_len(num_factors), function(factor_id){
+    factor_expr <- paste0("Factor_", factor_id, "_weights_sig")
+    
+    list("All Weights" = as.expression(factor_expr),
+         "Positive Weights" = as.expression(paste0(factor_expr, " & Factor_", 
+                                                   factor_id, "_weights > 0")),
+         "Negative Weights" = as.expression(paste0(factor_expr, " & Factor_", 
+                                                   factor_id, "_weights < 0")))
+})
+names(expr_list) <- paste0("Factor_", seq_len(num_factors))
+
+enrich_exp_list <- lapply(expr_list, function(factor_expr){
+    range_dt <- rowData(experiments(mofa_res_dt)$RNA_Sequencing)
+    lapply(factor_expr, function(expr_c){
+        range_dt[eval(expr = parse(text = expr_c), 
+                      envir = as.data.frame(range_dt)),]
+    })
+})
+```
+
+
+```{r}
+dmr_regulated_kegg_enrich <- lapply(list(dmr_regulated), function(gene_ids){
+    entrez_ids <- mapIds(x = org.Mm.eg.db, keys = as.character(gene_ids), 
+                         column = "ENTREZID", keytype = "ENSEMBL")
+    enrich_res <- enricher(gene = entrez_ids,
+                            TERM2GENE = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",], 
+                            TERM2NAME =  kegg_db_list$term2name,
+                            universe = NULL, maxGSSize = 500)
+    if(is.null(enrich_res) || nrow(enrich_res@result) == 0){return(NULL)}
+    enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+    enrich_res
+})
+
+dmr_regulated_factor_kegg_enrich <- lapply(enrich_exp_list, function(factor_dt){
+    lapply(factor_dt, function(weight_dt){
+        entrez_ids <- rownames(weight_dt)[rownames(weight_dt) %in% 
+                                            dmr_regulated]
+
+        entrez_ids <- mapIds(x = org.Mm.eg.db, keys = entrez_ids, 
+                             column = "ENTREZID", keytype = "ENSEMBL")
+        enrich_res <- enricher(gene = entrez_ids,
+                                TERM2GENE = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",], 
+                                TERM2NAME =  kegg_db_list$term2name,
+                                universe = NULL, maxGSSize = 500)
+        if(is.null(enrich_res) || nrow(enrich_res@result) == 0){return(NULL)}
+        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+        enrich_res
+    })
+})
+
+sum(dmr_regulated %in% rownames(enrich_exp_list$Factor_1$`All Weights`))
+sum(dmr_regulated %in% rownames(enrich_exp_list$Factor_2$`All Weights`))
+```
+
+
+
+### Biochemically related metabolites DMR regulated enrich
+
+```{r}
+chebi_filt <- readRDS("../../outputs/Multi_Omics_Analysis/chebi_filt.rds")
+term2gene_filt <- chebi_filt$term2gene
+term2name_filt <- chebi_filt$term2name
+term2kegg_filt <- chebi_filt$term2kegg
+
+multi_omics_raw <- readRDS("../../outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_exp_lima.rds")
+```
+
+```{r}
+gene_enrich_list_all_dmrreg <- list("All_DMR_Regulated" = rowData(mofa_res_dt[["RNA_Sequencing"]])$symbol[rownames(mofa_res_dt[["RNA_Sequencing"]]) %in% 
+                                                                             dmr_regulated])
+
+chebi_enrich_list_filt_alluni <- lapply(gene_enrich_list_all_dmrreg, function(factor_dt){
+    enrich_res <- enricher(gene = factor_dt, pvalueCutoff = 0.05, 
+            pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
+            universe = NULL, maxGSSize = Inf)
+    enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+    enrich_res
+})
+
+chebi_enrich_list_filt <- lapply(gene_enrich_list_all_dmrreg, function(factor_dt){
+    enrich_res <- enricher(gene = factor_dt, pvalueCutoff = 0.05, 
+            pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
+            universe = rowData(multi_omics_raw[["RNA_Sequencing"]])$symbol, maxGSSize = Inf)
+    enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+    enrich_res
+})
+```
+
+### Biochemically related metabolites DMR regulated enrich factor
+
+```{r}
+gene_enrich_list_dmrreg <- lapply(enrich_exp_list, function(factor_dt){
+    lapply(factor_dt, function(weight_dt){
+        weight_dt <- weight_dt[rownames(weight_dt) %in% dmr_regulated,]
+        weight_dt$symbol[!is.na(weight_dt$symbol)]
+    })
+})
+library(clusterProfiler)
+chebi_enrich_list_dmrreg <- lapply(gene_enrich_list_dmrreg, function(factor_dt){
+    lapply(factor_dt, function(weight_dt){
+        
+        enrich_res <- enricher(gene = weight_dt, pvalueCutoff = 0.05, 
+                pAdjustMethod = "fdr", 
+                TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt, 
+                universe = rowData(multi_omics_raw[["RNA_Sequencing"]])$symbol, maxGSSize = Inf)
+        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+        enrich_res
+    })
+})
+
+chebi_enrich_list_dmrreg_alluni <- lapply(gene_enrich_list_dmrreg, function(factor_dt){
+    lapply(factor_dt, function(weight_dt){
+        
+        enrich_res <- enricher(gene = weight_dt, pvalueCutoff = 0.05, 
+                pAdjustMethod = "fdr", 
+                TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt, 
+                universe = NULL, maxGSSize = Inf)
+        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+        enrich_res
+    })
+})
+
+metabo_rd <- rowData(multi_omics[["Untargeted_Metabolomics"]])
+
+
+lapply(names(chebi_enrich_list_dmrreg), function(factor_id){
+    factor_dt  <- chebi_enrich_list_dmrreg[[factor_id]]
+    
+    lapply(names(factor_dt), function(weight_id){
+        weight_dt <- factor_dt[[weight_id]]
+        
+        if(!nrow(weight_dt)){return(NULL)}
+        chebi_ids <- weight_dt@result$ID[weight_dt@result$p.adjust <= 0.05]
+        found_kegg_ids <- term2kegg_filt$kegg_id[match(chebi_ids, term2kegg_filt$term)]
+        
+        compound_names <- term2name_filt$name[match(chebi_ids, term2name_filt$term)]
+        names(compound_names) <- found_kegg_ids
+        
+        pdf(paste0("../../outputs/Multi_Omics_Analysis/", 
+                    factor_id, "_", weight_id, "_feat.pdf"))
+        
+        lapply(found_kegg_ids, function(kegg_id){
+            found_features <- multi_omics[["Untargeted_Metabolomics"]][grep(kegg_id,
+                                                                metabo_rd$compounds_kegg_merged),]
+            lapply(rownames(found_features), function(feat_id){
+                exp_dt <- found_features[feat_id,]
+                plot_dt <- data.frame("abundance" = as.numeric(assay(exp_dt)), 
+                                    "group" = exp_dt$group)
+                p1 <- ggplot(plot_dt) + 
+                        geom_boxplot(aes(x = group, y = abundance, 
+                                        fill = group)) +    
+                        theme_minimal() + 
+                        scale_fill_manual(values = group_color_dict) + 
+                        ggtitle(paste(feat_id, compound_names[kegg_id], "\n", 
+                                    rowData(exp_dt)$compounds_merged_readable, 
+                                    "\n", rowData(exp_dt)$formula, "\n", 
+                                    rowData(exp_dt)$str_row_ion)) +
+                        xlab("") + ylab("Scaled Abundance")
+                print(p1)
+                return(NULL)
+            })
+            return(NULL)
+        })
+        dev.off()
+        return(NULL)
+    })
+    return(NULL)
+})
+
+```
+
+```{r}
+omic_ids <- names(multi_omics_full)[grep("Targeted_Metabolomics", names(multi_omics_full))]
+
+lapply(omic_ids, function(omic_name){
+    omic_dt <- multi_omics_full[[omic_name]]
+    
+    pdf(paste0("../../outputs/Paper_Figures/", omic_name, "_all_metab.pdf"))
+    lapply(rownames(omic_dt), function(met_name){
+        exp_dt <- omic_dt[met_name,]
+        plot_dt <- data.frame("abundance" = as.numeric(assay(exp_dt)), 
+                            "group" = exp_dt$group)
+        p1 <- ggplot(plot_dt) + 
+                geom_boxplot(aes(x = group, y = abundance, 
+                                fill = group)) +    
+                theme_minimal() + 
+                scale_fill_manual(values = group_color_dict) + 
+                ggtitle(paste(omic_name, met_name)) +
+                xlab("") + ylab("Scaled Abundance")
+        print(p1)
+        return(NULL)
+    })    
+    dev.off()
+    return(NULL)
+})
+```
+
+## Other code
+
+```{r}
+matched_cd <- colData(lima_rna_seq)[match(colnames(num_m), colnames(lima_rna_seq)),]
+
+
+group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(lima_rna_seq_filt$group))), 
+                                             name = "Set2")
+names(group_color_dict) <- levels(droplevels(lima_rna_seq_filt$group))
+
+
+plot_full_dt <- lapply(levels(droplevels(matched_cd$group)), function(group_id){
+    
+    group_dt <- num_m[,matched_cd$group == group_id]
+    
+    mean_meth <- tapply(X = seq_len(nrow(seq_dt)), INDEX = seq_dt$geneID, 
+                        function(x){rowMeans(group_dt[x,], na.rm = TRUE)})
+    
+    mean_meth_found <- mean_meth[names(mean_meth) %in% 
+                                        rowData(lima_rna_seq)$entrezID]
+    mean_meth_not_found <- mean_meth[!names(mean_meth) %in%
+                                        rowData(lima_rna_seq)$entrezID] 
+    
+    mean_meth_sig <- mean_meth_found[names(mean_meth_found) %in%
+                                         rowData(lima_rna_seq_filt)$entrezID]
+    mean_meth_no_sig <- mean_meth_found[!names(mean_meth_found) %in%
+                                            rowData(lima_rna_seq_filt)$entrezID]
+    
+    plot_dt <- rbind(data.frame("mean_methylation" = unlist(mean_meth),
+                          "group" = "All Genes"),
+                     data.frame("mean_methylation" = unlist(mean_meth_found),
+                          "group" = "Expressed"),
+                     data.frame("mean_methylation" = unlist(mean_meth_not_found),
+                          "group" = "Not Expressed"),
+                     data.frame("mean_methylation" = unlist(mean_meth_sig),
+                          "group" = "Expressed Significant"),
+                     data.frame("mean_methylation" = unlist(mean_meth_no_sig),
+                          "group" = "Expressed Not Significant"))
+    plot_dt$type <- group_id
+    plot_dt
+    
+})
+plot_full_dt <- do.call(rbind, plot_full_dt)
+
+kruskal.test(plot_full_dt$mean_methylation, paste0(plot_full_dt$type, plot_full_dt$group))
+DescTools::ConoverTest(x = plot_full_dt$mean_methylation, 
+                        g = paste0(plot_full_dt$type, plot_full_dt$group))
+
+
+p1 <- ggplot(plot_full_dt) + 
+    geom_violin(aes(x = group, y = mean_methylation, fill = type)) +
+    # geom_boxplot(aes(x = group, y = mean_methylation, fill = type)) +
+    scale_fill_manual(values = group_color_dict) + 
+    theme_minimal() + theme(axis.text.x = element_text(size = 7)) +
+    xlab(NULL) + ylab("exons mean methylation") + 
+    theme(legend.title = element_blank())
+p1
+ggsave(filename = "../../outputs/Paper_Figures/figure_7_b.svg", plot = p1,
+        fix_text_size = FALSE)
+
+ggsave(filename = "../../outputs/Paper_Figures/figure_7_b.png", plot = p1, width = 8, height = 4)
+```
+
+```{r}
+source("../Utility_Functions/utilities.R")
+
+col_dt <- colData(lima_dna_met)
+rownames(col_dt) <- gsub("X652C", "X642C", rownames(col_dt))
+
+
+heatMapFun(dt_list =  as.matrix(t(scale(t(num_m))))[1:100,], metadata = as.data.frame(col_dt), 
+           stratificationVar = "group", 
+           clustering_method = "complete", plot_name = "DNA Methylation",
+           clustering_distance_rows = "euclidean", 
+           show_colnames = FALSE)
+```
+
+
+## Test 0.05
+
+```{r}
+dss_005_test <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_005/WGB_DNA_Methylation_exp_lima.rds")
+```
+
+
+### Promotor gene correlations
+
+```{r}
+intersect_samples <- intersect(colnames(lima_rna_seq_filt), 
+                                colnames(dss_005_test))
+assayNames(dss_005_test) <- "dt1"
+
+assayNames(lima_rna_seq_filt) <- "dt1"
+corr_vect <- c("pearson", "spearman")
+
+corr_dt_list_dss <- lapply(corr_vect, function(corr_name){
+    
+    list_prom <- lapply(rownames(lima_rna_seq_filt), function(gene_id){
+        rna_seq_gene <- lima_rna_seq_filt[gene_id,]
+        entrez_id <- rowData(rna_seq_gene)$entrezID
+        if(is.na(entrez_id)){return(NULL)}
+        own_dmrs <- dss_005_test[rowData(dss_005_test)$geneId == entrez_id,]
+        print(gene_id)
+        if(!nrow(own_dmrs)){return(NULL)}
+        
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene[,intersect_samples], 
+                                            experiment2 = own_dmrs[,intersect_samples],
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE, 
+                                            verbose = FALSE)
+    })
+    do.call(rbind, list_prom)
+})
+names(corr_dt_list_dss) <- corr_vect
+
+saveRDS(corr_dt_list_dss, "../../outputs/Multi_Omics_Analysis/test_dmr_cors_dss.rds")
+```
+
+
+```{r}
+corr_dt_filt_dss <- readRDS("../../outputs/Multi_Omics_Analysis/test_dmr_cors.rds")
+
+corr_dt_filt_dss <- lapply(corr_dt_list, function(corr_dt){
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt[abs(corr_dt$cor) >= 0.7,]
+})
+
+
+mofa_res_dt <- readRDS("../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/multi_omics_filtered.rds")
+
+dmr_regulated_genes <- mofa_res_dt@ExperimentList$RNA_Sequencing[union(corr_dt_filt_dss$pearson$Var1,
+                                                            corr_dt_filt_dss$spearman$Var1),]
+
+
+factor_vect <- c("Factor_1", "Factor_2", "No factor")
+
+mofa_factor_genes <- lapply(factor_vect, function(factor_id){
+    
+    gene_rd <- rowData(mofa_res_dt[["RNA_Sequencing"]])
+    
+    if(factor_id == "No factor"){
+        return(rownames(gene_rd)[!gene_rd[["Factor_1_weights_sig"]] & 
+                                     !gene_rd[["Factor_2_weights_sig"]]])
+    } else{
+        return(rownames(gene_rd)[gene_rd[[paste0(factor_id, "_weights_sig")]]])    
+    }
+})
+names(mofa_factor_genes) <- factor_vect
+
+
+f1_vars <- rownames(mofa_res_dt[["RNA_Sequencing"]])[abs(rowData(mofa_res_dt[["RNA_Sequencing"]])[,"Factor_1_weights"]) > 0.4]
+
+f2_vars <- rownames(mofa_res_dt[["RNA_Sequencing"]])[abs(rowData(mofa_res_dt[["RNA_Sequencing"]])[,"Factor_2_weights"]) > 0.5]
+
+
+intersect(f1_vars, f2_vars)
+# 
+# pheatmap::pheatmap(as.matrix(assay(mofa_res_dt[["RNA_Sequencing"]][f1_vars,])), show_rownames = FALSE)
+# 
+# pheatmap::pheatmap(as.matrix(assay(mofa_res_dt[["RNA_Sequencing"]][f2_vars,])), show_rownames = FALSE)
+# 
+# 
+f1_vars_mofa <- rownames(mofa_res_dt[["RNA_Sequencing"]])[rowData(mofa_res_dt[["RNA_Sequencing"]])$Factor_1_weights_sig]
+
+f2_vars_mofa <- rownames(mofa_res_dt[["RNA_Sequencing"]])[rowData(mofa_res_dt[["RNA_Sequencing"]])$Factor_2_weights_sig]
+# 
+# pheatmap::pheatmap(as.matrix(assay(mofa_res_dt[["RNA_Sequencing"]][f1_vars_mofa,])), show_rownames = FALSE)
+# 
+# pheatmap::pheatmap(as.matrix(assay(mofa_res_dt[["RNA_Sequencing"]][f2_vars_mofa,])), show_rownames = FALSE)
+# 
+# length(intersect(f1_vars, f1_vars_mofa))
+# length(intersect(f2_vars, f2_vars_mofa))
+
+length(intersect(c(corr_dt_filt_dss$pearson$Var1, 
+                   corr_dt_filt_dss$spearman$Var1), f1_vars_mofa))
+
+length(intersect(c(corr_dt_filt_dss$pearson$Var1, 
+                   corr_dt_filt_dss$spearman$Var1), f2_vars_mofa))
+
+length(intersect(c(corr_dt_filt_dss$pearson$Var1, 
+                   corr_dt_filt_dss$spearman$Var1), f1_vars))
+
+length(intersect(c(corr_dt_filt_dss$pearson$Var1, 
+                   corr_dt_filt_dss$spearman$Var1), f2_vars))
+```
+
+```{r}
+group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(mofa_res_dt$group))), 
+                                             name = "Set2")
+names(group_color_dict) <- levels(droplevels(mofa_res_dt$group))
+
+lapply(names(mofa_factor_genes), function(factor_id){
+    pdf(paste0("../../outputs/Multi_Omics_Analysis/gene_dmr_correlations_test/",
+                "dmrs_dmr_regulated_dss_", factor_id, ".pdf"))
+    factor_gene_ids <- mofa_factor_genes[[factor_id]]
+    plot_exp_genes <- rownames(dmr_regulated_genes)[rownames(dmr_regulated_genes) %in%
+                                                        factor_gene_ids]
+    
+    found_dmrs <- sapply(plot_exp_genes, function(x){
+        union(corr_dt_filt_dss$pearson$Var2[corr_dt_filt_dss$pearson$Var1 == x], 
+                  corr_dt_filt_dss$spearman$Var2[corr_dt_filt_dss$spearman$Var1 == x])
+    })
+    lapply(names(found_dmrs), function(gene_id){
+        dmr_ids <- found_dmrs[[gene_id]]
+        found_dmrs_exp <- dss_005_test[dmr_ids,]
+
+        lapply(rownames(found_dmrs_exp), function(x){
+            plot_dt <- as.data.frame(cbind(t(assay(found_dmrs_exp[x,])),
+                                        colData(found_dmrs_exp)["group"]))
+            colnames(plot_dt) <- c("DMR", "group")
+            
+            # plot_dt_gfcv <- cbind(t(assay(claudia_gfcv_dt[x,])), colData(claudia_gfcv_dt)["group"])
+            p1 <- ggplot(plot_dt) + geom_boxplot(aes(x = group, y = DMR, fill = group)) + 
+                theme_minimal() + scale_fill_manual(values = group_color_dict) + 
+                ggtitle(paste(gene_id, "promotor"))
+            # p2 <- ggplot(plot_dt_gfcv) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+            #     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+            print(p1)
+            # print(p2)
+            
+            return(NULL)
+        })
+    })
+    dev.off()
+
+    return(NULL)
+})
+
+```
+
+```{r}
+lapply(names(mofa_factor_genes), function(factor_id){
+    pdf(paste0("../../outputs/Multi_Omics_Analysis/gene_dmr_correlations_test/",
+                "genes_dmr_regulated_dss_", factor_id, ".pdf"))
+    factor_gene_ids <- mofa_factor_genes[[factor_id]]
+    plot_exp_genes <- dmr_regulated_genes[rownames(dmr_regulated_genes) %in% 
+                                                factor_gene_ids]
+    lapply(rownames(plot_exp_genes), function(x){
+
+        plot_dt <- cbind(t(assay(plot_exp_genes[x,])), colData(plot_exp_genes)["group"])
+    
+        # plot_dt_gfcv <- cbind(t(assay(claudia_gfcv_dt[x,])), colData(claudia_gfcv_dt)["group"])
+        
+        p1 <- ggplot(plot_dt) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+            theme_minimal() + scale_fill_manual(values = group_color_dict)
+        # p2 <- ggplot(plot_dt_gfcv) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+        #     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+        print(p1)
+        # print(p2)
+        
+        return(NULL)
+    })
+    dev.off()
+
+    return(NULL)
+})
+```
+
+
+## Test regulatory elements
+
+```{r}
+emars_gff <- ape::read.gff(file = "../../inputs/WGB_DNA_Methylation/Mus_musculus_Regulatory_elements/Mus_musculus.GRCm39.EMARs.v113.gff")
+
+motif_gff <- ape::read.gff(file = "../../inputs/WGB_DNA_Methylation/Mus_musculus_Regulatory_elements/Mus_musculus.GRCm39.motif_features.v113.gff3")
+
+reg_features_gff <- ape::read.gff(file = "../../inputs/WGB_DNA_Methylation/Mus_musculus_Regulatory_elements/Mus_musculus.GRCm39.regulatory_features.v113.gff3")
+
+reg_activity_gff <- read.table(file = "../../inputs/WGB_DNA_Methylation/Mus_musculus_Regulatory_elements/Mus_musculus.GRCm39.regulatory_activity.v113.tsv", header = TRUE, sep = "\t")
+
+
+emars_ranges <- GenomicRanges::GRanges(paste0("chr", emars_gff$seqid), 
+                                       ranges = IRanges(emars_gff$start, emars_gff$end))
+
+motif_ranges <- GenomicRanges::GRanges(paste0("chr", motif_gff$seqid),
+                                       ranges = IRanges(motif_gff$start, motif_gff$end))
+
+reg_features_ranges <- GenomicRanges::GRanges(paste0("chr", reg_features_gff$seqid), 
+                                       ranges = IRanges(reg_features_gff$start, reg_features_gff$end, names = ))
+
+
+emars_nov <- emars_gff[!(seq_len(nrow(emars_gff)) %in% 
+                                findOverlaps(emars_ranges, reg_features_ranges)@from) & 
+                           !((seq_len(nrow(emars_gff)) %in% 
+                                findOverlaps(emars_ranges, motif_ranges)@from)),]
+
+motif_nov <- motif_gff[!(seq_len(nrow(motif_gff)) %in% 
+                            findOverlaps(motif_ranges, reg_features_ranges)@from),]
+```
+
+
+```{r}
+regulatory_merge <- rbind(emars_nov, motif_nov, reg_features_gff)
+
+regulatory_merge$ID <- gsub("ID=|;.*", "", regulatory_merge$attributes)
+rownames(regulatory_merge) <- regulatory_merge$ID
+
+regulatory_merge$old_seq_id <- regulatory_merge$seqid
+
+chr_idx <- grep("^[[:digit:]]{1,2}|^[XY]{1,1}", levels(regulatory_merge$seqid))
+
+levels(regulatory_merge$seqid)[chr_idx] <- paste0("chr", levels(regulatory_merge$seqid)[chr_idx])
+
+regulatory_merge_gr <- GenomicRanges::makeGRangesFromDataFrame(regulatory_merge,
+                                                            keep.extra.columns = TRUE)
+
+activated_features <- apply(reg_activity_gff[,grep("liver", colnames(reg_activity_gff))], 1, function(x){
+    any(x == "ACTIVE")
+})
+liver_activity_features <- reg_activity_gff$feature_id[activated_features]
+
+merged_activity_features <- rep(NA, length(regulatory_merge_gr$type)) 
+    
+merged_activity_features[regulatory_merge_gr$type %in% names(table(reg_activity_gff$feature_type)) & regulatory_merge_gr$ID %in% liver_activity_features] <- "ACTIVE"
+
+merged_activity_features[regulatory_merge_gr$type %in% names(table(reg_activity_gff$feature_type)) & !(regulatory_merge_gr$ID %in% liver_activity_features)] <- "INACTIVE"
+
+merged_activity_features[!(regulatory_merge_gr$type %in% names(table(reg_activity_gff$feature_type)))] <- "UNKNOWN"
+
+regulatory_merge_gr$activated_liver <- merged_activity_features
+
+regulatory_merge_gr$gene_id_found <- sapply(regulatory_merge_gr$attributes, function(x){
+    split_attr <- strsplit(x, ";")[[1]]
+    
+    found_gene <- grepl("gene_id", split_attr)
+    if(any(found_gene)){
+        return(gsub("gene_id=", "", split_attr[found_gene]))
+    } else{return(NA)}
+})
+```
+
+
+```{r}
+overlapping_features <- findOverlaps(regulatory_merge_gr, ignore.strand = TRUE)
+
+overlap_table <- table(overlapping_features@from)
+
+non_overlapping_ids <- names(regulatory_merge_gr[as.numeric(names(which(overlap_table == 1)))])
+
+
+overlapping_filt_ids <- lapply(as.numeric(names(which(overlap_table > 1))), function(reg_id){
+    if((reg_id %% 10000) == 0){print(reg_id)}
+    
+    found_overlap <- overlapping_features@to[overlapping_features@from == reg_id]
+    if(length(found_overlap) == 1){
+        return(regulatory_merge_gr[found_overlap])
+    } else{
+        overlap_rg <- regulatory_merge_gr[found_overlap]
+        return(overlap_rg[which.max(width(overlap_rg))])        
+    }
+})
+overlapping_filt_ids <- sapply(overlapping_filt_ids, names)
+
+length(unique(overlapping_filt_ids))
+
+regulatory_merge_gr_filt <- regulatory_merge_gr[c(non_overlapping_ids, unique(overlapping_filt_ids))]
+```
+
+
+```{r}
+library(TxDb.Mmusculus.UCSC.mm39.knownGene)
+txdb <- base::get("TxDb.Mmusculus.UCSC.mm39.knownGene")
+
+library(GenomicRanges)
+library(AnnotationDbi)
+library(ChIPseeker)
+peak_annotation <- as.GRanges(annotatePeak(peak = regulatory_merge_gr_filt, 
+                                            TxDb = txdb, verbose = FALSE))
+
+library(org.Mm.eg.db)
+peak_annotation$geneSymbol <- mapIds(x = org.Mm.eg.db, 
+                                    keys = mcols(peak_annotation)$geneId, 
+                                    column = "SYMBOL", 
+                                    keytype = "ENTREZID")
+
+peak_annotation$geneName <- mapIds(x = org.Mm.eg.db, 
+                                    keys = mcols(peak_annotation)$geneId, 
+                                    column = "GENENAME", 
+                                    keytype = "ENTREZID")
+
+peak_annotation$ensemblId <- mapIds(x = org.Mm.eg.db, 
+                                    keys = mcols(peak_annotation)$geneId, 
+                                    column = "ENSEMBL", 
+                                    keytype = "ENTREZID")
+
+peak_annotation$gene_id_annotation <- mcols(peak_annotation)$geneId
+
+
+
+peak_annotation$ensembl_merge <- rep(NA, length(peak_annotation))
+    
+peak_annotation$ensembl_merge[is.na(peak_annotation$gene_id_found)] <- peak_annotation$ensemblId[is.na(peak_annotation$gene_id_found)]
+
+peak_annotation$ensembl_merge[is.na(peak_annotation$ensemblId)] <- peak_annotation$gene_id_found[is.na(peak_annotation$ensemblId)]
+
+equal_idxs <- peak_annotation$gene_id_found == peak_annotation$ensemblId
+equal_idxs[is.na(equal_idxs)] <- FALSE
+
+peak_annotation$ensembl_merge[equal_idxs] <- peak_annotation$ensemblId[equal_idxs]
+
+no_annotation_ids <- is.na(peak_annotation$gene_id_found) & is.na(peak_annotation$ensemblId)
+
+peak_annotation$ensembl_merge[no_annotation_ids] <- "No annotation"
+sum(is.na(peak_annotation$ensembl_merge))
+
+peak_annotation$ensembl_merge[is.na(peak_annotation$ensembl_merge)] <- sapply(names(peak_annotation[is.na(peak_annotation$ensembl_merge)]), function(x){
+    filt_dt <- peak_annotation[is.na(peak_annotation$ensembl_merge)][x]
+    if(grepl(filt_dt$ensemblId, filt_dt$gene_id_found)){
+        return(filt_dt$ensemblId)
+    } else{
+        return(NA)
+    }
+})
+
+peak_annotation$ensembl_merge[is.na(peak_annotation$ensembl_merge)] <- paste0(peak_annotation[is.na(peak_annotation$ensembl_merge)]$ensemblId, peak_annotation[is.na(peak_annotation$ensembl_merge)]$gene_id_found, collapse = ",") 
+
+
+# all_ensembl <- strsplit(peak_annotation$ensembl_merge, ",")
+
+
+# ensembl <- useEnsembl(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
+# genes_type <- getBM(attributes = c('ensembl_gene_id', "gene_biotype"), 
+#                     filters = 'ensembl_gene_id', values = , 
+#                     mart = ensembl)
+```
+
+### Lima Reg regions
+
+```{r}
+merged_reg_elements_met <- methrix::get_region_summary(lima_methrix,
+                                                    peak_annotation, 
+                                                    overlap_type = "any")
+
+num_m <- merged_reg_elements_met[,6:41]
+seq_dt <- merged_reg_elements_met[,1:5]
+
+reg_ann <- peak_annotation[seq_dt$rid]
+
+colnames(num_m) <- gsub("X652C", "X642C", colnames(num_m))
+colnames(lima_methrix) <- gsub("X652C", "X642C", colnames(lima_methrix))
+
+outlier_samples <- c("X670E", "X594C")
+
+num_m <- as.data.frame(num_m)[,!colnames(num_m) %in% outlier_samples]
+
+found_info <- peak_annotation[seq_dt$rid]
+
+rownames(num_m) <- rownames(elementMetadata(found_info))
+
+elementMetadata(found_info)$n_overlap_CpGs <- seq_dt$n_overlap_CpGs
+elementMetadata(found_info)$gene_id <- seq_dt$n_overlap_CpGs
+
+# num_m <- num_m[,intersect(colData(lima_rna_seq)$samplename, colnames(num_m))]
+
+merged_reg_elements_exp <- SummarizedExperiment(assays = list("dt1" = num_m), rowRanges = found_info,
+                                        colData = colData(lima_methrix)[match(colnames(num_m),
+                                                                              colnames(lima_methrix)),])
+
+saveRDS(merged_reg_elements_exp, "../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements.rds")
+```
+
+```{r}
+rm(lima_methrix)
+merged_reg_elements_exp <- readRDS("../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements.rds")
+merged_reg_elements_exp <- merged_reg_elements_exp[,merged_reg_elements_exp$group != "HFE"]
+merged_reg_elements_exp$group <- droplevels(merged_reg_elements_exp$group)
+
+keep_ids <- apply(assay(merged_reg_elements_exp), 1, function(x){
+    sum(is.na(x)) <= 0.8
+})
+
+merged_reg_elements_exp <- merged_reg_elements_exp[keep_ids,]
+
+nrow(dplyr::distinct(assay(merged_reg_elements_exp)))
+nrow(merged_reg_elements_exp)
+
+any(table(findOverlaps(rowRanges(merged_reg_elements_exp))@from) > 1)
+```
+
+```{r}
+comp_names <- apply(t(combn(levels(merged_reg_elements_exp$group), m = 2))[,2:1], 1, 
+                    paste, collapse = "-")
+comp_matrix <- matrix(NA, nrow = length(comp_names), ncol = 2)
+rownames(comp_matrix) <- comp_names
+
+tukey_results <- apply(as.matrix(assay(merged_reg_elements_exp)), 1, function(dt_var){
+    
+    anova_results <- kruskal.test(dt_var, g = merged_reg_elements_exp$group)
+    anova_results <- data.frame("statistic" = anova_results$statistic,
+                                "parameter" = anova_results$parameter,
+                                "p.value" = anova_results$p.value)
+        
+    comp_results <- list("Group_Test" = anova_results)
+    
+    if(!is.na(comp_results$Group_Test$p.value) & comp_results$Group_Test$p.value <= 0.05){
+        comp_results$Pairwise_Tests <- DescTools::ConoverTest(dt_var, 
+                                                            merged_reg_elements_exp$group)[[1]]
+        # comp_results$Pairwise_Tests <- TukeyHSD(anova_results, which = c("group"))$group
+        return(comp_results)
+    } else{
+        comp_results$Pairwise_Tests <- comp_matrix
+        return(comp_results)
+    }
+})
+
+anova_test_results <- lapply(tukey_results, function(ctrs){
+    ctrs$Group_Test
+})
+anova_test_results <- do.call(rbind, anova_test_results)
+    # colnames(anova_test_results)[5] <- c("pvalue")
+anova_test_results$adj.p.value <- p.adjust(anova_test_results$p.value)
+    
+contrasts_results <- lapply(comp_names, function(ctrs_row){
+    ctrs_result_list <- lapply(tukey_results, function(ctrs){
+        ctrs <- ctrs$Pairwise_Tests
+        if(!(ctrs_row %in% rownames(ctrs))){return(rep(NA, 2))}
+        ctrs[ctrs_row,]   
+    })
+    do.call(rbind, ctrs_result_list)
+})
+names(contrasts_results) <- comp_names
+    
+contrasts_results <- lapply(contrasts_results, function(ctrs){
+    ctrs <- as.data.frame(ctrs)
+    colnames(ctrs) <- c("difference", "pvalue")
+    ctrs$adj.p.value <- p.adjust(ctrs[,"pvalue"], method = "fdr")
+    ctrs
+})
+
+contrasts_results$Group_Test <-  anova_test_results    
+contrasts_results <- do.call(cbind, contrasts_results)
+
+rowData(merged_reg_elements_exp) <- cbind(rowData(merged_reg_elements_exp), contrasts_results)
+
+p_val_mat <- contrasts_results[,grep("adj.p.value", colnames(contrasts_results))]
+p_val_mat <- p_val_mat[,grep("HFD|INT|CNT", colnames(p_val_mat))]
+
+keep_dmrs <- rowSums(!is.na(p_val_mat) & p_val_mat <= 0.05) != 0
+
+saveRDS(merged_reg_elements_exp, "../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements.rds")
+
+merged_reg_elements_exp_filt <- merged_reg_elements_exp[keep_dmrs,]
+
+
+```
+
+```{r}
+list_overlaps <- lapply(rownames(lima_rna_seq_filt), function(gene_id){
+    gene_rd <- rowData(lima_rna_seq_filt[gene_id,])
+    
+    start_gene <- as.numeric(gene_rd$start_position) - 1000000
+    end_gene <- as.numeric(gene_rd$end_position) + 1000000
+    
+    if(!is.na(start_gene)){
+        chr_id <- gene_rd$chromosome_id
+        chr_dmrs_id <- as.character(seqnames(rowRanges(merged_reg_elements_exp_filt)))
+        
+        gene_gr <- GRanges(seqnames = chr_id, ranges = IRanges(start = start_gene, 
+                                                               end = end_gene))
+        
+        chr_dmrs <- merged_reg_elements_exp_filt[chr_dmrs_id == chr_id,]
+    
+        dmr_overlap <- findOverlaps(query = gene_gr, rowRanges(chr_dmrs), type = "any")
+        chr_dmrs[dmr_overlap@to,]    
+    } else{
+        return(merged_reg_elements_exp_filt[rowData(merged_reg_elements_exp_filt)$ensemblId       %in%
+                                                gene_id,])    
+    }
+})
+names(list_overlaps) <- rownames(lima_rna_seq_filt)
+```
+
+
+### Regulatory regions correlations
+
+```{r}
+intersect_samples <- intersect(colnames(lima_rna_seq_filt),
+                               colnames(merged_reg_elements_exp_filt))
+
+assayNames(lima_rna_seq_filt) <- "dt1"
+corr_vect <- c("pearson", "spearman")
+
+corr_dt_list_reg_regions_2 <- lapply(corr_vect, function(corr_name){
+    
+    list_prom <- lapply(rownames(lima_rna_seq_filt), function(gene_id){
+        rna_seq_gene <- lima_rna_seq_filt[gene_id,]
+        
+        own_dmrs <- list_overlaps[[gene_id]]
+        # entrez_id <- rownames(rna_seq_gene)
+        # if(is.na(entrez_id)){return(NULL)}
+        
+        if(!nrow(own_dmrs)){return(NULL)}
+        
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene[,intersect_samples], 
+                                            experiment2 = own_dmrs[,intersect_samples],
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE, 
+                                            verbose = FALSE)
+    })
+    do.call(rbind, list_prom)
+})
+
+corr_dt_list_reg_regions_2 <- lapply(corr_dt_list_reg_regions_2, function(x){
+    x$adj.p.value <- p.adjust(x$pval, "fdr")
+    x
+})
+names(corr_dt_list_reg_regions_2) <- corr_vect
+
+saveRDS(corr_dt_list_reg_regions_2, "../../outputs/Multi_Omics_Analysis/test_reg_regions_1MB_cors.rds")
+```
+
+
+```{r}
+ensembl_2_start <- rowData(lima_rna_seq_filt)$start_position
+names(ensembl_2_start) <- rownames(lima_rna_seq_filt)
+
+dmr_2_start <- start(rowRanges(merged_reg_elements_exp_filt))
+names(dmr_2_start) <- rownames(merged_reg_elements_exp_filt)
+
+dmr_2_end <- end(rowRanges(merged_reg_elements_exp_filt))
+names(dmr_2_end) <- rownames(merged_reg_elements_exp_filt)
+
+ensembl_2_chr_gene <- paste0("Chr", rowData(multi_omics[["RNA_Sequencing"]])$chromosome_name) 
+names(ensembl_2_chr_gene) <- rownames(multi_omics[["RNA_Sequencing"]])
+
+corr_dt_list_reg_regions_2 <- lapply(corr_dt_list_reg_regions_2, function(score_dt){
+    gene_tss <- as.numeric(ensembl_2_start[as.character(score_dt$Var1)])
+    dmrs_start <- as.numeric(dmr_2_start[as.character(score_dt$Var2)])
+    dmrs_end <- as.numeric(dmr_2_end[as.character(score_dt$Var2)])
+    tss_dist_dt <- data.frame("start_dist" = abs(gene_tss - dmrs_start), 
+                            "end_dist" = abs(gene_tss - dmrs_end))
+    score_dt$tss_dist <- apply(tss_dist_dt, 1, min)
+    score_dt
+    
+})
+
+corr_dt_list_reg_regions_2_filt <- lapply(corr_dt_list_reg_regions_2, function(score_dt){
+    score_dt[score_dt$adj.p.value <= 0.05 & abs(score_dt$cor) > 0.6,]
+})
+
+cor(abs(corr_dt_list_reg_regions_2$pearson$cor), 
+        corr_dt_list_reg_regions_2$pearson$tss_dist, use = "complete.obs")
+
+cor.test(abs(corr_dt_list_reg_regions_2_filt$pearson$cor), 
+        corr_dt_list_reg_regions_2_filt$pearson$tss_dist, use = "complete.obs")
+
+```
+
+```{r}
+length(unique(corr_dt_list_reg_regions_2_filt$pearson$Var1))
+
+length(unique(corr_dt_list_reg_regions_2_filt$pearson$Var2))
+
+pheatmap::pheatmap(mat = scale(t(as.matrix(assay(merged_reg_elements_exp_filt)))), 
+                    annotation_row = as.data.frame(colData(merged_reg_elements_exp_filt))[,"group",drop = FALSE], 
+                   show_colnames = FALSE)
+
+```
+
+
+```{r}
+merged_reg_elements_exp <- merged_reg_elements_exp[rowData(merged_reg_elements_exp)$ensembl_merge != "No annotation",]
+
+mean_meth_mat <- rowMeans(as.matrix(assay(merged_reg_elements_exp)), na.rm = TRUE) 
+mean_met_dt <- data.frame("Mean_Methylation" = mean_meth_mat, 
+                        "GeneID" = rowData(merged_reg_elements_exp)$ensembl_merge,
+                        "Annotation" = rowData(merged_reg_elements_exp)$annotation)
+
+mean_met_dt$reg_region_type <- sapply(mean_met_dt$Annotation, function(dmr_an){
+    if(grepl("Promoter", dmr_an)){return("Promoter")
+    } else if(grepl("Intron", dmr_an)){return("Intron")
+    } else if(grepl("Exon", dmr_an)){return("Exon")
+    } else if(grepl("Downstream", dmr_an)){return("Downstream")
+    } else if(grepl("Distal Intergenic", dmr_an)){return("Distal Intergenic")
+    } else if(grepl("Upstream", dmr_an)){return("Upstream")
+    } else if(grepl("3' UTR", dmr_an)){return("3' UTR")
+    } else if(grepl("5' UTR", dmr_an)){return("5' UTR")
+    } else{"Other"}
+})
+mean_met_dt$group <- "All Genes"
+
+mean_meth_found <- mean_met_dt[mean_met_dt$GeneID %in% 
+                                    rownames(lima_rna_seq),]
+mean_meth_found$group <- "Expressed"
+
+mean_meth_not_found <- mean_met_dt[!mean_met_dt$GeneID %in%
+                                    rownames(lima_rna_seq),] 
+mean_meth_not_found$group <- "Not Expressed"
+
+mean_meth_sig <- mean_meth_found[mean_meth_found$GeneID %in%
+                                     rownames(lima_rna_seq_filt),]
+mean_meth_sig$group <- "Expressed Significant"
+
+mean_meth_no_sig <- mean_meth_found[!mean_meth_found$GeneID %in%
+                                        rownames(lima_rna_seq_filt),]
+mean_meth_no_sig$group <- "Expressed Not Significant"
+
+```
+
+```{r}
+plot_dt <- rbind(mean_met_dt, mean_meth_found, mean_meth_no_sig, 
+                mean_meth_not_found, mean_meth_sig)
+library(ggplot2)
+p1 <- ggplot(plot_dt) + 
+    geom_violin(aes(x = group, y = Mean_Methylation)) + 
+    geom_boxplot(aes(x = group, y = Mean_Methylation), width = 0.05) +
+    theme_minimal() + theme(axis.text.x = element_text(size = 7)) + 
+    xlab(NULL) + ylab("Regulatory regions mean methylation")
+p1
+ggsave(filename = "../../outputs/Paper_Figures/figure_7_exons.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures/figure_7_exons.png", plot = p1)
+```
+
+### Regulatory regions correlations
+
+```{r}
+intersect_samples <- intersect(colnames(lima_rna_seq_filt), colnames(merged_reg_elements_exp))
+
+assayNames(lima_rna_seq_filt) <- "dt1"
+corr_vect <- c("pearson", "spearman")
+
+# test <- lapply(rownames(lima_rna_seq_filt), function(gene_id){
+#     rna_seq_gene <- lima_rna_seq_filt[gene_id,]
+#     
+#     entrez_id <- rowData(rna_seq_gene)$entrezID
+#     if(is.na(entrez_id)){return(NULL)}
+#     dna_met_exons_exp[rowData(dna_met_exons_exp)$geneID == entrez_id,]
+# })
+
+reg_region_exps_list <- lapply(rownames(lima_rna_seq_filt), function(x){
+    merged_reg_elements_exp[rowData(merged_reg_elements_exp)$ensembl_merge == x,]
+})
+names(reg_region_exps_list) <- rownames(lima_rna_seq_filt)
+
+corr_dt_list_reg_regions <- lapply(corr_vect, function(corr_name){
+    
+    list_prom <- lapply(rownames(lima_rna_seq_filt), function(gene_id){
+        rna_seq_gene <- lima_rna_seq_filt[gene_id,]
+        
+        own_dmrs <- reg_region_exps_list[[gene_id]]
+        # entrez_id <- rownames(rna_seq_gene)
+        # if(is.na(entrez_id)){return(NULL)}
+        
+        if(!nrow(own_dmrs)){return(NULL)}
+        
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene[,intersect_samples], 
+                                            experiment2 = own_dmrs[,intersect_samples],
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE, 
+                                            verbose = FALSE)
+    })
+    do.call(rbind, list_prom)
+})
+names(corr_dt_list_reg_regions) <- corr_vect
+
+saveRDS(corr_dt_list_reg_regions, "../../outputs/Multi_Omics_Analysis/test_reg_regions_cors.rds")
+```
+
+
+```{r}
+merged_reg_elements_exp <- readRDS("../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements.rds")
+
+corr_dt_list_reg_regions <- readRDS("../../outputs/Multi_Omics_Analysis/test_reg_regions_cors.rds")
+
+corr_dt_filt_reg_regions <- lapply(corr_dt_list_reg_regions, function(corr_dt){
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt[abs(corr_dt$cor) >= 0.7 & !is.na(corr_dt$cor) & corr_dt$p_adj <= 0.05,]
+})
+
+length(union(unique(corr_dt_filt_reg_regions$pearson$Var1), unique(corr_dt_filt_reg_regions$spearman$Var1)))
+
+
+mofa_res_dt <- readRDS("../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/multi_omics_filtered.rds")
+
+dmr_regulated_genes <- mofa_res_dt@ExperimentList$RNA_Sequencing[union(corr_dt_filt_reg_regions$pearson$Var1,
+                                                            corr_dt_filt_reg_regions$spearman$Var1),]
+
+factor_vect <- c("Factor_1", "Factor_2", "No factor")
+
+mofa_factor_genes <- lapply(factor_vect, function(factor_id){
+    
+    gene_rd <- rowData(mofa_res_dt[["RNA_Sequencing"]])
+    
+    if(factor_id == "No factor"){
+        return(rownames(gene_rd)[!gene_rd[["Factor_1_weights_sig"]] & 
+                                     !gene_rd[["Factor_2_weights_sig"]]])
+    } else{
+        return(rownames(gene_rd)[gene_rd[[paste0(factor_id, "_weights_sig")]]])    
+    }
+})
+names(mofa_factor_genes) <- factor_vect
+```
+
+```{r}
+group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(mofa_res_dt$group))), 
+                                             name = "Set2")
+names(group_color_dict) <- levels(droplevels(mofa_res_dt$group))
+
+lapply(names(mofa_factor_genes), function(factor_id){
+    pdf(paste0("../../outputs/Multi_Omics_Analysis/gene_dmr_correlations_test/",
+                "regions_reg_regulated_", factor_id, ".pdf"))
+    factor_gene_ids <- mofa_factor_genes[[factor_id]]
+    plot_exp_genes <- rownames(dmr_regulated_genes)[rownames(dmr_regulated_genes) %in%
+                                                        factor_gene_ids]
+    
+    found_dmrs <- sapply(plot_exp_genes, function(x){
+        union(corr_dt_filt_reg_regions$pearson$Var2[corr_dt_filt_reg_regions$pearson$Var1 == x], 
+                  corr_dt_filt_reg_regions$spearman$Var2[corr_dt_filt_reg_regions$spearman$Var1 == x])
+    })
+    lapply(names(found_dmrs), function(gene_id){
+        dmr_ids <- found_dmrs[[gene_id]]
+        found_dmrs_exp <- merged_reg_elements_exp[dmr_ids,]
+
+        lapply(rownames(found_dmrs_exp), function(x){
+            plot_dt <- as.data.frame(cbind(t(assay(found_dmrs_exp[x,])),
+                                        colData(found_dmrs_exp)["group"]))
+            colnames(plot_dt) <- c("DMR", "group")
+            
+            # plot_dt_gfcv <- cbind(t(assay(claudia_gfcv_dt[x,])), colData(claudia_gfcv_dt)["group"])
+            p1 <- ggplot(plot_dt) + geom_boxplot(aes(x = group, y = DMR, fill = group)) + 
+                theme_minimal() + scale_fill_manual(values = group_color_dict) + 
+                ggtitle(paste(gene_id, "promotor"))
+            # p2 <- ggplot(plot_dt_gfcv) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+            #     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+            print(p1)
+            # print(p2)
+            
+            return(NULL)
+        })
+    })
+    dev.off()
+
+    return(NULL)
+})
+
+```
+
+```{r}
+lapply(names(mofa_factor_genes), function(factor_id){
+    pdf(paste0("../../outputs/Multi_Omics_Analysis/gene_dmr_correlations_test/",
+                "genes_reg_regulated_regions_", factor_id, ".pdf"))
+    factor_gene_ids <- mofa_factor_genes[[factor_id]]
+    plot_exp_genes <- dmr_regulated_genes[rownames(dmr_regulated_genes) %in% 
+                                                factor_gene_ids]
+    lapply(rownames(plot_exp_genes), function(x){
+
+        plot_dt <- cbind(t(assay(plot_exp_genes[x,])), colData(plot_exp_genes)["group"])
+    
+        # plot_dt_gfcv <- cbind(t(assay(claudia_gfcv_dt[x,])), colData(claudia_gfcv_dt)["group"])
+        
+        p1 <- ggplot(plot_dt) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+            theme_minimal() + scale_fill_manual(values = group_color_dict)
+        # p2 <- ggplot(plot_dt_gfcv) + geom_boxplot(aes(x = group, y = .data[[x]], fill = group)) + 
+        #     theme_minimal() + scale_fill_brewer(palette = "Pastel1")
+        print(p1)
+        # print(p2)
+        
+        return(NULL)
+    })
+    dev.off()
+
+    return(NULL)
+})
+```
+
+```{r}
+chebi_filt <- readRDS("../../outputs/Multi_Omics_Analysis/chebi_filt.rds")
+term2gene_filt <- chebi_filt$term2gene
+term2name_filt <- chebi_filt$term2name
+term2kegg_filt <- chebi_filt$term2kegg
+```
+
+```{r}
+Test_Regulatory_Elements <- readRDS("D:/Tesis Doctoral/gnotobiomics_project_data_analysis/outputs/WGB_DNA_Methylation/Test_Regulatory_Elements.rds")
+
+met_regulated_regions <- Test_Regulatory_Elements[union(corr_dt_filt_reg_regions$pearson$Var2,
+                                                        corr_dt_filt_reg_regions$spearman$Var2),]
+
+
+met_regulated_regions <- Test_Regulatory_Elements[union(corr_dt_filt_reg_regions$pearson$Var2,
+                                                        corr_dt_filt_reg_regions$spearman$Var2),]
+
+dmr_regulated_genes <- mofa_res_dt[["RNA_Sequencing"]][union(corr_dt_filt_reg_regions$pearson$Var1,
+                                                             corr_dt_filt_reg_regions$spearman$Var1),]
+table(rowData(met_regulated_regions)$type)
+pheatmap::pheatmap(scale(t(as.matrix(assay(met_regulated_regions)))), show_colnames = FALSE, annotation_row = as.data.frame(colData(met_regulated_regions))[,"group", drop = FALSE])
+
+
+sum(rownames(dmr_regulated_genes) %in% f1_vars_mofa)
+sum(rownames(dmr_regulated_genes) %in% f2_vars_mofa)
+
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(clusterProfiler)
+
+enrich_list_kegg_dmr_reg_mofa <- lapply(list("DMR_Regulated" = dmr_regulated_genes), function(factor_dt){
+    entrez_ids <- rownames(dmr_regulated_genes)
+
+    entrez_ids <- mapIds(x = org.Mm.eg.db, keys = entrez_ids, 
+                         column = "ENTREZID", keytype = "ENSEMBL")
+    enrich_res <- enricher(gene = entrez_ids,
+                            TERM2GENE = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",], 
+                            TERM2NAME =  kegg_db_list$term2name,
+                            universe = NULL, maxGSSize = 500)
+    if(is.null(enrich_res) || nrow(enrich_res@result) == 0){return(NULL)}
+    enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+    enrich_res
+})
+
+enrich_list_kegg_dmr_reg_mofa_factor <- lapply(list(f1_vars_mofa, f2_vars_mofa), function(factor_ids){
+    entrez_ids <- rownames(dmr_regulated_genes)[rownames(dmr_regulated_genes) %in% 
+                                        factor_ids]
+    entrez_ids <- mapIds(x = org.Mm.eg.db, keys = entrez_ids, 
+                         column = "ENTREZID", keytype = "ENSEMBL")
+    enrich_res <- enricher(gene = entrez_ids,
+                            TERM2GENE = kegg_db_list$term2gene[kegg_db_list$term2gene$type == "gene_id",], 
+                            TERM2NAME =  kegg_db_list$term2name,
+                            universe = NULL, maxGSSize = 500)
+    if(is.null(enrich_res) || nrow(enrich_res@result) == 0){return(NULL)}
+    enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+    enrich_res
+})
+
+enrich_list_chebi_dmr_reg_mofa_factor <- lapply(list(f1_vars_mofa, f2_vars_mofa), function(factor_ids){
+    entrez_ids <- rownames(dmr_regulated_genes)[rownames(dmr_regulated_genes) %in% 
+                                        factor_ids]
+    entrez_ids <- mapIds(x = org.Mm.eg.db, keys = entrez_ids, 
+                         column = "SYMBOL", keytype = "ENSEMBL")
+    enrich_res <- enricher(gene = entrez_ids,
+                            TERM2GENE = term2gene_filt[kegg_db_list$term2gene$type == "gene_id",], 
+                            TERM2NAME =  term2name_filt,
+                            universe = NULL, maxGSSize = 500)
+    if(is.null(enrich_res) || nrow(enrich_res@result) == 0){return(NULL)}
+    enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+    enrich_res
+})
+
+```
+
+```{r}
+gsea_path <- "../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper/enrich_results/gene_gsea_results.xlsx"
+
+
+gsea_res <- lapply(openxlsx::getSheetNames(gsea_path), function(sheet_name){
+     openxlsx::read.xlsx(xlsxFile = gsea_path, 
+                                sheet = sheet_name)
+})
+
+rownames(dmr_regulated_genes)[rownames(dmr_regulated_genes) %in%
+                                    unique(unlist(strsplit(gsea_res[[1]]$core_enrichment, "/")))]
+rownames(dmr_regulated_genes)[rownames(dmr_regulated_genes) %in%
+                                    unique(unlist(strsplit(gsea_res[[2]]$core_enrichment, "/")))]
+
+
+rownames(dmr_regulated_genes) 
+```
+
+
+### GFCV Reg regions
+
+```{r}
+merged_reg_elements_met <- methrix::get_region_summary(gfcv_methrix,
+                                                    peak_annotation, 
+                                                    overlap_type = "any")
+
+num_m <- merged_reg_elements_met[,6:41]
+seq_dt <- merged_reg_elements_met[,1:5]
+
+reg_ann <- peak_annotation[seq_dt$rid]
+
+# colnames(num_m) <- gsub("X652C", "X642C", colnames(num_m))
+# colnames(lima_methrix) <- gsub("X652C", "X642C", colnames(lima_methrix))
+
+# outlier_samples <- c("X670E", "X594C")
+
+# num_m <- as.data.frame(num_m)[,!colnames(num_m) %in% outlier_samples]
+
+found_info <- peak_annotation[seq_dt$rid]
+
+rownames(num_m) <- rownames(elementMetadata(found_info))
+
+elementMetadata(found_info)$n_overlap_CpGs <- seq_dt$n_overlap_CpGs
+elementMetadata(found_info)$gene_id <- seq_dt$n_overlap_CpGs
+
+# num_m <- num_m[,intersect(colData(lima_rna_seq)$samplename, colnames(num_m))]
+
+merged_reg_elements_exp <- SummarizedExperiment(assays = list("dt1" = num_m), rowRanges = found_info,
+                                        colData = colData(gfcv_methrix)[match(colnames(num_m),
+                                                                              colnames(gfcv_methrix)),])
+
+saveRDS(merged_reg_elements_exp, "../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements_GFCV.rds")
+```
+
+```{r}
+rm(gfcv_methrix)
+merged_reg_elements_exp <- readRDS("../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements_GFCV.rds")
+# merged_reg_elements_exp <- merged_reg_elements_exp[,merged_reg_elements_exp$group != "HFE"]
+# merged_reg_elements_exp$group <- droplevels(merged_reg_elements_exp$group)
+
+keep_ids <- apply(assay(merged_reg_elements_exp), 1, function(x){
+    sum(is.na(x)) <= 0.8
+})
+
+merged_reg_elements_exp <- merged_reg_elements_exp[keep_ids,]
+
+nrow(dplyr::distinct(assay(merged_reg_elements_exp)))
+nrow(merged_reg_elements_exp)
+
+any(table(findOverlaps(rowRanges(merged_reg_elements_exp))@from) > 1)
+```
+
+```{r}
+comp_names <- apply(t(combn(levels(merged_reg_elements_exp$group), m = 2))[,2:1], 1, 
+                    paste, collapse = "-")
+comp_matrix <- matrix(NA, nrow = length(comp_names), ncol = 2)
+rownames(comp_matrix) <- comp_names
+
+merged_reg_elements_exp_be <- sva::ComBat(dat = as.matrix(assay(merged_reg_elements_exp)),
+                                          batch = merged_reg_elements_exp$batch, 
+                                          mod = merged_reg_elements_exp$group)
+
+tukey_results <- apply(merged_reg_elements_exp_be, 1, function(dt_var){
+    
+    anova_results <- kruskal.test(dt_var, g = merged_reg_elements_exp$group)
+    anova_results <- data.frame("statistic" = anova_results$statistic,
+                                "parameter" = anova_results$parameter,
+                                "p.value" = anova_results$p.value)
+        
+    comp_results <- list("Group_Test" = anova_results)
+    
+    if(!is.na(comp_results$Group_Test$p.value) & comp_results$Group_Test$p.value <= 0.05){
+        comp_results$Pairwise_Tests <- DescTools::ConoverTest(dt_var, 
+                                                            merged_reg_elements_exp$group)[[1]]
+        # comp_results$Pairwise_Tests <- TukeyHSD(anova_results, which = c("group"))$group
+        return(comp_results)
+    } else{
+        comp_results$Pairwise_Tests <- comp_matrix
+        return(comp_results)
+    }
+})
+
+anova_test_results <- lapply(tukey_results, function(ctrs){
+    ctrs$Group_Test
+})
+anova_test_results <- do.call(rbind, anova_test_results)
+    # colnames(anova_test_results)[5] <- c("pvalue")
+anova_test_results$adj.p.value <- p.adjust(anova_test_results$p.value)
+    
+contrasts_results <- lapply(comp_names, function(ctrs_row){
+    ctrs_result_list <- lapply(tukey_results, function(ctrs){
+        ctrs <- ctrs$Pairwise_Tests
+        if(!(ctrs_row %in% rownames(ctrs))){return(rep(NA, 2))}
+        ctrs[ctrs_row,]   
+    })
+    do.call(rbind, ctrs_result_list)
+})
+names(contrasts_results) <- comp_names
+    
+contrasts_results <- lapply(contrasts_results, function(ctrs){
+    ctrs <- as.data.frame(ctrs)
+    colnames(ctrs) <- c("difference", "pvalue")
+    ctrs$adj.p.value <- p.adjust(ctrs[,"pvalue"], method = "fdr")
+    ctrs
+})
+
+contrasts_results$Group_Test <-  anova_test_results    
+contrasts_results <- do.call(cbind, contrasts_results)
+
+rowData(merged_reg_elements_exp) <- cbind(rowData(merged_reg_elements_exp), contrasts_results)
+
+p_val_mat <- contrasts_results[,grep("adj.p.value", colnames(contrasts_results))]
+# p_val_mat <- p_val_mat[,grep("HFD|INT|CNT", colnames(p_val_mat))]
+
+keep_dmrs <- rowSums(!is.na(p_val_mat) & p_val_mat <= 0.05) != 0
+
+saveRDS(merged_reg_elements_exp, "../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements_GFCV.rds")
+
+merged_reg_elements_exp_MA <- merged_reg_elements_exp
+rownames(merged_reg_elements_exp_be) <- rownames(merged_reg_elements_exp_MA)
+
+assay(merged_reg_elements_exp_MA) <- merged_reg_elements_exp_be
+
+saveRDS(merged_reg_elements_exp_MA, "../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements_GFCV_MA.rds")
+
+
+merged_reg_elements_exp_filt <- merged_reg_elements_exp[keep_dmrs,]
+
+merged_reg_elements_exp_filt
+```
+
+
+## Significance at the CpG level
+
+```{r}
+res_dt <- lapply(dss_results_list_non_smoothed_005.group, function(group_comp){
+    which(group_comp$fdrs <= 0.05)
+})
+res_cpgs <- Reduce(union, res_dt[c("INT-HFD", "INT-CNT", "HFD-CNT")])
+length(res_cpgs)
+
+
+```
+
+
+```{r}
+group_dict <- as.character(ov_cpgs$group)
+names(group_dict) <- ov_cpgs$sample_name
+
+tx_test <- mapped_tx$TXNAME[mapped_tx$GENEID == "17936"]
+found_promotors[tx_test[1],]
+lapply(tx_test, function(x){
+    ov_cpgs <- methrix::subset_methrix(m = lima_methrix, regions = found_promotors[x,], overlap_type = "any")    
+    cpg_dt <- assay(ov_cpgs)
+    rownames(cpg_dt) <- rowData(ov_cpgs)$start
+        
+    melt_dt <- reshape2::melt(cpg_dt)
+    melt_dt$group <- group_dict[melt_dt$Var2]
+    ggplot(melt_dt) + geom_smooth(aes(x = Var1, y = value, 
+                                      color = group, fill = group)) + 
+        theme_minimal()
+})
+```
+
+
+
+
+```{r}
+
 col_intersect <- intersect(colnames(lima_rna_seq), colnames(num_m))
+
 
 
 cor_list <- sapply(seq_len(nrow(num_m)), function(row_id){
@@ -61,9 +2266,19 @@ gene_symbols <- sapply(mapped_tx$GENEID, function(x){
 
 mapped_tx$geneSymbol <- gene_symbols
 
+mapped_tx2 <- mapped_tx[mapped_tx$GENEID %in% rowData(lima_rna_seq_filt)$entrezID,]
 ```
 
 ```{r}
+library(ggplot2)
+gs <- methrix::get_stats(lima_methrix)
+gs$group <- substr(gs$Sample_Name, start = 5, stop = 5)
+
+lapply(unique(gs$Chromosome), function(x){
+    ggplot(gs[gs$Chromosome == x,]) + geom_boxplot(aes(x = group, y = as.numeric(mean_meth))) + 
+        theme(axis.text.x = element_text(angle = 90))
+})
+
 
 gene_test <- assay(lima_rna_seq[rowData(lima_rna_seq)$entrezID == "18777" &
                                     !is.na(rowData(lima_rna_seq)$entrezID),])

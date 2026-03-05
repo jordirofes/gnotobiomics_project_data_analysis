@@ -202,15 +202,23 @@ omic_variable_correlation_list <- lapply(multi_omic_filtered_list, function(mult
                                     function(exp_data){
                                         colnames(exp_data)[exp_data[[params$group_metadata_var]] %in%
                                                     params$sample_levels_2_correlate]}))
+            
             multi_omic_filtered_2 <- multi_omic_filtered[,intersect_samples, omic_name_pairs]
             print(omic_name_pairs)
             keep_var <- unlist(lapply(assays(multi_omic_filtered_2), 
                                 function(omic_assay){
                                     rownames(omic_assay)[rowSums(omic_assay) != 0]
                                 }))
+            
+            exp_ids <- sapply(omic_name_pairs, 
+                            function(x){grep(pattern = x, 
+                                            names(multi_omic_filtered_2))})
+            
             multi_omic_filtered_2 <- multi_omic_filtered_2[keep_var,,]
             test_corr <- mia::getExperimentCrossAssociation(
-                multi_omic_filtered_2, assay.type1 = "dt1", assay.type2 = "dt1",
+                multi_omic_filtered_2, 
+                experiment1 = exp_ids[1], experiment2 = exp_ids[2],
+                assay.type1 = "dt1", assay.type2 = "dt1",
                 method = params$corr_method, cor_threshold = NULL, 
                 p_adj_method = params$p_adj_test, p_adj_threshold = NULL, 
                 test_significance = params$correlation_test)

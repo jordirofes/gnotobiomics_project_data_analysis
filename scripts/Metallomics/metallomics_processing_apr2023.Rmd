@@ -206,11 +206,9 @@ results_list <- lapply(names(lima_data_list), function(organ_name){
         anova_results <- data.frame("statistic" = anova_results$statistic,
                                     "parameter" = anova_results$parameter,
                                     "p.value" = anova_results$p.value)
-    
-        # anova_results2 <- aov(dt_var ~ 0 + group, data = lima_metadata)
-        # comp_results <- list("Group_Test" = summary(anova_results)[[1]]["group",])
+            
         comp_results <- list("Group_Test" = anova_results)
-        #plot(anova_results)
+        
         if(comp_results$Group_Test$p.value <= 0.05){
             comp_results$Pairwise_Tests <- DescTools::ConoverTest(dt_var, 
                                                                 organ_list$Metallomics_Metadata$group)[[1]]

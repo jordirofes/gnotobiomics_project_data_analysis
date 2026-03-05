@@ -1,5 +1,6 @@
 data_pca <- function(dt_list, metadata, stratificationVar, pc_x = 1, pc_y = 2, 
-                     scale. = FALSE, center = FALSE, plot_name, color_vect, ...){
+                    scale. = FALSE, center = FALSE, plot_name, color_vect,
+                    loading_arrows = FALSE, ...){
     group_var <- metadata[[stratificationVar]]
     if(any(is.na(dt_list))){
         dt_list <- t(impute::impute.knn(as.matrix(dt_list))$data)    
@@ -10,22 +11,24 @@ data_pca <- function(dt_list, metadata, stratificationVar, pc_x = 1, pc_y = 2,
     pca_dt <- prcomp(dt_list, center = center, scale. = scale.)
     
     pca_plot(pca_dt, pc_x = pc_x, pc_y = pc_y, group_var = group_var, 
-             ellipse_var = group_var, interactive = FALSE, color_vect = color_vect) + 
+            ellipse_var = group_var, interactive = FALSE, 
+            color_vect = color_vect, loading_arrows = loading_arrows) + 
         ggtitle(plot_name)
 }
 
 plot_pc <- function(plot_dt, group_var, x_lab, y_lab, loading_dt = NA, color_vect, 
-                    allElipse = TRUE, ellipse_var = NA, interactive = TRUE, level = 0.95){
+                    allElipse = TRUE, ellipse_var = NA, interactive = TRUE, 
+                    level = 0.95, loading_arrows = FALSE){
     pc_plot <- ggplot(plot_dt) + 
         geom_point(aes(x = .data[[colnames(plot_dt)[1]]], 
                     y = .data[[colnames(plot_dt)[2]]], colour = group_var)) + 
-        theme_classic() + xlab(x_lab) + ylab(y_lab) +
-        theme(axis.line = element_line(colour = "black", size = 0.5,
-                                       linetype = "solid"),
-              legend.title = element_blank(),
+        theme_minimal() + xlab(x_lab) + ylab(y_lab) +
+        theme(legend.title = element_blank(),
               plot.margin = unit(c(0.5,0.5,0.5,0.5),"cm"),
-              plot.title = element_text(hjust = 0.5),
-              axis.text.x = element_text(vjust = 0.5, hjust = 1)) + 
+              plot.title = element_text(hjust = 0.5), 
+              legend.text = element_text(size = 14), 
+              axis.title.x = element_text(hjust = 0.5, size = 16),
+              axis.title.y = element_text(size = 16)) + 
         geom_hline(yintercept = 0) + geom_vline(xintercept = 0)
         
     if(!missing(color_vect)){
@@ -52,7 +55,7 @@ plot_pc <- function(plot_dt, group_var, x_lab, y_lab, loading_dt = NA, color_vec
     
     arrow_scale <- max(abs(plot_dt))
     
-    if(!all(is.na(loading_dt))){
+    if(!all(is.na(loading_dt)) & loading_arrows){
         pc_plot <- pc_plot + 
             annotate(geom = "segment", x = 0, y = 0, 
                             xend = loading_dt[,1]*(arrow_scale + arrow_scale/2), 
@@ -64,7 +67,6 @@ plot_pc <- function(plot_dt, group_var, x_lab, y_lab, loading_dt = NA, color_vec
                      label = rownames(loading_dt), 
                      size = 2.5, color = "blue")
     }
-    
     if(interactive){
         pc_plot <- ggplotly(pc_plot)
     }
@@ -72,7 +74,8 @@ plot_pc <- function(plot_dt, group_var, x_lab, y_lab, loading_dt = NA, color_vec
 }
 
 pca_plot <- function(pca_data, pc_x = 1, pc_y = 2, group_var, ellipse_var = NA, 
-                     allElipse = TRUE, interactive = TRUE, level = 0.95, color_vect){
+                    allElipse = TRUE, interactive = TRUE, level = 0.95, 
+                    color_vect, loading_arrows = FALSE){
     pc_var <- pca_data$sdev^2
     pc_var_abs <- pc_var/sum(pc_var)*100
     
@@ -95,7 +98,7 @@ pca_plot <- function(pca_data, pc_x = 1, pc_y = 2, group_var, ellipse_var = NA,
     loading_dt <- loading_dt[loading_names[1:c(min(length(loading_names), 10))],]
     
     return(plot_pc(plot_dt, group_var, x_lab, y_lab, loading_dt, color_vect, 
-                   allElipse, ellipse_var, interactive, level))
+                   allElipse, ellipse_var, interactive, level, loading_arrows))
 }
 
 
@@ -123,7 +126,7 @@ quantile_breaks <- function(dt, length_out){
 
 heatMapFun <- function(dt_list, metadata, stratificationVar, cdQuantile = 0, 
                        plot_name = "Data Heatmap", show_colnames, show_rownames = FALSE, 
-                       clustering_method = "average",
+                       clustering_method = "average", fontsize_col = 6, fontsize_row = 6,
                        clustering_distance_rows, color_list = NA, use_cat = TRUE, 
                        ...){
     group_var <- metadata[stratificationVar]
@@ -156,13 +159,14 @@ heatMapFun <- function(dt_list, metadata, stratificationVar, cdQuantile = 0,
         cat("\n")
         pheatmap::pheatmap(dt_list[,sel_vars], color = plot_colors,
                            annotation_row = as.data.frame(group_var),
-                           show_colnames = show_colnames, fontsize = 5,
-                           fontsize_col = 6, fontsize_row = 6, show_rownames = show_rownames,
+                           show_colnames = show_colnames, fontsize = 14,
+                           fontsize_col = fontsize_col, fontsize_row = fontsize_row, show_rownames = show_rownames,
                            clustering_method = clustering_method, cluster_rows = TRUE,
-                           cluster_cols = TRUE,
+                           cluster_cols = TRUE, angle_col = 45,
                            clustering_distance_rows = clustering_distance_rows,
                            main = plot_name,
-                           breaks = dt_quantiles, annotation_colors = color_list)
+                           breaks = dt_quantiles, annotation_colors = color_list, 
+                           annotation_legend = FALSE, annotation_names_row = FALSE)
         cat("\n")
     } else{
         pheatmap::pheatmap(dt_list[,sel_vars], color = plot_colors,
@@ -173,7 +177,8 @@ heatMapFun <- function(dt_list, metadata, stratificationVar, cdQuantile = 0,
                            cluster_cols = TRUE,
                            clustering_distance_rows = clustering_distance_rows,
                            main = plot_name,
-                           breaks = dt_quantiles, annotation_colors = color_list)
+                           breaks = dt_quantiles, annotation_colors = color_list, 
+                           annotation_names_row = FALSE)
     }
 }
 
@@ -229,6 +234,35 @@ boxplotFun <- function(dt_list, metadata, stratificationVar){
         }
         cat("\n")
     }
+}
+
+
+volcanoFun <- function(comp_dt, metadata, stratificationVar, 
+                        adj.pvalue = TRUE, jitterseed = 1234){
+    if(adj.pvalue){
+        comp_dt <- comptable[,c("logFC", "adj.P.Val")]
+        dt_thr <- comp_dt$adj.P.Val <= 0.05 & abs(comp_dt$logFC) > 1
+        groups <- ifelse(dt_thr, "royalblue4", "grey40")
+        comp_dt$adj.P.Val <- -log10(comp_dt$adj.P.Val)
+    } else{
+        comp_dt <- comptable[,c("logFC", "P.Value")]
+        dt_thr <- comp_dt$P.Value <= 0.05 & abs(comp_dt$logFC) > 1
+        groups <- ifelse(dt_thr, "royalblue4", "grey40")
+        comp_dt$P.Value <- -log10(comp_dt$P.Value)
+    }
+    dt_labs <- rownames(comptable)
+    comp_dt <- as.list.data.frame(comp_dt)
+    ggplot(comp_dt) + geom_scatter(aes(x = logFC, y = adj.p.val)) +
+        geom_vline(xintercept = -1, color = "lightgrey") + 
+        geom_vline(xintercept = 1, color = "lightgrey") +
+        geom_hline(yintercept = -log10(0.05),color = "lightgrey") +
+        ggplot2::annotate(geom = "point",x = comp_dt[[1]], 
+                            y = comp_dt[[2]], colour = groups) +
+        geom_text(aes(x = comp_dt[[1]][dt_thr], y = comp_dt[[2]][dt_thr], 
+                    label = dt_labs[dt_thr]), 
+                position = position_jitter(width = 0.1, height = 0.1, 
+                                           seed = jitterseed))
+    
 }
 
 significant_tables_chunks <- function(contrs_result_sig_list, contrs_names, template = c(
@@ -489,34 +523,56 @@ multi_enrich <- function(dt_to_pathway, universe, OrgDb = "org.Hs.eg.db",
     return(enrich_data)
 }
 
-enrich_plots <- function(enrich_data, fold_change_list = NULL, 
+enrich_plots_list <- function(enrich_list, fold_change_list = NULL, 
                          node_label = "category", legend_name = "Fold Change (log2)"){
-    enrich_plots_res <- lapply(seq_along(enrich_data), function(path_data_id){
-        path_data <- enrich_data[[path_data_id]]
+    enrich_plots_res <- lapply(seq_along(enrich_list), function(path_data_id){
+        path_data <- enrich_list[[path_data_id]]
         if(!is.null(fold_change_list)){
             fold_change_dt <- fold_change_list[[path_data_id]]
         } else{
             fold_change_dt <- NULL
         }
         
-        enrich_plot <- lapply(path_data, function(component){
-            if(is.null(component)){return(NA)}
-            if(nrow(as.data.frame(component)) == 0){return(NA)}
-            dot_plot <- enrichplot::dotplot(component, showCategory = 30, 
-                                            font.size = 8)
-            network_plot <- enrichplot::cnetplot(component, 
-                                                 categorySize = "geneNum", foldChange = fold_change_dt, 
-                                                 showCategory = 15, node_label= node_label, 
-                                                 cex.params = list(category_label = 0.4)) + 
-                guides(colour=guide_colorbar(title = legend_name))
-            return(list(dot_plot, network_plot))
-        })
+        enrich_plot <- lapply(path_data, enrich_plots, 
+                              fold_change_dt = fold_change_dt, 
+                              node_label = node_label, legend_name = legend_name)
         return(enrich_plot)
     })
-    names(enrich_plots_res) <- names(enrich_data)
+    names(enrich_plots_res) <- names(enrich_list)
     return(enrich_plots_res)
 }
 
+enrich_plots <- function(enrich_data, fold_change_dt, node_label, legend_name){
+    if(is.null(enrich_data)){return(NA)}
+    if(nrow(as.data.frame(enrich_data)) == 0){return(NA)}
+    
+    plot_dt_list <- list()
+    
+    plot_dt_list$dot_plot <- enrichplot::dotplot(enrich_data, showCategory = 30, 
+                                    font.size = 8)
+    plot_dt_list$network_plot <- enrichplot::cnetplot(enrich_data, 
+                                        categorySize = "geneNum", 
+                                        foldChange = fold_change_dt, 
+                                        showCategory = 15, node_label= node_label, 
+                                        cex.params = list(category_label = 0.4)) + 
+        guides(colour=guide_colorbar(title = legend_name))
+    
+    go_types <- c("BP", "CC", "MF")
+    
+    ont_slot <- grep("ontology|setType", slotNames(enrich_data), value = TRUE) 
+    
+    if(length(ont_slot) & slot(enrich_data, ont_slot) %in% go_types & nrow(enrich_data) >= 5){
+        enrich_data <- pairwise_termsim(x = enrich_data)
+        
+        plot_dt_list$tree_plot <- enrichplot::treeplot(enrich_data, 
+                                                       cex.params = list(category_label = 0.4))
+        plot_dt_list$emaplot <- enrichplot::emapplot(enrich_data, cex.params = list(category_label = 0.4),
+                                                    cluster.params = list(cluster = TRUE, 
+                                                                        legend = TRUE))
+    }
+    
+    return(plot_dt_list)
+}
 
 enrich_chunks <- function(enrichData_all, enrich_plot_data){
     
@@ -533,22 +589,27 @@ enrich_chunks <- function(enrichData_all, enrich_plot_data){
             
             cat("#####", names(enrichData_all[[i]])[z], " {.tabset} \n")
             if(!any(is.na(enrich_plot_data[[i]][[z]]))){
-                # knit_print(enrich_plot_data[[i]][[z]][[1]])
-                # knit_print(enrich_plot_data[[i]][[z]][[2]])
                 lapply(enrich_plot_data[[i]][[z]], knit_print)
             }
-            cat(knit_print( datatable(dt_to_table,
-                                      options = list(scrollX = TRUE, pageLength = 5
-                                      )) %>%
-                                formatRound(columns = colnames(dt_to_table)[num_vars], digits = 3)), "\n");
+            cat(knit_print(datatable(dt_to_table,
+                                    options = list(scrollX = TRUE, 
+                                                    pageLength = 5)) %>% 
+                                formatRound(columns = colnames(dt_to_table)[num_vars], 
+                                            digits = 3)), "\n");
             cat("\n")
         }
     }
 }
 
 calculate_enrich_fc <- function(enrich_table){
-    g_ratio <- enrich_table@result$GeneRatio
-    b_ratio <- enrich_table@result$BgRatio
+    if(is(enrich_table, "data.frame")){
+        g_ratio <- enrich_table$GeneRatio
+        b_ratio <- enrich_table$BgRatio    
+    } else{
+        g_ratio <- enrich_table@result$GeneRatio
+        b_ratio <- enrich_table@result$BgRatio    
+    }
+    
     
     g_ratio <- sapply(g_ratio, function(x){eval(parse(text = x))})
     b_ratio <- sapply(b_ratio, function(x){eval(parse(text = x))})
@@ -603,7 +664,7 @@ dmr_annotation_plot <- function(omic_dt,
 }
 
 ### Utilities for multivariate normalization
-count_vst_deseq2 <- function(omic_dt, round_dt = TRUE, multiplier = 1, ...){
+count_vst_deseq2 <- function(omic_dt, round_dt = TRUE, multiplier = 1, design = ~ group + 0, ...){
     omic_dt_temp <- as.matrix(assay(omic_dt))
     if(round_dt){
         mode(omic_dt_temp) <- "integer"
@@ -614,7 +675,7 @@ count_vst_deseq2 <- function(omic_dt, round_dt = TRUE, multiplier = 1, ...){
     }
     
     omic_dt_temp <- omic_dt_temp * multiplier
-    deseq_dt <- DESeqDataSetFromMatrix(omic_dt_temp, colData = colData(omic_dt), design =  ~ group + 0)
+    deseq_dt <- DESeqDataSetFromMatrix(omic_dt_temp, colData = colData(omic_dt), design = design)
     assay(omic_dt) <- as.data.frame(assay(varianceStabilizingTransformation(deseq_dt, blind = FALSE)))
     omic_dt
 }
@@ -643,13 +704,12 @@ clr_proc <- function(omic_dt, ...){
     #                                 method = "clr", name = "clr", 
     #                                 pseudocount = pseudo_c,)
     if(!("relabundance" %in% names(assays(omic_dt)))){
-        omic_dt_temp <- transformAssay(omic_dt_temp, assay.type = "counts", 
-                                       method = "relabundance")
+        omic_dt_temp <- transformAssay(omic_dt_temp, assay.type = "counts",
+                                       method = "relabundance", pseudocount = 1)
     }
     omic_dt_temp <- transformAssay(x = omic_dt_temp, 
                                    assay.type = "relabundance", 
-                                   method = "clr", name = "clr", 
-                                   pseudocount = 1)
+                                   method = "clr", name = "clr")
     
     assays(omic_dt) <- list("clr" = assay(omic_dt_temp, "clr"))
     omic_dt
@@ -914,4 +974,85 @@ enrich_multi_omic_clusters <- function(graph, feature_dict,
         enrich_go
     })
     enrich_res
+}
+
+
+
+lollipop_compare_enrich <- function(enrich_1, enrich_2, 
+                                    dt_colors = c("steelblue1", "indianred1"),
+                                    plot_title = ""){
+    plot_data <- rbind(enrich_1, enrich_2)
+    
+    if (dim(plot_data)[1] == 0) {
+        return(NULL)
+    }
+    plot_data$Description <- gsub(" - Mus musculus \\(house mouse)", replacement = "", x = plot_data$Description)
+    ctrs_dt <- lapply(unique(plot_data$type), function(x) {
+        ctrs_dt <- plot_data[plot_data$type == x, ]
+        ctrs_dt$Description[order(ctrs_dt$enrich_log2fc, 
+                                  decreasing = TRUE)]
+    })
+    names(ctrs_dt) <- unique(plot_data$type)
+    if (length(ctrs_dt) == 0) {
+        return(NULL)
+    }
+    if (length(ctrs_dt) == 1) {
+        ctrs_dt[[2]] <- character(0)
+        dt_colors[2] <- "white"
+    }
+    set_1 <- setdiff(ctrs_dt[[2]], ctrs_dt[[1]])
+    set_2 <- setdiff(ctrs_dt[[1]], ctrs_dt[[2]])
+    set_intersect <- intersect(ctrs_dt[[1]], ctrs_dt[[2]])
+    ordered_dt <- c(rev(set_1), rev(set_2), rev(set_intersect))
+    
+    plot_data$Description_factor <- factor(plot_data$Description, 
+                                           levels = ordered_dt, ordered = TRUE)
+    
+    color_ctrs <- dt_colors
+    names(color_ctrs) <- unique(plot_data$type)
+
+    fc_ceiling <- ceiling(max(plot_data$enrich_log2fc)*2)/2
+    
+    p_d <- ggplot(plot_data, aes(x = enrich_log2fc, y = Description_factor)) + 
+        geom_point(aes(color = type), size = 8) + 
+        geom_segment(aes(x = 0, xend = enrich_log2fc, y = Description_factor,
+                         yend = Description_factor, color = type), 
+                     alpha = 0.9, size = 1.5) + 
+        geom_vline(xintercept = 0) + 
+        theme_minimal() + 
+        theme(legend.position = "bottom",
+              plot.title = element_text(size = 22, 
+                                        hjust = 0.5), 
+              axis.text.y.left = element_text(size = 22, 
+                                              margin = margin(t = 100, b = 100, 
+                                                              r = 10, l = 10)),
+              legend.text = element_text(size = 22),
+              legend.title = element_text(size = 22),
+              axis.title.x  = element_text(size = 22),
+              axis.title.y = element_text(size = 22), 
+              axis.text.x = element_text(size = 22)) + 
+        xlab("ORA Fold-Enrich") + 
+        ylab("KEGG Term Description") + 
+        scale_color_manual(name = "Contrasts", 
+                           values = color_ctrs) + 
+        ggtitle(plot_title) + 
+        scale_x_continuous(breaks = seq(0, fc_ceiling, 0.5),
+                           limits = c(0, fc_ceiling))
+    
+    venn_dt <- lapply(unique(plot_data$type), function(x) {
+        plot_data$Description_factor[plot_data$type == 
+                                         x]
+    })
+    names(venn_dt) <- unique(plot_data$type)
+    rotation_degree <- ifelse(length(set_1) < length(set_2), 
+                              180, 0)
+    venn_plot <- draw.pairwise.venn(area1 = length(ctrs_dt[[1]]), 
+                                    area2 = length(ctrs_dt[[2]]), cross.area = length(set_intersect), 
+                                    fill = dt_colors, lty = "blank", cex = 0, label.col = c(dt_colors[1], 
+                                                                                            "thistle", dt_colors[2]), 
+                                    rotation.degree = rotation_degree, 
+                                    ind = FALSE)
+    list("plot_p" = p_d, "venn_diagram" = venn_plot)
+    # plot_grid(p_d, plot_grid(venn_plot, nrow = 8, ncol = 1), 
+    #           rel_widths = c(7, 1))
 }

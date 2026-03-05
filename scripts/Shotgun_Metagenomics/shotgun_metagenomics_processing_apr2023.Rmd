@@ -41,7 +41,7 @@ organ_dt <- lapply(c("cecum", "colon"), function(organ){
         } else if(organ == "colon"){
             shotgun_table <- shotgun_table[grepl("X", colnames(shotgun_table))]
         }
-        shotgun_table <- shotgun_table[rowMeans(shotgun_table) != 0,]
+        # shotgun_table <- shotgun_table[rowMeans(shotgun_table) != 0,]
         shotgun_table
     })
     names(shotgun_data) <- gsub("_comp1.txt", "", basename(shotgun_data_path))
@@ -533,7 +533,10 @@ lapply(list("cecum" = shotgun_data$cecum$Phylum,
 
 ```
 
-### FIlter low abundance taxons
+
+
+
+### Filter low abundance taxons
 
 ```{r}
 # Filtering taxons not present in atleast 80% of one group
@@ -552,8 +555,10 @@ shotgun_data_proc <- lapply(names(shotgun_data), function(organ_name){
             
             any(group_dt >= 0.8)    
         })
-        
-        hierarchy[keep_vars,]
+        hierarchy <- hierarchy[keep_vars,]
+        rowData(hierarchy)$mean_abundance <- rowMeans(assay(hierarchy))
+        rowData(hierarchy)$mean_abundance_pc <- rowData(hierarchy)$mean_abundance/sum(rowMeans(assay(hierarchy)))
+        hierarchy
     })
     names(organ_filt) <- names(organ)
     organ_filt
@@ -714,16 +719,14 @@ shotgun_data_exp <- lapply(names(shotgun_data_proc), function(organ_name){
         #pca(mat = hierarchy, metadata = organ_meta, scale = FALSE)
         
         hierarchy_deseq <- DESeqDataSetFromMatrix(countData = as.data.frame(assay(hierarchy)),
-                                                  colData = hierarchy_meta, design = ~ group + 0)
+                                                colData = hierarchy_meta, 
+                                                design = ~ group + 0)
         hierarchy_deseq <- DESeq(hierarchy_deseq, test = "Wald")
         results_list <- lapply(names_comp, function(comp_name){
             comp_vec <- c("group", strsplit(comp_name, "-")[[1]])
             results(hierarchy_deseq, contrast = comp_vec, pAdjustMethod = "fdr")
         })
-        # hierarchy_ancombc2 <- SummarizedExperiment(assays = hierarchy, 
-        #                                            colData = hierarchy_meta)
-        # ancom_res <- ancombc2(data = hierarchy_ancombc2, fix_formula = "~ group + 0", p_adj_method = "fdr", group = "group")
-        # 
+    
         names(results_list) <- names_comp
         results_list <- do.call(cbind, results_list)
         

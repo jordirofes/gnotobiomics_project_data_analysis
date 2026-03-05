@@ -165,7 +165,7 @@ for(data_mae_name in names(data_list)){
             param_list$colo
             
             if(fun_name == "Heatmap_Results"){
-                param_list$cdQuantile <- ifelse(nrow(param_list$dt_list) >= 4000, 0, 0)        
+                param_list$cdQuantile <- ifelse(nrow(param_list$dt_list) >= 4000, 0, -0)        
                 param_list$show_colnames <- ifelse(nrow(param_list$dt_list) > 100, FALSE, TRUE)
                 
                 param_list$color_list <- list("group" = group_color_dict)

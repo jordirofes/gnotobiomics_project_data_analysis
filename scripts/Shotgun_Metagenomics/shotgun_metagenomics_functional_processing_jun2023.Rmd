@@ -142,18 +142,14 @@ lapply(organ_dt_list_proc, function(organ_dt){
 stat_res <- lapply(names(organ_dt_list_proc), function(organ_name){
     organ_data <- organ_dt_list_proc[[organ_name]]
     organ_meta <- metadata_list[[organ_name]]
-  
+
     organ_results <- lapply(names(organ_data), function(hierarchy_name){
         hierarchy <- organ_data[[hierarchy_name]]
         hierarchy_meta <- organ_meta[[hierarchy_name]]
         names_comp <- apply(t(combn(levels(hierarchy_meta$group), m = 2))[,2:1], 1, paste, collapse = "-")
-        # comp_mat <- as.data.frame(matrix(NA, ncol = 2, nrow = length(names_comp)))
-        # rownames(comp_mat) <- names_comp
-        # colnames(comp_mat) <- c("mean rank diff", "pval")
-        # 
-        #hierarchy <- as.data.frame(clr(t(hierarchy)))
+
         hierarchy <- as.data.frame(hierarchy)
-        #pca(mat = hierarchy, metadata = organ_meta, scale = FALSE)
+
         hierarchy_deseq <- DESeqDataSetFromMatrix(countData = hierarchy,
                                                   colData = hierarchy_meta, design = ~ group + 0)
         hierarchy_deseq <- DESeq(hierarchy_deseq, test = "Wald")
@@ -161,63 +157,146 @@ stat_res <- lapply(names(organ_dt_list_proc), function(organ_name){
             comp_vec <- c("group", strsplit(comp_name, "-")[[1]])
             results(hierarchy_deseq, contrast = comp_vec, pAdjustMethod = "fdr")
         })
-        
+
         print(lapply(results_list, summary))
-        # clr_transform <- transformAssay(x = SummarizedExperiment(assays = list("counts" = hierarchy), 
-        #                                                          colData = hierarchy_meta), assay.type = "counts", method = "rclr")
-        # clr_transform
-        # 
-        # results <- lapply(as.data.frame(t(assays(clr_transform)[["rclr"]])), function(var_dt){
-        #     if(length(var_dt) != length(clr_transform$group)){browser()}
-        #     
-        #     kru_res <- kruskal.test(var_dt ~ clr_transform$group)
-        #     if(kru_res$p.value <= 0.05){
-        #         conover_res <- conover.test::conover.test(x = var_dt, g = clr_transform$group)
-        #     
-        #         return(data.frame("adj.p.values" = conover_res$P.adjusted, 
-        #                             "comp" = conover_res$comparisons))
-        #     } else{
-        #         return(data.frame("adj.p.values" = NA, 
-        #                             "comp" = conover_res$comparisons))
-        #     }
-        # })
-        # library(ANCOMBC)
-        # 
-        # hierarchy_ancombc2 <- TreeSummarizedExperiment(assays = list("counts" = hierarchy),
-        #                                            colData = hierarchy_meta)
-        # gr_res <- ancombc(data = hierarchy_ancombc2, p_adj_method = "fdr", 
-        #                    group = "group", assay_name = "counts")
-        # ancom_res <- ancom(data = hierarchy_ancombc2, main_var = "group" 
-        #                     p_adj_method = "fdr")
 
         names(results_list) <- names_comp
         results_list <- do.call(cbind, results_list)
         colnames(results_list) <- gsub("log2FoldChange", "log2FC", colnames(results_list))
         colnames(results_list) <- gsub("pvalue", "p.value", colnames(results_list))
         colnames(results_list) <- gsub("padj", "adj.p.value", colnames(results_list))
-        
-        SummarizedExperiment(assays = list("counts" = hierarchy), 
+
+        SummarizedExperiment(assays = list("counts" = hierarchy),
                              rowData = results_list, colData = hierarchy_meta)
     })
     names(organ_results) <- names(organ_data)
     organ_results
 })
 names(stat_res) <- names(organ_dt_list_proc)
+# 
+# 
+# stat_res2 <- lapply(names(organ_dt_list_proc), function(organ_name){
+#     organ_data <- organ_dt_list_proc[[organ_name]]
+#     organ_meta <- metadata_list[[organ_name]]
+#   
+#     organ_results <- lapply(names(organ_data), function(hierarchy_name){
+#         hierarchy <- organ_data[[hierarchy_name]]
+#         hierarchy_meta <- organ_meta[[hierarchy_name]]
+#         names_comp <- apply(t(combn(levels(hierarchy_meta$group), m = 2))[,2:1], 1, paste, collapse = "-")
+#         comp_matrix <- matrix(NA, nrow = length(names_comp), ncol = 2)
+#         rownames(comp_matrix) <- names_comp
+#         
+#         hierarchy <- transformAssay(SummarizedExperiment(assays = list("counts" = as.data.frame(hierarchy))), 
+#                                     assay.type = "counts", method = "clr", pseudocount = 1)
+#         
+#         results_list <- lapply(as.data.frame(t(assay(hierarchy, "clr"))),
+#                             function(var_dt){
+#             if(length(var_dt) != length(hierarchy_meta$group)){browser()}
+# 
+#             kru_res <- kruskal.test(var_dt ~ hierarchy_meta$group)
+#             if(kru_res$p.value <= 0.05){
+#                 return(DescTools::ConoverTest(x = var_dt, 
+#                                             g = hierarchy_meta$group)[[1]])
+#             } else{
+#                 return(comp_matrix)
+#             }
+#         })
+#         contrasts_results <- lapply(names_comp, function(ctrs_row){
+#             ctrs_result_list <- lapply(results_list, function(ctrs){
+#                 if(!(ctrs_row %in% rownames(ctrs))){return(rep(NA, 2))}
+#                 ctrs[ctrs_row,]   
+#             })
+#             do.call(rbind, ctrs_result_list)
+#         })
+#         names(contrasts_results) <- names_comp
+#         
+#         contrasts_results <- lapply(contrasts_results, function(ctrs){
+#             ctrs <- as.data.frame(ctrs)
+#             colnames(ctrs) <- c("difference", "pvalue")
+#             ctrs$adj.p.value <- p.adjust(ctrs[,"pvalue"], method = "fdr")
+#             ctrs
+#         })
+#         
+#         
+#         contrasts_results <- do.call(cbind, contrasts_results)
+#         colnames(contrasts_results) <- gsub("log2FoldChange", "log2FC",
+#                                             colnames(contrasts_results))
+#         colnames(contrasts_results) <- gsub("pvalue", "p.value",
+#                                             colnames(contrasts_results))
+#         colnames(contrasts_results) <- gsub("padj", "adj.p.value",
+#                                             colnames(contrasts_results))
+#         
+#         SummarizedExperiment(assays = list("counts" = hierarchy), 
+#                             rowData = contrasts_results, 
+#                             colData = hierarchy_meta)
+#     })
+#     names(organ_results) <- names(organ_data)
+#     organ_results
+# })
+# names(stat_res2) <- names(organ_dt_list_proc)
+# ```
+# 
+# ```{r}
+# lapply(stat_res, function(organ){
+#     lapply(organ, function(ft_dt){
+#         sum(!is.na(rowData(ft_dt)$`HFD-CNT.adj.p.value`) &
+#             rowData(ft_dt)$`HFD-CNT.adj.p.value` <= 0.05)
+#     })
+# })
+# lapply(stat_res2, function(organ){
+#     lapply(organ, function(ft_dt){
+#         sum(!is.na(rowData(ft_dt)$`HFD-CNT.adj.p.value`) &
+#             rowData(ft_dt)$`HFD-CNT.adj.p.value` <= 0.05)
+#     })
+# })
+# test_deseq <- stat_res$colon$metaerg_kegg
+# 
+# sig_hfd_d <- rownames(test_deseq)[!is.na(rowData(test_deseq)$`HFD-CNT.adj.p.value`) &
+#                                       rowData(test_deseq)$`HFD-CNT.adj.p.value` <= 0.05]
+# 
+# 
+# test_kruskal <- stat_res2[[2]]$metaerg_kegg
+# 
+# sig_hfd_k <- rownames(test_kruskal)[!is.na(rowData(test_kruskal)$`HFD-CNT.adj.p.value`) &
+#                                         rowData(test_kruskal)$`HFD-CNT.adj.p.value` <= 0.05]
+# 
+# lapply(sig_hfd_k[1], function(var_id){
+#     boxplot(as.numeric(organ_dt_list_proc$colon$metaerg_kegg[var_id,]) ~ metadata_list$colon$metaerg_kegg$group)    
+# })
+# 
+# lapply(sig_hfd_d[1], function(var_id){
+#     boxplot(as.numeric(organ_dt_list_proc$colon$metaerg_kegg[var_id,]) ~ metadata_list$colon$metaerg_kegg$group)    
+# })
+# 
+# 
+# clr_tfm <- transformAssay(stat_res$colon$metaerg_kegg, assay.type = "counts", 
+#                         method = "clr", pseudocount = 1)
+# 
+# lapply(setdiff(sig_hfd_k, sig_hfd_d), function(var_id){
+#     boxplot(as.numeric(assay(clr_tfm[var_id,], "clr")) ~ metadata_list$colon$metaerg_kegg$group)    
+# })
+# 
+# 
+# kruskal.test(as.numeric(organ_dt_list_proc$cecum$metaerg_kegg[sig_hfd_d,]) ~ metadata_list$cecum$metaerg_kegg$group)
+
+
 
 ```
+
 
 ##### Annotations
 
 ```{r}
 annotation_list <- list.files(params$input_dir, pattern = "\\.txt$", full.names = TRUE)
-annotation_list
+
+annotation_list <- annotation_list[c(5, 1, 3)]
 names(annotation_list) <- c("EC", "metaerg_pathway", "cogs")
 
-annotation_dt <- lapply(annotation_list, function(x){
-    read.table(x, header = TRUE, sep = "\t", row.names = NULL)
-})
+# annotation_dt <- lapply(annotation_list, function(x){
+#     read.table(x, header = TRUE, sep = "\t", row.names = NULL)
+# })
 #### EC
-ec_dt <- readLines(annotation_list[3])
+ec_dt <- readLines(annotation_list["EC"])
 ec_dt <- ec_dt[25:length(ec_dt)]
 ec_dt_list <- list()
 
@@ -240,15 +319,52 @@ for(ec_line in ec_dt){
     }
 }
 ec_dt_list <- do.call(rbind, ec_dt_list)
-######
-cog_dt <- readLines(annotation_list[2])
-cog_dt <- gsub('"', "", cog_dt)
+###### COGs
+cog_dt <- readLines(annotation_list["cogs"])
+# cog_dt <- gsub('"', "", cog_dt)
 cog_dt <- strsplit(cog_dt, "\t")
+
+cog_dt <- lapply(cog_dt, function(x){
+    x <- c(x, rep("", 7 - length(x)))
+})
+
 cog_dt <- do.call(rbind, cog_dt)
 colnames(cog_dt) <- cog_dt[1,]
 cog_dt <- cog_dt[-1,]
 
 cog_dt <- as.data.frame(cog_dt)
+
+cog_category <- readLines("../../inputs/Shotgun_Metagenomics/cog-24.fun.tab.txt")
+cog_category <- strsplit(cog_category, "\t")
+
+cog_type <- cog_category[lengths(cog_category) == 2]
+cog_type <- do.call(rbind, cog_type)
+colnames(cog_type) <- c("COG_Type_ID", "Type_Info")
+cog_type <- as.data.frame(cog_type)
+
+cog_fun <- cog_category[lengths(cog_category) != 2]
+cog_fun[[16]] <- c(cog_fun[[16]][1:2], "", cog_fun[[16]][3])
+
+cog_fun <- do.call(rbind, cog_fun)
+colnames(cog_fun) <- c("COG_functional_category", "COG_Type_ID", 
+                        "Color_ID", "Functional_Description")
+cog_fun <- as.data.frame(cog_fun)
+cog_fun$Type_Info <- cog_type$Type_Info[match(cog_fun$COG_Type_ID, cog_type$COG_Type_ID)]
+
+cog_info_dt <- lapply(strsplit(cog_dt$COG_functional_category, ""), function(x){
+    
+    cog_fun_found <- cog_fun[cog_fun$COG_functional_category %in% x,]
+    
+    cog_desc_found <- paste(cog_fun_found$Functional_Description,
+                            collapse = " / ")
+    cog_info_found <- paste(unique(cog_fun_found$Type_Info), collapse = " / ")
+    data.frame("COG_Functional_Category" = cog_desc_found, 
+                "COG_Type_Info" = cog_info_found)
+})
+cog_info_dt <- do.call(rbind, cog_info_dt)
+
+cog_dt <- cbind(cog_dt, cog_info_dt)
+
 ######
 metacyc_dt <- read.table(annotation_list[1], sep = "\t", header = TRUE, row.names = NULL)
 

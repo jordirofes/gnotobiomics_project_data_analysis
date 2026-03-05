@@ -22,10 +22,10 @@ library(MultiAssayExperiment)
 ## Loading the omic dt
 
 ```{r}
-mofa_dir_name <- "sig_int_thr07_liv2"
+mofa_dir_name <- "sig_int_thr07_paper_met"
 
 output_dir <- paste0(params$output_dir, "MOFA_Results/", mofa_dir_name, "/")
-corr_output_dir <- paste0(output_dir, "correlation_results/kegg_results/")
+corr_output_dir <- paste0(output_dir, "metabolite_enrich/")
 
 omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
 ```
@@ -34,7 +34,7 @@ omic_dt <- readRDS(paste0(output_dir, "multi_omics_filtered.rds"))
 ## Loading the enrichment data
 
 ```{r}
-enrich_res_path <- paste0(corr_output_dir, "enrich_results.xlsx")
+enrich_res_path <- paste0(corr_output_dir, "met_gene_enrich_results.xlsx")
 
 enrich_sheet_names <- openxlsx::getSheetNames(enrich_res_path)
 
@@ -103,25 +103,25 @@ names(universe_list_ids) <- names(rna_seq_rd)
 ```{r}
 library(KEGGREST)
 
-enrich_results <- enrich_results[1:2]
 
+overlapping_pathways <- intersect(enrich_results$`Factor_1.All Weights`$ID,
+                                  enrich_results$`Factor_2.All Weights`$ID)
 
-overlapping_pathways <- intersect(enrich_results$Factor_1.CL_1$ID,
-                                  enrich_results$Factor_2.CL_1$ID)
-
-pathway_unique <- union(enrich_results$Factor_1.CL_1$ID,
-                          enrich_results$Factor_2.CL_1$ID)
+pathway_unique <- union(enrich_results$`Factor_1.All Weights`$ID,
+                          enrich_results$`Factor_2.All Weights`$ID)
 
 
 pathway_info <- lapply(pathway_unique, function(pathway_id){
     lapply(enrich_results, function(enrich_res){
         if(!any(enrich_res$ID == pathway_id)){return(NULL)}
         
-        dmr_gene_ids <- strsplit(enrich_res[enrich_res$ID == pathway_id,]$geneID.x, "/")[[1]]
+        dmr_gene_ids <- strsplit(enrich_res[enrich_res$ID == pathway_id,]$geneID, "/")[[1]]
         
-        dmr_ids <- gsub("WGB_DNA_Methylation.", "", dmr_gene_ids[grepl("WGB_DNA_Methylation", dmr_gene_ids)],)
-        gene_ids <- gsub("RNA_Sequencing.", "", dmr_gene_ids[grepl("RNA_Sequencing", dmr_gene_ids)],)
-        metabo_ids <- gsub("Untargeted_Metabolomics.", "", strsplit(enrich_res[enrich_res$ID == pathway_id,]$geneID.y, "/")[[1]])
+        dmr_ids <- gsub("WGB_DNA_Methylation.", "", dmr_gene_ids[grepl("WGB_DNA_Methylation",
+                                                                        dmr_gene_ids)],)
+        gene_ids <- gsub("RNA_Sequencing.", "", dmr_gene_ids[grepl("RNA_Sequencing", 
+                                                                    dmr_gene_ids)],)
+        metabo_ids <- gsub("Untargeted_Metabolomics.", "", strsplit(enrich_res[enrich_res$ID == pathway_id,]$geneID, "/")[[1]])
         metabo_ids <- metabo_ids[metabo_ids != "NA" & !is.na(metabo_ids)]
         
 

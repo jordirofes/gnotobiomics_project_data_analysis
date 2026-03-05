@@ -26,9 +26,31 @@ lima_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/merged_methrix.r
 # gfcv_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_gfcv.rds")
 # lima_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_lima.rds")
 
-gfcv_dss <- readRDS("../../outputs/WGB_DNA_Methylation/GFCV/DSS.group.non_smoothed_005/dna_met_exp_non_smoothed_005.group.reduced.rds")
-lima_dss <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_005/dna_met_exp_non_smoothed_005.group.reduced.rds")
-lima_dss <- lima_dss[!seqnames(rowRanges(lima_dss)) %in% c("chrX", "chrY")]
+gfcv_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_gfcv.rds")
+lima_dss <- readRDS("../../outputs/WGB_DNA_Methylation/WGB_DNA_Methylation_exp_lima.rds")
+# lima_dss <- lima_dss[!seqnames(rowRanges(lima_dss)) %in% c("chrX", "chrY")]
+```
+
+```{r}
+dmr_methrix <- subset_methrix(m = lima_methrix, regions = rowRanges(lima_dss), overlap_type = "any")
+dmr_methrix
+
+nrow(lima_methrix)
+nrow(dmr_methrix)
+nrow(dmr_methrix)/nrow(lima_methrix)*100
+```
+
+```{r}
+dmr_methrix <- subset_methrix(m = gfcv_methrix, regions = rowRanges(gfcv_dss), overlap_type = "any")
+dmr_methrix
+
+nrow(lima_methrix)
+nrow(dmr_methrix)
+nrow(dmr_methrix)/nrow(lima_methrix)*100
+```
+
+```{r}
+
 ```
 
 ```{r}

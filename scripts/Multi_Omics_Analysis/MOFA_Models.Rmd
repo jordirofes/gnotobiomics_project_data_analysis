@@ -5,15 +5,17 @@ date: "2024-01-18"
 params:
     input_dir: "../../outputs/Multi_Omics_Analysis/"
     output_dir: "../../outputs/Multi_Omics_Analysis/MOFA_Results/"
-    multi_omics_exp: !r multi_omics[,colData(multi_omics)$group != "HFE",multi_omics_selected]
+    multi_omics_exp: !r multi_omics[,colData(multi_omics)$group != "HFE", sel_multi_omics_mofa]
     group_var: "group"
     sample_var: "samplename"
-    num_factors: 2
-    results_name: !r mofa_dir_name
+    num_factors: 30
+    results_name: "sig_int_thr07_paper_30"
     color_vec: !r group_color_dict
     random_seed: 1234
     convergence_mode: "slow"
     ntries: 3
+    weight_selection: "relative"
+    scale_weights: FALSE
     score_filter: 0.7
 ---
 
@@ -63,7 +65,7 @@ head(train_opts)
 ## LIMA model {.tabset}
 
 
-```{r, results='hide'}
+```{r, results='hide', message=FALSE, warning=FALSE, echo=FALSE}
 
 model_list <- list()
 
@@ -77,6 +79,7 @@ untrained_mofa <- multi_omics_mofa
 outfile_list <- list()
 
 for(id in seq_len(params$ntries)){
+    
     multi_omics_mofa@training_options$seed <- params$random_seed + id
     
     outfile_list[[id]] <- paste0(output_dir, 
@@ -85,6 +88,7 @@ for(id in seq_len(params$ntries)){
     model_list[[id]] <- run_mofa(multi_omics_mofa, 
                                  outfile = outfile_list[[id]], 
                                  use_basilisk = TRUE)    
+    
 }
 
 selected_mod_val <- seq_len(params$ntries) %in% which.max(sapply(model_list, get_elbo))
@@ -95,6 +99,8 @@ file.rename(from = unlist(outfile_list[selected_mod_val]),
 
 multi_omics_mofa <- select_model(model_list)
 rm(model_list)
+
+# multi_omics_mofa <- MOFA2::load_model("../../outputs/Multi_Omics_Analysis/MOFA_Results/sig_int_thr07_paper_30/model.hdf5")
 ```
 
 ```{r, fig.width=12, fig.height=8}
@@ -143,38 +149,38 @@ rm(model_list)
 
 
 ```{r}
-n_rand <- 10
-set.seed(1234)
-random_mofa_list <- lapply(seq_len(n_rand), function(x){
-    set.seed(123*x)
-    untrained_mofa@data <- lapply(untrained_mofa@data, function(omic_dt){
-        test <- t(replicate(n = nrow(omic_dt$group1), expr = {
-            rnorm(n = ncol(omic_dt$group1), mean = 0, sd = 1)
-        }))
-        rownames(test) <- rownames(omic_dt$group1)
-        colnames(test) <- colnames(omic_dt$group1)
-
-        omic_dt$group1 <- test
-        return(omic_dt)
-        # for(row_id in seq_len(nrow(omic_dt$group1))){
-        #     omic_dt$group1[row_id,] <-
-        # }
-    })
-    run_mofa(untrained_mofa, outfile = NULL, use_basilisk = TRUE)
-})
+# n_rand <- 10
+# set.seed(1234)
+# random_mofa_list <- lapply(seq_len(n_rand), function(x){
+#     set.seed(123*x)
+#     untrained_mofa@data <- lapply(untrained_mofa@data, function(omic_dt){
+#         test <- t(replicate(n = nrow(omic_dt$group1), expr = {
+#             rnorm(n = ncol(omic_dt$group1), mean = 0, sd = 1)
+#         }))
+#         rownames(test) <- rownames(omic_dt$group1)
+#         colnames(test) <- colnames(omic_dt$group1)
+# 
+#         omic_dt$group1 <- test
+#         return(omic_dt)
+#         # for(row_id in seq_len(nrow(omic_dt$group1))){
+#         #     omic_dt$group1[row_id,] <-
+#         # }
+#     })
+#     run_mofa(untrained_mofa, outfile = NULL, use_basilisk = TRUE)
+# })
 ```
 
 ```{r}
-weight_list <- lapply(random_mofa_list, get_weights)
-quantile_list <- lapply(names(experiments(params$multi_omics_exp)), function(omic_name){
-    omic_weights <- lapply(weight_list, function(x){x[[omic_name]]})
-    hist_dt <- do.call(rbind, omic_weights)
-    lapply(as.data.frame(hist_dt), function(x){
-        quantile(x, c(0.025, 0.975))
-    })
-})
-names(quantile_list) <- names(experiments(params$multi_omics_exp))
-quantile_list
+# weight_list <- lapply(random_mofa_list, get_weights)
+# quantile_list <- lapply(names(experiments(params$multi_omics_exp)), function(omic_name){
+#     omic_weights <- lapply(weight_list, function(x){x[[omic_name]]})
+#     hist_dt <- do.call(rbind, omic_weights)
+#     lapply(as.data.frame(hist_dt), function(x){
+#         quantile(x, c(0.025, 0.975))
+#     })
+# })
+# names(quantile_list) <- names(experiments(params$multi_omics_exp))
+# quantile_list
 ```
 
 
@@ -197,6 +203,7 @@ quantile_list
 ```{r, fig.height=5}
 # file_path <- "./model.hdf5"
 # model <- load_model(file_path)
+
 mofa_group_var <- colData(params$multi_omics_exp)[[params$group_var]]
 names(mofa_group_var) <- colData(params$multi_omics_exp)[[params$sample_var]]
 
@@ -347,41 +354,49 @@ score_dt <- get_factors(object = multi_omics_mofa)
 
 ```{r}
 thr <- params$score_filter
-thr_score <- 0
 
-weight_dt <- get_weights(object = multi_omics_mofa)
+weight_dt <- get_weights(object = multi_omics_mofa, 
+                        scale = params$scale_weights)
 
 omic_res <- lapply(names(exp_dt), function(omic_name){
     omic_weights <- weight_dt[[omic_name]]
     
     omic_weight_props <- abs(omic_weights)
     
-    omic_weight_props <- omic_weight_props/rowSums(omic_weight_props)
-    
-    apply(omic_weight_props, 2, function(x){
-        names(x)[x >= thr]
-    }, simplify = FALSE)
+    if(params$weight_selection == "relative"){
+        omic_weight_props <- omic_weight_props/rowSums(omic_weight_props)
         
-    # score_list <- lapply(seq_along(factor_selected), function(x){
-    #     
-    #     f <- factor_selected[[x]]
+        score_dt <- apply(omic_weight_props, 2, function(x){
+            names(x)[x >= thr]
+        }, simplify = FALSE)
+        
+    } else if(params$weight_selection == "absolute"){
+        score_dt <- apply(omic_weight_props, 2, function(x){
+            names(x)[x >= thr]
+        }, simplify = FALSE)   
+    }
+    # score_list <- lapply(seq_len(num_factors), function(x){
+    #     browser()
+    #     # f <- factor_selected[[x]]
     #     # predicted <- (as.matrix(weight_dt[[omic_name]][,x]) %*% t(score_dt[[1]][,x]))[f,, drop = FALSE]
-    #     predicted <- MOFA2::predict(multi_omics_mofa, views = omic_name, 
-    #                                 factors = x)[[1]][[1]][f,, drop = FALSE]
-    #     
-    #     real <- exp_dt[[omic_name]][[1]][f,, drop = FALSE]
+    #     predicted <- MOFA2::predict(multi_omics_mofa, views = omic_name,
+    #                                 factors = x)[[1]][[1]][,, drop = FALSE]
+    # 
+    #     real <- exp_dt[[omic_name]][[1]][,, drop = FALSE]
     #     residuals <- (real-predicted)
-    #     
+    # 
     #     # predicted_all <- (as.matrix(weight_dt[[omic_name]]) %*% t(score_dt[[1]]))[f,, drop = FALSE]
     #     predicted_all <- MOFA2::predict(multi_omics_mofa, 
-    #                                     views = omic_name)[[1]][[1]][f,, drop = FALSE]
-    #     
+    #                                     views = omic_name)[[1]][[1]][,, drop = FALSE]
+    # 
     #     residuals_all <- real - predicted_all
-    #     
+    # 
     #     score_vect <- rowSums((residuals_all)^2, na.rm = T) / rowSums((residuals)^2, na.rm = T)
-    #     return(names(score_vect)[score_vect >= thr_score])
+    #     score_vect
+    #     # return(names(score_vect)[score_vect >= thr_score])
     # })
-    
+    return(score_dt)
+    # return(score_dt)
     # return(score_list)
 })
 names(omic_res) <- names(exp_dt)

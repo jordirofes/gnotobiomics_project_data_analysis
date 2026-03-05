@@ -15,11 +15,11 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Loading the packages
 
 ```{r}
-library(WGCNA)
 library(MultiAssayExperiment)
 library(AnnotationDbi)
 library(org.Mm.eg.db)
 library(clusterProfiler)
+library(WGCNA)
 ```
 
 
@@ -73,16 +73,12 @@ text(spt$fitIndices[,1], spt$fitIndices[,5], labels= spt$fitIndices[,1],col="red
 ```{r}
 setwd(params$output_dir)
 # Network construction
-bwnet <- blockwiseModules(datExpr = t(dt_list), power = 26, 
-                        TOMType = "signed", minModuleSize = 30,
-                        reassignThreshold = 0, mergeCutHeight = 0.25,
-                        numericLabels = TRUE, saveTOMs = TRUE, loadTOM = TRUE,
-                        saveTOMFileBase = "lima_blockwise", 
+
+bwnet <- blockwiseModules(datExpr = t(dt_list), power = 22, 
+                        TOMType = "signed",
+                        numericLabels = TRUE, saveTOMs = TRUE, loadTOM = FALSE,
+                        saveTOMFileBase = "lima_blockwise_filt", 
                         verbose = 3, randomSeed = 1234)
-```
-
-
-```{r}
 # Convert labels to colors for plotting
 mergedColors <-  labels2colors(bwnet$colors)
 # Plot the dendrogram and the module colors underneath
