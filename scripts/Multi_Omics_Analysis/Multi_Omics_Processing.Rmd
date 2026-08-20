@@ -3,6 +3,8 @@ title: "Omic Results Processing"
 author: "Jordi Rofes Herrera"
 date: "2023-12-27"
 output: html_document
+params:
+    output_dir: "../../outputs/Multi_Omics_Analysis/"
 ---
 
 ```{r setup, include=FALSE}
@@ -36,57 +38,10 @@ source("../Utility_Functions/utilities.R")
 
 ## Omics pre-processing
 
-```{r}
-output_dir <- "../../outputs/"
-
-if(!dir.exists(output_dir)){dir.create(output_dir)}
-
-omic_list <- list("X16S_Metagenomics", "Histone_Modifications_Proteomics", 
-                  "Metallomics", "RNA_Sequencing", "Shotgun_Metagenomics", 
-                  "Targeted_Metabolomics", "Untargeted_Metabolomics", 
-                  "WGB_DNA_Methylation")
-script_list <- list.files("../", recursive = TRUE, full.names = TRUE)
-
-script_list <- lapply(omic_list, function(omic_name){
-    grep(omic_name, script_list, value = TRUE)
-})
-
-names(script_list) <- omic_list
-
-for(omic_name in names(script_list)){
-    if(!dir.exists(paste0(output_dir, "omic_name/"))){dir.create(paste0(output_dir, "omic_name/"))}
-
-    
-    script_paths <- script_list[[omic_name]]
-    
-    found_master <- grepl("master", x = script_paths, ignore.case = TRUE)
-    if(any(found_master)){
-        script_paths <- script_paths[grep("master", x = script_paths, ignore.case = TRUE)]
-    } else{
-        script_paths <- script_paths[grep("processing", x = script_paths, ignore.case = TRUE)]
-    }
-    param_list <- list(input_dir = paste0("../../inputs/", omic_name, "/"),
-                           output_dir = paste0(output_dir, omic_name, "/"))
-    
-    if(!file.exists(paste0(param_list$output_dir, omic_name, "_exp_gfcv.rds")) & 
-        !file.exists(paste0(param_list$output_dir, omic_name, "_exp_lima.rds"))){
-        for(script_i in script_paths){
-                xfun::Rscript_call(rmarkdown::render, 
-                    args = list(input = script_i, 
-                                output_file = paste0(param_list$output_dir,
-                                                     basename(script_i), ".html"), 
-                                params = param_list
-                            )
-                )    
-        }
-    }
-}
-```
-
 ## Omic Merge
 
 ```{r}
-multi_omic_dir <- paste0(output_dir, "Multi_Omics_Analysis/")
+multi_omic_dir <- params$output_dir
 
 if(dir.exists(multi_omic_dir)){dir.create(multi_omic_dir)}
 #### GFCV merge
@@ -148,7 +103,8 @@ names(gfcv_exp_list_proc) <- names(gfcv_exp_list)
 gfcv_multi_exp <- MultiAssayExperiment(experiments = gfcv_exp_list_proc, 
                                     colData = omics_metadata)
 
-saveRDS(gfcv_multi_exp, paste0(multi_omic_dir, "../Multi_Omics_Analysis_GFCV/Multi_Omics_Analysis_exp_gfcv.rds"))
+saveRDS(gfcv_multi_exp, 
+        paste0(multi_omic_dir, "Multi_Omics_Analysis_exp_gfcv.rds"))
 
 #### LIMA merge
 search_pattern <- "_exp_lima.rds"
@@ -231,7 +187,8 @@ rowData(experiments(lima_multi_exp)[["WGB_DNA_Methylation"]])$ensemblId <- mapId
     keys = rowData(experiments(lima_multi_exp)[["WGB_DNA_Methylation"]])$geneId,
     column = "ENSEMBL", keytype = "ENTREZID", multiVals = "first")
 
-saveRDS(lima_multi_exp, paste0(multi_omic_dir, "Multi_Omics_Analysis_exp_lima.rds"))
+saveRDS(lima_multi_exp, 
+        paste0(multi_omic_dir, "Multi_Omics_Analysis_exp_lima.rds"))
 ```
 
 
@@ -245,7 +202,6 @@ exp_filt <- lapply(experiments(lima_multi_exp), function(omic_proc){
     
     omic_mat <- as.matrix(assay(omic_proc))
     omic_mat <- omic_mat != 0 & !is.na(omic_mat)
-    
     keep_vars <- apply(omic_mat, 1, function(dt_var){
         group_dt <- tapply(dt_var,
                             INDEX = droplevels(omic_proc$group),
@@ -348,6 +304,8 @@ proc_omics <- lapply(names(experiments(gfcv_multi_exp)), function(omic_name){
 names(proc_omics) <- names(assays(gfcv_multi_exp))
 experiments(gfcv_multi_exp) <- ExperimentList(proc_omics)
 
-saveRDS(gfcv_multi_exp, paste0(multi_omic_dir, "../Multi_Omics_Analysis_GFCV/Multi_Omics_Analysis_MA_exp_gfcv.rds"))
+saveRDS(gfcv_multi_exp, 
+        paste0(multi_omic_dir, 
+            "Multi_Omics_Analysis_MA_exp_gfcv.rds"))
 ```
 

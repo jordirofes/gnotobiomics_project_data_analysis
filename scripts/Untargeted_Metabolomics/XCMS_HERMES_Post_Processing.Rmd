@@ -4,15 +4,15 @@ author: "Jordi Rofes Herrera"
 date: "27/3/2022"
 output: html_document
 params:
-    metadata_file: "../../inputs/Untargeted_Metabolomics/Hilic_Negative/LC_MS_metadata.csv"
-    xcms_hermes_file: "../../outputs/Untargeted_Metabolomics/Hermes_Results/Hilic_Negative/summarized_hermes_xcms.rds"
-    hermes_file: "../../outputs/Untargeted_Metabolomics/Hermes_Results/Hilic_Negative/filteredSoiLists.rds"
+    metadata_file: "../../inputs/Untargeted_Metabolomics/Hilic_Positive/LC_MS_metadata.csv"
+    xcms_hermes_file: "../../outputs/Untargeted_Metabolomics/Hermes_Results/Hilic_Positive/summarized_hermes_xcms.rds"
+    hermes_file: "../../outputs/Untargeted_Metabolomics/Hermes_Results/Hilic_Positive/filteredSoiLists.rds"
     hermes_filter: TRUE
-    qc_name: "HN_QC"
-    blank_name: "HN_Blank"
-    output_results: "../../outputs/Untargeted_Metabolomics/Hermes_Results/Hilic_Negative/"
-    data_type: "Hilic_Negative"
-    mummichog_ionization: "negative"
+    qc_name: "HP_QC"
+    blank_name: "HP_Blank"
+    output_results: "../../outputs/Untargeted_Metabolomics/Hermes_Results/Hilic_Positive/"
+    data_type: "Hilic_Positive"
+    mummichog_ionization: "positive"
 ---
 
 ```{r setup, include=FALSE}
@@ -36,6 +36,7 @@ library(vsn)
 library(dplyr)
 library(stringr)
 library(igraph)
+library(DESeq2)
 pca_plot <- function(pca_data, pc_x, pc_y, group_var, ellipse_var, allElipse =TRUE, interactive = TRUE, level = 0.95){
     pc_var <- pca_data$sdev^2
     pc_var_abs <- pc_var/sum(pc_var)*100
@@ -208,7 +209,7 @@ tukey_results <- apply(assay(xcms_p_dc_filt), 1, function(dt_var){
                         data = colData(xcms_p_dc_filt))
     anova_results_no_int <- aov(log(dt_var) ~ batch + sex + gfcv, 
                                 data = colData(xcms_p_dc_filt))
-    
+    print(anova_results)
     list("Interaction Term" = as.data.frame(summary(anova_results)[[1]][4,]),
          "GF_CV_Full" = as.data.frame(summary(anova_results_no_int)[[1]][3,]),
          "Pairwise-Tests" = TukeyHSD(anova_results, which = c("sex:gfcv")))
@@ -248,35 +249,38 @@ feature_data <- as.data.frame(rowData(xcms_p_dc_filt))
 hermes_dt <- readRDS(params$hermes_file)
 hermes_ions <- hermes_dt@metadata@ExpParam@ionF[[2]]
 
+hermes_dt@metadata@ExpParam@DB$Name <- gsub(";", "-", 
+                                            hermes_dt@metadata@ExpParam@DB$Name)
+
 feature_data$soi <- sapply(feature_data$soi, function(x){
     if(all(is.na(x))){return(NA)}
     paste(x, collapse = ",")})
 feature_data$formula <- sapply(feature_data$formula, function(x){
     if(all(is.na(x))){return(NA)}
-    paste(x, collapse = "/")})
+    paste(x, collapse = " / ")})
 
 feature_data$neutral_formula <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
     
     found_formulas <- hermes_ions$f[match(form, hermes_ions$ion)]
     
     if(length(found_formulas) == 0){return(NA)}
-    paste0(found_formulas, collapse = "/")
+    paste0(found_formulas, collapse = " / ")
 })
 
 feature_data$adduct_annotation <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
     
     found_an <- hermes_ions$an[match(form, hermes_ions$ion)]
     if(length(found_an) == 0){return(NA)}
-    paste0(found_an, collapse = "/")
+    paste0(found_an, collapse = " / ")
 })
     
 feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
 
     found_formulas <- hermes_ions$f[match(form, hermes_ions$ion)]
     
@@ -289,12 +293,12 @@ feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
     # if(length(found_mets) > 5){
     #     found_mets <- found_mets[1:5]
     # }
-    return(paste(found_mets, collapse = "/"))
+    return(paste(found_mets, collapse = " / "))
 }, USE.NAMES = FALSE)
 
 feature_data$PutativeMetabolitesKEGG <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
         
     found_formulas <- hermes_ions$f[match(form, hermes_ions$ion)]
     
@@ -312,12 +316,12 @@ feature_data$PutativeMetabolitesKEGG <- sapply(feature_data$formula, function(fo
     # if(length(found_mets) > 5){
     #     found_mets <- found_mets[1:5]
     # }
-    return(paste(found_mets, collapse = "/"))
+    return(paste(found_mets, collapse = " / "))
 }, USE.NAMES = FALSE)
 
 feature_data$kegg_id <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
 
     found_formulas <- hermes_ions$f[match(form, hermes_ions$ion)]
     
@@ -339,12 +343,12 @@ feature_data$kegg_id <- sapply(feature_data$formula, function(form){
     # if(length(found_mets) > 5){
     #     found_mets <- found_mets[1:5]
     # }
-    return(paste(found_mets, collapse = "/"))
+    return(paste(found_mets, collapse = " / "))
 }, USE.NAMES = FALSE)
 
 feature_data$hmdb_id <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
 
     found_formulas <- hermes_ions$f[match(form, hermes_ions$ion)]
     
@@ -362,13 +366,13 @@ feature_data$hmdb_id <- sapply(feature_data$formula, function(form){
     # if(length(found_mets) > 5){
     #     found_mets <- found_mets[1:5]
     # }
-    return(paste(found_mets, collapse = "/"))
+    return(paste(found_mets, collapse = " / "))
 }, USE.NAMES = FALSE)
 
 
 feature_data$iso_num <- sapply(seq_len(nrow(feature_data)), function(row_id){
     if(!is.na(feature_data[row_id,]$SOIData)){
-        return(paste(feature_data[row_id,]$SOIData[[1]]$isofound, collapse = "/"))
+        return(paste(feature_data[row_id,]$SOIData[[1]]$isofound, collapse = " / "))
     } else{
         return(NA)
     }
@@ -377,7 +381,7 @@ feature_data$iso_num <- sapply(seq_len(nrow(feature_data)), function(row_id){
 
 feature_data$iso_fidelity <- sapply(seq_len(nrow(feature_data)), function(row_id){
     if(!is.na(feature_data[row_id,]$SOIData)){
-        return(paste(round(feature_data[row_id,]$SOIData[[1]]$isofidelity, 3), collapse = "/"))
+        return(paste(round(feature_data[row_id,]$SOIData[[1]]$isofidelity, 3), collapse = " / "))
     } else{
         return(NA)
     }
@@ -389,7 +393,6 @@ feature_data$iso_fidelity <- sapply(seq_len(nrow(feature_data)), function(row_id
 ```{r}
 contrasts_results <-  c(list("GFCV_sex_Interaction" = interaction_results, 
                             "GF_CV" = gf_cv_results), contrasts_results)
-
 
 contrasts_results <- do.call(cbind, contrasts_results)
 
@@ -489,7 +492,7 @@ names(pathway_list) <- pathway_enrich$pathway
 emp_compounds2$pathways_tested <- sapply(emp_compounds2$EID, function(x){
     found <- names(pathway_list)[sapply(pathway_list, function(y){any(y %in% x)})]
     if(length(found)){
-        return(paste(found, collapse = "/"))
+        return(paste(found, collapse = " / "))
     } else{
         return(NA)
     }
@@ -504,7 +507,7 @@ merged_res <- lapply(rownames(rowData(xcms_p_dc_filt)), function(x){
     } else if(nrow(found) == 1){
         return(found)
     } else if(nrow(found) > 1){
-        return(sapply(found, paste, collapse = "/"))
+        return(sapply(found, paste, collapse = " / "))
     }
 })
 merged_res <- do.call(rbind, merged_res)
@@ -512,12 +515,12 @@ merged_res <- do.call(rbind, merged_res)
 rowData(xcms_p_dc_filt) <- cbind(rowData(xcms_p_dc_filt), merged_res)
 
 rowData(xcms_p_dc_filt)$input_row <- sapply(rowData(xcms_p_dc_filt)$input_row, function(row_id){
-    unique(strsplit(row_id, "/")[[1]])
+    unique(strsplit(row_id, " / ")[[1]])
 })
 
 mz_rd <- as.data.frame(rowData(xcms_p_dc_filt))
 
-hermes_f <- unique(unlist(strsplit(mz_rd$neutral_formula, "/")))
+hermes_f <- unique(unlist(strsplit(mz_rd$neutral_formula, " / ")))
 hermes_f <- hermes_f[!is.na(hermes_f)]
 # hermes_f <- unique(mz_rd$neutral_formula[!is.na(mz_rd$neutral_formula)])
 hermes_p_ad <- ifelse(params$mummichog_ionization == "positive", 
@@ -552,9 +555,12 @@ keep_adducts <- sapply(hermes_f, function(f_id){
 })
 
 xcms_p_dc_filt <- xcms_p_dc_filt[(mz_rd$isotope == "M0" & (rownames(mz_rd) %in% unlist(keep_adducts))) | (mz_rd$input_row %in% keep_rows_test),]
+```
 
-saveRDS(xcms_p_dc_filt,
-        paste0(params$output_results, "xcms_hermes_exp_gfcv.rds"))
+
+```{r}
+# saveRDS(xcms_p_dc_filt,
+#         paste0(params$output_results, "xcms_hermes_exp_gfcv.rds"))
 ```
 
 ### LIMA model analysis
@@ -670,35 +676,38 @@ feature_data <- as.data.frame(rowData(xcms_p_dc_filt))
 hermes_dt <- readRDS(params$hermes_file)
 hermes_ions <- hermes_dt@metadata@ExpParam@ionF[[2]]
 
+hermes_dt@metadata@ExpParam@DB$Name <- gsub(";", "-", 
+                                            hermes_dt@metadata@ExpParam@DB$Name)
+
 feature_data$soi <- sapply(feature_data$soi, function(x){
     if(all(is.na(x))){return(NA)}
-    paste(x, collapse = ",")})
+    paste(x, collapse = ";")})
 feature_data$formula <- sapply(feature_data$formula, function(x){
     if(all(is.na(x))){return(NA)}
-    paste(x, collapse = "/")})
+    paste(x, collapse = " / ")})
 
 feature_data$neutral_formula <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
     
     found_formulas <- hermes_ions$f[match(form, hermes_ions$ion)]
     
     if(length(found_formulas) == 0){return(NA)}
-    paste0(found_formulas, collapse = "/")
+    paste0(found_formulas, collapse = " / ")
 })
 
 feature_data$adduct_annotation <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
     
     found_an <- hermes_ions$an[match(form, hermes_ions$ion)]
     if(length(found_an) == 0){return(NA)}
-    paste0(found_an, collapse = "/")
+    paste0(found_an, collapse = " / ")
 })
     
 feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
 
     found_formulas <- hermes_ions$f[match(form, hermes_ions$ion)]
     
@@ -711,12 +720,12 @@ feature_data$PutativeMetabolites <- sapply(feature_data$formula, function(form){
     # if(length(found_mets) > 5){
     #     found_mets <- found_mets[1:5]
     # }
-    return(paste(found_mets, collapse = "/"))
+    return(paste(found_mets, collapse = " / "))
 }, USE.NAMES = FALSE)
 
 feature_data$PutativeMetabolitesKEGG <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
         
     found_formulas <- hermes_ions$f[match(form, hermes_ions$ion)]
     
@@ -734,12 +743,12 @@ feature_data$PutativeMetabolitesKEGG <- sapply(feature_data$formula, function(fo
     # if(length(found_mets) > 5){
     #     found_mets <- found_mets[1:5]
     # }
-    return(paste(found_mets, collapse = "/"))
+    return(paste(found_mets, collapse = " / "))
 }, USE.NAMES = FALSE)
 
 feature_data$kegg_id <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
 
     found_formulas <- hermes_ions$f[match(form, hermes_ions$ion)]
     
@@ -761,12 +770,12 @@ feature_data$kegg_id <- sapply(feature_data$formula, function(form){
     # if(length(found_mets) > 5){
     #     found_mets <- found_mets[1:5]
     # }
-    return(paste(found_mets, collapse = "/"))
+    return(paste(found_mets, collapse = " / "))
 }, USE.NAMES = FALSE)
 
 feature_data$hmdb_id <- sapply(feature_data$formula, function(form){
     if(is.na(form)){return(NA)}
-    form <- strsplit(form, "/")[[1]]
+    form <- strsplit(form, " / ")[[1]]
 
     found_formulas <- hermes_ions$f[match(form, hermes_ions$ion)]
     
@@ -784,13 +793,13 @@ feature_data$hmdb_id <- sapply(feature_data$formula, function(form){
     # if(length(found_mets) > 5){
     #     found_mets <- found_mets[1:5]
     # }
-    return(paste(found_mets, collapse = "/"))
+    return(paste(found_mets, collapse = " / "))
 }, USE.NAMES = FALSE)
 
 
 feature_data$iso_num <- sapply(seq_len(nrow(feature_data)), function(row_id){
     if(!is.na(feature_data[row_id,]$SOIData)){
-        return(paste(feature_data[row_id,]$SOIData[[1]]$isofound, collapse = "/"))
+        return(paste(feature_data[row_id,]$SOIData[[1]]$isofound, collapse = " / "))
     } else{
         return(NA)
     }
@@ -799,7 +808,7 @@ feature_data$iso_num <- sapply(seq_len(nrow(feature_data)), function(row_id){
 
 feature_data$iso_fidelity <- sapply(seq_len(nrow(feature_data)), function(row_id){
     if(!is.na(feature_data[row_id,]$SOIData)){
-        return(paste(round(feature_data[row_id,]$SOIData[[1]]$isofidelity, 3), collapse = "/"))
+        return(paste(round(feature_data[row_id,]$SOIData[[1]]$isofidelity, 3), collapse = " / "))
     } else{
         return(NA)
     }
@@ -905,7 +914,7 @@ names(pathway_list) <- pathway_enrich$pathway
 emp_compounds2$pathways_tested <- sapply(emp_compounds2$EID, function(x){
     found <- names(pathway_list)[sapply(pathway_list, function(y){any(y %in% x)})]
     if(length(found)){
-        return(paste(found, collapse = "/"))
+        return(paste(found, collapse = " / "))
     } else{
         return(NA)
     }
@@ -920,7 +929,7 @@ merged_res <- lapply(rownames(rowData(xcms_p_dc_filt)), function(x){
     } else if(nrow(found) == 1){
         return(found)
     } else if(nrow(found) > 1){
-        return(sapply(found, paste, collapse = "/"))
+        return(sapply(found, paste, collapse = " / "))
     }
 })
 merged_res <- do.call(rbind, merged_res)
@@ -928,7 +937,7 @@ merged_res <- do.call(rbind, merged_res)
 rowData(xcms_p_dc_filt) <- cbind(rowData(xcms_p_dc_filt), merged_res)
 
 rowData(xcms_p_dc_filt)$input_row <- sapply(rowData(xcms_p_dc_filt)$input_row, function(row_id){
-    unique(strsplit(row_id, "/")[[1]])
+    unique(strsplit(row_id, " / ")[[1]])
 })
 
 
@@ -967,8 +976,11 @@ keep_adducts <- sapply(hermes_f, function(f_id){
 })
 
 xcms_p_dc_filt <- xcms_p_dc_filt[(mz_rd$isotope == "M0" & (rownames(mz_rd) %in% unlist(keep_adducts))) | (mz_rd$input_row %in% keep_rows_test),]
+```
 
-saveRDS(xcms_p_dc_filt,
-        paste0(params$output_results, "xcms_hermes_exp_lima.rds"))
+
+```{r}
+# saveRDS(xcms_p_dc_filt,
+#         paste0(params$output_results, "xcms_hermes_exp_lima.rds"))
 ```
 

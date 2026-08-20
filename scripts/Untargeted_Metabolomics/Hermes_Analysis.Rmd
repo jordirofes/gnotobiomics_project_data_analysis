@@ -4,10 +4,10 @@ author: "Jordi Rofes Herrera"
 date: "27/1/2022"
 output: html_document
 params:
-    ms1_dir: "../../inputs/Untargeted_Metabolomics/"
-    qc_names: "HP_QC"
+    ms1_dir: "../../inputs/Untargeted_Metabolomics/Hilic_Negative/"
+    qc_names: "HN_QC"
     blank_names: "Blank"
-    met_db: "./HMDB_full_db.csv"
+    met_db: "../../inputs/Untargeted_Metabolomics/FullHMDB_Chebi_Tripeptides_db.csv"
     met_db_sep: ","
     ppm_error: 10
     instrument: "QTOF"
@@ -15,7 +15,7 @@ params:
     noise_int: 1000 
     ionization: "-"
     labelled: FALSE
-    ad_list: !r c("M+H", "M+NH4", "M+Na", "M+K", "M+")
+    ad_list: !r c("M+Cl", "M-H")
     min_max_mz: !r c(50, 1500)
     add_charge: 1
     add_mult: 1
@@ -59,8 +59,8 @@ hermes_dt <- setExpParam(hermes_dt, params = ExpParam(ppm = params$ppm_error, re
                                                      ion = params$ionization, minmz = params$min_max_mz[1], 
                                                      maxmz = params$min_max_mz[2], nthr = params$noise_int, 
                                                      instr = params$instrument))
-
 ```
+
 
 ```{r}
 hermes_dt <- setDB(hermes_dt, db = "custom", DBfile = params$met_db, 
@@ -76,19 +76,28 @@ saveRDS(hermes_dt, file = paste0(params$output_dir, "peakList.rds"))
 ## SOI processing
 
 ```{r}
-# hermes_dt <- readRDS("./Hermes_Results/Hilic_Positive/peakList.rds")
-hermes_dt <- findSOI(struct = hermes_dt, params = getSOIpar(tag = params$soi_detection_type), 
-                     fileID = params$soi_file_ids, blankID = params$soi_blank_ids)
-saveRDS(hermes_dt, file = paste0(params$output_dir, "soiLists.rds"))
+soi_list_path <- paste0(params$output_dir, "soiLists.rds")
+if(!file.exists(soi_list_path)){
+    # hermes_dt <- readRDS("./Hermes_Results/Hilic_Positive/peakList.rds")
+    hermes_dt <- findSOI(struct = hermes_dt, params = getSOIpar(tag = params$soi_detection_type), 
+                         fileID = params$soi_file_ids, blankID = params$soi_blank_ids)
+    saveRDS(hermes_dt, file = soi_list_path)
+} else{
+    hermes_dt <- readRDS(soi_list_path)
+}
 ```
 
 ## SOI filtering
 ```{r, eval=TRUE}
-hermes_dt <- readRDS(paste0(params$output_dir, "soiLists.rds"))
-for(i in params$soi_filter_ids){
-    hermes_dt <- filterSOI(hermes_dt, id = i, minint = 1000, isofidelity = TRUE)
+soi_filt_list_path <- paste0(params$output_dir, "filteredSoiLists.rds")
+if(!file.exists(soi_filt_list_path)){
+    for(i in params$soi_filter_ids){
+        hermes_dt <- filterSOI(hermes_dt, id = i, minint = 1000, isofidelity = TRUE)
+    }
+    saveRDS(hermes_dt, file = soi_filt_list_path)
+} else{
+    hermes_dt <- readRDS(soi_filt_list_path)
 }
-saveRDS(hermes_dt, file = paste0(params$output_dir, "filteredSoiLists.rds"))
 ```
 
 ## Consensus SOIlist from QCs
@@ -99,6 +108,7 @@ library(magrittr)
 library(dplyr)
 library(data.table)
 library(qHermes)
+
 hermes_dt <- consensusSOI(hermes_dt, SOIids = params$soi_consensus, minSOI = 2)
 saveRDS(hermes_dt, file = paste0(params$output_dir,"filteredSoiLists.rds"))
 ```

@@ -1114,95 +1114,95 @@ xfun::Rscript_call(rmarkdown::render,
 ### GFCV comparison
 
 ```{r}
-rmarkdown::render(input = "./dmr_analysis.Rmd", output_file = "dmr_analysis_non_smoothed_gfcv", 
-                  params = list(file_dir = "/home/rstudio/bioinf-d/lima_coverage/",
-    output_dir = "/home/rstudio/bioinf-d/gfcv_results_methylseq/Results/",
-    threads = 1,
-    file_metadata_path = "/home/rstudio/bioinf-d/gfcv_results_methylseq/gfcv_metadata.csv" ,
-    file_path_var = "file_path",
-    
-    genome_cpgs_name = "BSgenome.Mmusculus.UCSC.mm39",
-    pipeline = "Bismark_cov" ,
-    group_var = "gfcv",
-    
-    chromosome_filter = c("chrX", "chrY"),
-
-    chr_idx =  NULL,
-    start_idx =  NULL,
-    end_idx =  NULL,
-    beta_idx =  NULL,
-    M_idx =  NULL,
-    U_idx =  NULL,
-    stranded = TRUE,
-    zero_based = FALSE,
-    collapse_strands = TRUE,
-    
-    levels_order = c("C", "G"),
-    
-    max_fraction_missing_in_group = 0.2,
-    
-    random_seed = 1234,
-    covariates =  c("sex", "batch"),
-    cutoff = 0.05,
-    bpSpan = 500,
-    minNumRegion = 3,
-    minInSpan = 11,
-    smooth = FALSE,
-    maxGapSmooth = 2000,
-    maxGap = 200 ,
-    maxPerms = 10,
-    results_name = "non_smoothed",
-    
-    genome_id = "mm39",
-    annotation_genome = "TxDb.Mmusculus.UCSC.mm39.knownGene",
-    organism_db = "org.Mm.eg.db",
-    
-    optional_regions_bedgraph_path = "/home/rstudio/bioinf-d/ncode_regulatory_regions_Mus_musculus/mm39-cCREs_CFmm10.bed" 
-  )
-)
-
-rmarkdown::render(input = "./dmr_analysis.Rmd", output_file = "dmr_analysis_non_smoothed_sex", 
-                  params = list(file_dir = "/home/rstudio/bioinf-d/lima_coverage/",
-    output_dir = "/home/rstudio/bioinf-d/gfcv_results_methylseq/Results/",
-    threads = 1,
-    file_metadata_path = "/home/rstudio/bioinf-d/gfcv_results_methylseq/gfcv_metadata.csv" ,
-    file_path_var = "file_path",
-    
-    genome_cpgs_name = "BSgenome.Mmusculus.UCSC.mm39",
-    pipeline = "Bismark_cov" ,
-    group_var = "sex",
-    
-    chromosome_filter = c("chrX", "chrY"),
-
-    chr_idx =  NULL,
-    start_idx =  NULL,
-    end_idx =  NULL,
-    beta_idx =  NULL,
-    M_idx =  NULL,
-    U_idx =  NULL,
-    stranded = TRUE,
-    zero_based = FALSE,
-    collapse_strands = TRUE,
-    
-    levels_order = c("M", "F"),
-    
-    max_fraction_missing_in_group = 0.2,
-    
-    random_seed = 1234,
-    covariates =  c("gfcv", "batch"),
-    cutoff = 0.05,
-    bpSpan = 500,
-    minNumRegion = 3,
-    minInSpan = 11,
-    smooth = FALSE,
-    maxGapSmooth = 2000,
-    maxGap = 200 ,
-    maxPerms = 10,
-    results_name = "non_smoothed",
-    genome_id = "mm39",
-    annotation_genome = "TxDb.Mmusculus.UCSC.mm39.knownGene",
-    organism_db = "org.Mm.eg.db"
-  )
-)
+# rmarkdown::render(input = "./dmr_analysis.Rmd", output_file = "dmr_analysis_non_smoothed_gfcv", 
+#                   params = list(file_dir = "/home/rstudio/bioinf-d/lima_coverage/",
+#     output_dir = "/home/rstudio/bioinf-d/gfcv_results_methylseq/Results/",
+#     threads = 1,
+#     file_metadata_path = "/home/rstudio/bioinf-d/gfcv_results_methylseq/gfcv_metadata.csv" ,
+#     file_path_var = "file_path",
+#     
+#     genome_cpgs_name = "BSgenome.Mmusculus.UCSC.mm39",
+#     pipeline = "Bismark_cov" ,
+#     group_var = "gfcv",
+#     
+#     chromosome_filter = c("chrX", "chrY"),
+# 
+#     chr_idx =  NULL,
+#     start_idx =  NULL,
+#     end_idx =  NULL,
+#     beta_idx =  NULL,
+#     M_idx =  NULL,
+#     U_idx =  NULL,
+#     stranded = TRUE,
+#     zero_based = FALSE,
+#     collapse_strands = TRUE,
+#     
+#     levels_order = c("C", "G"),
+#     
+#     max_fraction_missing_in_group = 0.2,
+#     
+#     random_seed = 1234,
+#     covariates =  c("sex", "batch"),
+#     cutoff = 0.05,
+#     bpSpan = 500,
+#     minNumRegion = 3,
+#     minInSpan = 11,
+#     smooth = FALSE,
+#     maxGapSmooth = 2000,
+#     maxGap = 200 ,
+#     maxPerms = 10,
+#     results_name = "non_smoothed",
+#     
+#     genome_id = "mm39",
+#     annotation_genome = "TxDb.Mmusculus.UCSC.mm39.knownGene",
+#     organism_db = "org.Mm.eg.db",
+#     
+#     optional_regions_bedgraph_path = "/home/rstudio/bioinf-d/ncode_regulatory_regions_Mus_musculus/mm39-cCREs_CFmm10.bed" 
+#   )
+# )
+# 
+# rmarkdown::render(input = "./dmr_analysis.Rmd", output_file = "dmr_analysis_non_smoothed_sex", 
+#                   params = list(file_dir = "/home/rstudio/bioinf-d/lima_coverage/",
+#     output_dir = "/home/rstudio/bioinf-d/gfcv_results_methylseq/Results/",
+#     threads = 1,
+#     file_metadata_path = "/home/rstudio/bioinf-d/gfcv_results_methylseq/gfcv_metadata.csv" ,
+#     file_path_var = "file_path",
+#     
+#     genome_cpgs_name = "BSgenome.Mmusculus.UCSC.mm39",
+#     pipeline = "Bismark_cov" ,
+#     group_var = "sex",
+#     
+#     chromosome_filter = c("chrX", "chrY"),
+# 
+#     chr_idx =  NULL,
+#     start_idx =  NULL,
+#     end_idx =  NULL,
+#     beta_idx =  NULL,
+#     M_idx =  NULL,
+#     U_idx =  NULL,
+#     stranded = TRUE,
+#     zero_based = FALSE,
+#     collapse_strands = TRUE,
+#     
+#     levels_order = c("M", "F"),
+#     
+#     max_fraction_missing_in_group = 0.2,
+#     
+#     random_seed = 1234,
+#     covariates =  c("gfcv", "batch"),
+#     cutoff = 0.05,
+#     bpSpan = 500,
+#     minNumRegion = 3,
+#     minInSpan = 11,
+#     smooth = FALSE,
+#     maxGapSmooth = 2000,
+#     maxGap = 200 ,
+#     maxPerms = 10,
+#     results_name = "non_smoothed",
+#     genome_id = "mm39",
+#     annotation_genome = "TxDb.Mmusculus.UCSC.mm39.knownGene",
+#     organism_db = "org.Mm.eg.db"
+#   )
+# )
 ```
 

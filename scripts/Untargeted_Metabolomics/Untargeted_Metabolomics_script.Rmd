@@ -423,3 +423,55 @@ saveRDS(lima_exp, paste0(params$output_dir, "Untargeted_Metabolomics_exp_lima.rd
 #     data_type = "RP Positive"))
 ```
 
+
+## Tests Hermes
+
+```{r}
+library(SummarizedExperiment)
+db_path <- paste0(params$input_dir, "FullHMDB_Chebi_Tripeptides_db.csv")
+
+column_ids <- c("Hilic_Positive", "Hilic_Negative", "RP_Positive")
+positive_adducts <- c("[M+H]+", "[M+NH4]+", "[M+Na]+", "[M+K]+", "[M+]+")
+negative_adducts <- c("[M-H]-", "[M+Cl]-")
+
+gfcv_exp <- list()
+lima_exp <- list()
+
+for(id in column_ids){
+       
+    file_dir <- paste0(params$input_dir, id, "/")
+    hermes_files <- paste0(file_dir, "Hermes_Test/")
+    output_path <- hermes_files
+    if(!dir.exists(output_path)){dir.create(output_path)}
+    hermes_output_path <- paste0(output_path, "filteredSoiLists.rds") 
+    ## HERMES Analysis
+    
+    if(!file.exists(hermes_output_path)){
+        param_list <- list(ms1_dir = hermes_files, 
+                            qc_names =  "QC", blank_names = "Blank",
+                            met_db = db_path, met_db_sep = ",",
+                            ppm_error = 10, instrument = "QTOF", resolution = 30000, 
+                            noise_int = 1000, labelled = FALSE,
+                            min_max_mz = c(50, 1500), 
+                            add_charge = 1, add_mult = 1,
+                            soi_detection_type = "double",
+                            output_dir = output_path,
+                            consensus = TRUE, 
+                            soi_consensus = 1:3)
+        param_list$ionization <- ifelse(grepl("Positive", x = id, 
+                                                ignore.case = TRUE), 
+                                        "+", "-")
+        if(grepl("Positive", id)){
+            param_list$ad_list <- positive_adducts    
+        } else{
+            param_list$ad_list <- negative_adducts
+        }
+        
+        rmarkdown::render(input = "./Hermes_Analysis.Rmd",
+                      output_file = paste0(output_path, "Hermes_Report_Test.html"), 
+                      clean = TRUE, params = param_list)
+
+        }
+}
+```
+

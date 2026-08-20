@@ -276,6 +276,22 @@ mapply(function(pca_dt, group_dt){
 }, pca_dt = pca_dt_list, group_dt = noqc_file_list)
 ```
 
+#### Test x
+```{r}
+gfcv_dt_test <- noqc_file_list$liver$Metabolite_Data[,summarized_data$liver$group %in% c("C", "G")]
+
+gfcv_dt_test_rd <- noqc_file_list$liver$Metabolite_Metadata[summarized_data$liver$group %in% c("C", "G"),]
+
+corr_res <- ComBat(dat = gfcv_dt_test, paste("B", gfcv_dt_test_rd$batch))
+
+
+sapply(seq_len(nrow(corr_res)), function(x){
+    boxplot(corr_res[x,] ~ gf_cv_data_list$liver$group, main = rownames(corr_res)[x])
+})
+
+```
+
+
 ### mg tissue index correction
 
 ```{r}
@@ -283,7 +299,6 @@ tissue_noqc_file_list <- lapply(noqc_file_list, function(organ_dt){
     if(is.null(organ_dt$Tissue_mg)){return(organ_dt)}
     
     sample_index <- organ_dt$Metabolite_Metadata$mg/mean(organ_dt$Metabolite_Metadata$mg)
-    
     
     organ_dt$Metabolite_Data <- as.data.frame(t(t(organ_dt$Metabolite_Data)/sample_index))
     organ_dt
@@ -530,7 +545,23 @@ merged_results <- lapply(names(interaction_results), function(ctrs_name){
 names(merged_results) <- names(interaction_results)
 ```
 
+
+
+
 #### Saving results
+
+```{r}
+corr_res <- ComBat(as.matrix(assay(gf_cv_data_list$liver)), gf_cv_data_list$liver$batch)
+
+sapply(seq_len(nrow(corr_res)), function(x){
+    boxplot(corr_res[x,] ~ gf_cv_data_list$liver$group, main = rownames(corr_res)[x])
+})
+
+
+
+
+```
+
 
 ```{r}
 merged_results <- lapply(merged_results, function(organ_dt){

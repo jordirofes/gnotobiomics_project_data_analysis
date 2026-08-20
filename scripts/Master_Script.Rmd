@@ -1,0 +1,93 @@
+---
+title: "Master Script"
+output: html_document
+date: "2026-08-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Generate output and figure dir
+
+```{r}
+output_dir <- "../outputs/"
+figure_dir <- "../outputs/Paper_Figures/"
+multi_omics_dir <- "../outputs/Multi_Omics_Analysis/"
+
+if(!dir.exists(output_dir)){dir.create(output_dir)}
+if(!dir.exists(figure_dir)){dir.create(figure_dir)}
+if(!dir.exists(multi_omics_dir)){dir.create(multi_omics_dir)}
+
+```
+
+## Generate omic dir
+
+```{r}
+omic_ids_vect <- c("RNA_Sequencing", "WGB_DNA_Methylation",
+              "Histone_Modifications_Proteomics", "Untargeted_Metabolomics",
+               "Targeted_Metabolomics", "Metallomics", "Shotgun_metagenomics")
+
+
+lapply(omic_ids_vect, function(omic_id){
+    omic_dir <- paste0("../outputs/", omic_id, "/")
+    if(!dir.exists(omic_dir)){dir.create(omic_dir)}
+    
+    omic_input_dir <- paste0("../inputs/", omic_id, "/")
+    
+    omic_outputs_lima <- paste0(omic_dir, omic_id, "_exp_lima.rds")
+    omic_outputs_gfcv <- paste0(omic_dir, omic_id, "_exp_gfcv.rds")
+    
+    if(!file.exists(omic_outputs_gfcv) | !file.exists(omic_outputs_lima)){
+        script_path <- paste0(omic_dir, omic_id, "_script.Rmd")
+        script_output_name <- paste0(omic_id, "_script.html")
+        
+        xfun::Rscript_call(rmarkdown::render, 
+            args = list(input = script_path, 
+                      output_file = script_output_name, 
+                      params = list(
+                        input_dir = omic_input_dir,
+                        output_dir = omic_dir)
+                    )
+            )
+    }
+})
+
+multi_omics_prepro_script_path <- paste0(multi_omics_dir, "Multi_Omics_Processing.Rmd")
+multi_omics_prepro_script_name <- "Multi_Omics_Processing.html"
+
+xfun::Rscript_call(rmarkdown::render, 
+            args = list(input = multi_omics_prepro_script_path, 
+                      output_file = multi_omics_prepro_script_name, 
+                      params = list(
+                        input_dir = omic_input_dir,
+                        output_dir = omic_dir)
+                    )
+            )
+
+multi_omics_script_path_gfcv <- paste0(multi_omics_dir, "Multi_Omics_Analysis_GFCV.Rmd")
+multi_omics_script_name_gfcv <- "Multi_Omics_Analysis_GFCV.html"
+
+xfun::Rscript_call(rmarkdown::render, 
+            args = list(input = multi_omics_script_path_gfcv, 
+                      output_file = multi_omics_script_name_gfcv, 
+                      params = list(
+                        input_dir = "../../inputs/",
+                        output_dir = omic_dir)
+                    )
+            )
+
+
+multi_omics_script_path <- paste0(multi_omics_dir, "Multi_Omics_Analysis.Rmd")
+multi_omics_script_name <- "Multi_Omics_Analysis.html"
+
+xfun::Rscript_call(rmarkdown::render, 
+            args = list(input = multi_omics_script_path, 
+                      output_file = multi_omics_script_name, 
+                      params = list(
+                        output_dir = omic_dir)
+                    )
+            )
+
+```
+

@@ -1,0 +1,1331 @@
+---
+title: "GFCV Paper analysis"
+output: html_document
+date: "2025-03-24"
+params:
+    input_dir: "../../inputs/"
+    output_dir: "../../outputs/Multi_Omics_Analysis/"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Required Packages
+
+```{r, }
+library(MOFA2)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(MultiAssayExperiment)
+library(grDevices)
+library(rGREAT)
+library(msigdbr)
+library(DT)
+library(TxDb.Mmusculus.UCSC.mm39.refGene)
+source("../Utility_Functions/utilities.R")
+library(TreeSummarizedExperiment)
+library(GGally)
+library(igraph)
+library(survcomp)
+library(org.Mm.eg.db)
+
+```
+
+
+
+## Loaded matrices
+
+```{r}
+multi_omics_raw <- readRDS(paste0(params$output_dir, "Multi_Omics_Analysis_exp_gfcv.rds"))
+multi_omics_full <- readRDS(paste0(params$output_dir, "Multi_Omics_Analysis_MA_exp_gfcv.rds"))
+
+
+colnames(rowData(multi_omics_raw@ExperimentList$WGB_DNA_Methylation)) <- gsub("-", "_", colnames(rowData(multi_omics_raw@ExperimentList$WGB_DNA_Methylation))) 
+
+colnames(rowData(multi_omics_full@ExperimentList$WGB_DNA_Methylation)) <- gsub("-", "_", colnames(rowData(multi_omics_full@ExperimentList$WGB_DNA_Methylation)))
+```
+
+## Metalomics correlation with the diet
+
+```{r}
+omic_dt <- multi_omics_full
+
+diet_metals <- openxlsx::read.xlsx("../../inputs/Metallomics/metallomics_raw.xlsx",
+                                    sheet = "diets", rowNames = TRUE)
+rownames(diet_metals) <- gsub("CTR", "CNT", rownames(diet_metals))
+
+dt_metals <- experiments(omic_dt[,,c("Metallomics.cecum", "Metallomics.liver")])
+```
+
+```{r}
+lapply(names(dt_metals), function(organ_name){
+    organ_dt <- dt_metals[[organ_name]]    
+    lapply(rownames(organ_dt), function(var_name){
+        plot_dt <- data.frame("Intensity" = as.numeric(assay(organ_dt[var_name,])), 
+                            "group" = organ_dt$group)
+        ggplot(plot_dt, aes(x = group, y = Intensity, fill = group)) + 
+            geom_boxplot() + ggtitle(paste(organ_name, var_name)) + 
+            theme_minimal()
+    })
+})
+```
+
+```{r}
+# cor_mat <- lapply(dt_metals, function(exp_dt){
+#     browser()
+#     diet_metals_long <- diet_metals[as.character(exp_dt$group), rownames(exp_dt)]
+#     # plotly::plot_ly(z = cor(t(assay(exp_dt)), diet_metals_long))
+#     return(diag(cor(t(assay(exp_dt)), diet_metals_long)))
+# })
+# names(cor_mat) <- names(dt_metals)
+# cor_dt <- lapply(names(cor_mat), function(x){
+#     data.frame("cor" = abs(cor_mat[[x]]), "organ" = x)
+# })
+# cor_dt <- do.call(rbind, cor_dt)
+# 
+# pdf(paste0(params$output_dir, "diet_metals_correlations_boxplot.pdf"))
+# boxplot(cor ~ organ, cor_dt)
+# dev.off()
+```
+
+
+## Multi-Omics Overview
+
+```{r}
+multi_omics_names <- names(experiments(multi_omics_full))
+
+multi_omics_selected <- multi_omics_names[grepl("WGB|RNA|Untargeted|Metallomics|Histone|X16S.*Specie|Targeted",
+                                                multi_omics_names)]
+multi_omics_selected
+```
+
+```{r}
+# filtered_exps <- lapply(names(multi_omics_raw), function(multi_omics_names){
+#     multi_omics_exp <- experiments(multi_omics_raw)[[multi_omics_names]]
+#     p_val_dt <- rowData(multi_omics_exp)[,grepl("adj.p.value", colnames(rowData(multi_omics_exp)))]
+#     p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+#     multi_omics_exp <- multi_omics_exp[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+#     
+#     # if(nrow(multi_omics_exp) == 0){return(NA)}
+#     
+#     multi_omics_exp
+# })
+# names(filtered_exps) <- names(multi_omics_raw)
+# filtered_exps[is.na(filtered_exps)] <- NULL
+# 
+# experiments(multi_omics_raw) <- ExperimentList(filtered_exps)
+# multi_omics_selected <- multi_omics_selected[multi_omics_selected %in% names(multi_omics_raw)]
+```
+
+
+```{r}
+multi_omics <- multi_omics_full
+filtered_exps <- lapply(names(multi_omics_full), function(multi_omics_names){
+    multi_omics_exp <- experiments(multi_omics_full)[[multi_omics_names]]
+    p_val_dt <- rowData(multi_omics_exp)[,grepl("adj.p.value", colnames(rowData(multi_omics_exp)))]
+    # p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+    multi_omics_exp <- multi_omics_exp[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+    
+    # if(nrow(multi_omics_exp) == 0){return(NA)}
+    
+    multi_omics_exp
+})
+names(filtered_exps) <- names(multi_omics)
+filtered_exps[is.na(filtered_exps)] <- NULL
+
+experiments(multi_omics) <- ExperimentList(filtered_exps)
+multi_omics_selected <- multi_omics_selected[multi_omics_selected %in% names(multi_omics)]
+```
+
+```{r}
+multi_omics_ordered <- names(multi_omics)[c(16, 22, 13, 21, 19, 14, 
+                                            20, 17, 15, 6, 18, 12)]
+
+omic_names_dict <- c("Liver RNA Sequencing", "Liver DNA Methylation", 
+                    "Liver Histone Modifications", 
+                    "Liver Untargeted Metabolomics", 
+                    "Liver Targeted Metabolomics", "Liver Metallomics",
+                    "Serum Targeted Metabolomics",
+                    "Cecum Targeted Metabolomics", "Cecum Metallomics",    
+                    "Cecum 16S Metagenomics", "Colon Targeted Metabolomics", 
+                    "Colon 16S Metagenomics")
+
+names(omic_names_dict) <- multi_omics_ordered
+    
+group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(multi_omics$group))), 
+                                             name = "Set2")
+names(group_color_dict) <- levels(droplevels(multi_omics$group))
+
+```
+ 
+
+```{r}
+omic_names_dup <- sapply(strsplit(multi_omics_ordered, "\\."), 
+                        function(x){x[[1]]})
+omic_names_dup[grep("cogs", multi_omics_ordered)] <- "cogs"
+omic_names_dup[grep("EC", multi_omics_ordered)] <- "EC"
+omic_names_dup[grep("metaerg_kegg", multi_omics_ordered)] <- "metaerg_kegg"
+omic_names_dup[grep("metaerg_pathway", multi_omics_ordered)] <- "metaerg_pathway"
+
+names(omic_names_dup) <- multi_omics_ordered
+
+unique_omics <- unique(omic_names_dup)
+
+omic_colors <- RColorBrewer::brewer.pal(n = length(unique_omics), name = "Set3")
+
+
+col_list <- lapply(seq_along(unique_omics), function(omic_id){
+    omic_name <- unique_omics[omic_id]
+    
+    colors_found <- names(omic_names_dup)[omic_names_dup == omic_name]
+    
+    omic_num <- length(colors_found)
+    omic_col <- omic_colors[omic_id]
+    
+    col_ramp <- colorRampPalette(colors = c(omic_col, "white"))(omic_num + 1)[seq_len(omic_num)]
+    names(col_ramp) <- colors_found
+    return(col_ramp)
+})
+
+color_vect <- unlist(col_list)
+omic_color_dict <- color_vect
+```
+
+
+```{r}
+group_var <- "group"
+sample_var <- "samplename"
+
+# multi_omics_selected <- multi_omics_names[grepl("WGB|RNA|Untargeted",
+#                                                 multi_omics_names)]
+
+selected_exps <- multi_omics[,colData(multi_omics)$group != "HFE", multi_omics_selected]
+
+plot_dt <- lapply(names(experiments(selected_exps)), function(omic_name){
+    omic_cd <- data.frame("sample_name" = colnames(experiments(selected_exps)[[omic_name]]))
+    omic_cd$var_name <- omic_name
+    omic_cd$value <- 1
+    omic_cd
+})
+plot_dt <- do.call(rbind, plot_dt)
+plot_dt$sample_name <- factor(plot_dt$sample_name)
+
+group_var_dict <- colData(multi_omics)[[group_var]]
+names(group_var_dict) <- colData(multi_omics)[[sample_var]]
+
+sample_levels <- levels(plot_dt$sample_name)
+reordered_sample_levels <- sample_levels[order(group_var_dict[as.character(sample_levels)])]
+
+plot_dt$sample_name <- factor(x = plot_dt$sample_name, 
+                               levels = reordered_sample_levels)
+
+omic_color_dict_mod <- omic_color_dict
+names(omic_color_dict_mod) <- omic_names_dict[as.character(names(omic_color_dict))]
+
+    
+plot_dt$var_id <- factor(omic_names_dict[as.character(plot_dt$var_name)])
+
+plot_dt$var_id <- factor(plot_dt$var_id, 
+                        levels = levels(plot_dt$var_id)[match(rev(omic_names_dict[omic_names_dict %in%
+                                                                levels(plot_dt$var_id)]),
+                                            levels(plot_dt$var_id))])
+
+plot_dt_lab <- data.frame("omic_names" = unique(plot_dt$var_name), 
+                          "num_vars_raw" = sapply(unique(plot_dt$var_name),
+                                                  function(x){nrow(multi_omics_raw@ExperimentList[[x]])}),
+                          "num_vars" = sapply(unique(plot_dt$var_name), function(x){nrow(multi_omics@ExperimentList[[x]])}))
+plot_dt_lab$var_id <- factor(omic_names_dict[as.character(unique(plot_dt$var_name))])
+plot_dt_lab$num_vars_plot <- paste0("n = ", plot_dt_lab$num_vars_raw, " / ", plot_dt_lab$num_vars)
+
+x_colors <- group_color_dict[as.character(group_var_dict[levels(plot_dt$sample_name)])]
+
+fig_dir <- paste0(params$output_dir, "../Paper_Figures_GFCV/")
+
+if(!dir.exists(fig_dir)){dir.create(fig_dir)}
+
+# plot_nw_term(omic_dt = plot_dt)
+fig1 <- ggplot(plot_dt, aes(x = sample_name, fill = var_id, y = var_id)) + 
+    geom_tile() + 
+    theme_void() + 
+    theme(axis.text.x = element_text(angle = 90, 
+                                     colour = x_colors),
+        axis.text.y = element_text(size = 10),
+        legend.position = "none", 
+        legend.justification = "top", 
+        legend.title = element_blank(), 
+        plot.title = element_text(hjust = 0.5),
+        legend.spacing.y = unit(0.1, "cm"), 
+        legend.text = element_text(size = 6), 
+        legend.key.size = unit(1, "line")) + 
+    xlab(NULL) + ylab(NULL) +
+    scale_fill_manual(values = omic_color_dict_mod) + 
+    geom_text(data = plot_dt_lab, aes(x = 41, y = var_id, label = num_vars_plot), hjust = 0) +
+    expand_limits(x = 52)
+fig1
+ggsave(filename = paste0(fig_dir, "figure_1_panel_c.svg"), plot = fig1, 
+        width = 12, fix_text_size = FALSE)
+
+omic_color_dict_mod
+```
+
+
+## Enrich information
+
+```{r}
+# omic_enrich <- c("Untargeted_Metabolomics", "RNA_Sequencing", "WGB_DNA_Methylation")
+# ids_enrich_names <- c("compounds_kegg_merged", "entrezID", "geneId")
+
+omic_enrich <- c("Untargeted_Metabolomics", 
+                 "RNA_Sequencing", 
+                 "WGB_DNA_Methylation")
+ids_enrich_names <- c("compounds_kegg_merged", 
+                      "entrezID", "geneId")
+
+library(SummarizedExperiment)
+
+## Enrich IDs dictionary
+omic_dict_list <- mapply(function(omic_id, enrich_var){
+    
+    omic_data <- omic_dt[[omic_id]]
+    omic_dict <- strsplit(rowData(omic_data)[[enrich_var]], ";")
+    
+    names(omic_dict) <- paste0(omic_id, ".", rownames(omic_data))
+    
+    omic_dict
+    
+}, omic_id = omic_enrich, enrich_var = ids_enrich_names)
+
+rna_seq_rd <- lapply(experiments(omic_dt)[omic_enrich], rowData)
+num_factors <- 2
+## Universe IDs mapped
+universe_list_ids <- lapply(names(rna_seq_rd), function(omic_name){
+    omic_ids <- omic_dict_list[[omic_name]][paste0(omic_name, ".", rownames(rna_seq_rd[[omic_name]]))]
+    omic_ids <- omic_ids[!is.null(omic_ids)]
+    omic_ids <- unlist(omic_ids)
+    omic_ids[!is.na(omic_ids)]
+
+})
+names(universe_list_ids) <- names(rna_seq_rd)
+```
+
+
+```{r}
+## ORA IDs
+clu_ids_enrich <- lapply(seq_len(num_factors), function(factor_id){
+    omic_names <- c("Untargeted_Metabolomics", "WGB_DNA_Methylation", "RNA_Sequencing")
+    clu_ids <- lapply(omic_names, function(omic_id){
+        omic_exp <- experiments(omic_dt)[[omic_id]]
+        features_factor <- rownames(rowData(omic_exp))[rowData(omic_exp)[[paste0("Factor_", 
+                                                            factor_id, "_weights_sig")]]]
+        paste0(omic_id, ".", features_factor)
+    })
+    names(clu_ids) <- omic_names
+    
+    metabo_dt <- omic_dict_list[["Untargeted_Metabolomics"]][clu_ids$Untargeted_Metabolomics]
+    metabo_dt <- metabo_dt[!is.null(metabo_dt)]
+    metabo_dt <- metabo_dt[!is.na(metabo_dt)]
+
+    wgb_dt <- omic_dict_list[["WGB_DNA_Methylation"]][clu_ids$WGB_DNA_Methylation]
+    wgb_dt <- wgb_dt[!is.null(wgb_dt) & !is.na(wgb_dt)]
+    
+    rna_dt <- omic_dict_list[["RNA_Sequencing"]][clu_ids$RNA_Sequencing]
+    rna_dt <- rna_dt[!is.null(rna_dt) & !is.na(rna_dt)]
+    
+    return(list(
+        "Untargeted_Metabolomics" = metabo_dt,
+        "RNA_Sequencing" = rna_dt, 
+        "WGB_DNA_Methylation" = wgb_dt))
+})
+names(clu_ids_enrich) <- paste0("Factor_", seq_len(num_factors))
+```
+
+```{r}
+## GSEA FCs
+col_names <- paste0("Factor_", seq_len(num_factors))
+
+omic_enrich <- c("Untargeted_Metabolomics",
+                "RNA_Sequencing",
+                "WGB_DNA_Methylation")
+ids_enrich_names <- c("compounds_kegg_merged",
+                      "entrezID", "geneId")
+
+fc_dict <- lapply(col_names, function(col_name){
+    col_name <- paste0(col_name, "_weights")
+    # 
+    omic_fc_dict <- mapply(function(omic_id, enrich_var){
+        omic_data <- omic_dt[[omic_id]]
+        omic_dict <- rowData(omic_data)[[enrich_var]]
+        
+        fc_dt <- rowData(omic_data)[[col_name]]
+        
+        names(omic_dict) <- paste0(omic_id, ".", rownames(omic_data))
+        
+        omic_fc <- mapply(function(var_names, fc_vect){
+            var_names_split <- strsplit(var_names, ";")[[1]]
+            var_names_split <- var_names_split[!is.na(var_names_split)]
+            if(!length(var_names_split)){return(NULL)}
+            fc_vect_dict <- rep(fc_vect, length(var_names_split))
+            names(fc_vect_dict) <- var_names_split
+            fc_vect_dict
+        }, var_names = omic_dict, fc_vect = fc_dt, USE.NAMES = FALSE)
+        
+        unlist(omic_fc)
+    }, omic_id = omic_enrich, enrich_var = ids_enrich_names)
+    
+    omic_fc_dict
+})
+names(fc_dict) <- col_names
+```
+
+```{r}
+library(clusterProfiler)
+kegg_db_enrich_path <- paste0(params$output_dir, "kegg_enrich_db_red.rds")
+kegg_db_list <- readRDS(kegg_db_enrich_path)
+term2name_dt <- kegg_db_list$term2name
+integ_enrich_db <- kegg_db_list$term2gene
+membership_attribute <- "cluster_ids"
+min_n <- 10
+
+kegg_pathway_list_genes <- lapply(kegg_db_list$term2name$term, function(x){
+    kegg_db_list$term2gene$gene[kegg_db_list$term2gene$term == x & kegg_db_list$term2gene$type == "gene_id"]
+})
+names(kegg_pathway_list_genes) <- kegg_db_list$term2name$term
+kegg_description_vect <- kegg_db_list$term2name$name
+names(kegg_description_vect) <- kegg_db_list$term2name$term
+# enrich_name <- "gsea_part_kegg"
+# enrich_nw_dir <- paste0(corr_output_dir, enrich_name, "/")
+# 
+# if(!dir.exists(enrich_nw_dir)){dir.create(enrich_nw_dir)}
+```
+
+
+## Gene analysis
+
+```{r}
+exp_id <- "RNA_Sequencing"
+
+dt_exp <- multi_omics[[exp_id]]
+dt_exp_raw <- multi_omics_raw[[exp_id]]
+dt_exp_raw <- dt_exp_raw[,dt_exp_raw$group != "HFE"]
+```
+
+```{r}
+p_val_dt_g <- rowData(dt_exp)[,grepl("adj.p.value",
+                                colnames(rowData(dt_exp)))]
+# p_val_dt_g <- p_val_dt_g[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt_g))]
+
+fc_dt_g <- rowData(dt_exp)[,grepl("FC",
+                                colnames(rowData(dt_exp)))]
+# fc_dt_g <- fc_dt_g[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(fc_dt_g))]
+
+p_val_sum <- lapply(p_val_dt_g, function(x){
+    sum(x <= 0.05)
+})
+
+fc_dir <- lapply(seq_along(fc_dt_g), function(x_id){
+    sig_vars <- fc_dt_g[[x_id]][p_val_dt_g[[x_id]] <= 0.05]
+    fc_dir <- ifelse(sig_vars <= 0, "Down-regulated", "Up-regulated")
+    table(fc_dir)
+})
+names(fc_dir) <- names(fc_dt_g)
+fc_dir
+
+fc_dir
+
+
+lapply(seq_along(fc_dt_g), function(x_id){
+    sig_vars <- fc_dt_g[[x_id]][p_val_dt_g[[x_id]] <= 0.05]
+    summary(abs(sig_vars))
+})
+
+
+comp_dt <- lapply(seq_along(fc_dt_g), function(x_id){
+    sig_vars <- fc_dt_g[[x_id]][p_val_dt_g[[x_id]] <= 0.05]
+    summary(sig_vars)
+    data.frame("fc" = sig_vars, "comparison" = names(fc_dt_g)[[x_id]])
+})
+comp_dt <- do.call(rbind, comp_dt)
+ggplot(comp_dt) + geom_histogram(aes(x = abs(fc), fill = comparison), bins = 60) +
+    theme_minimal()
+
+tapply(abs(comp_dt$fc), INDEX = comp_dt$comparison, summary)
+```
+
+```{r}
+set.seed(1234)
+
+svg("../../outputs/Paper_Figures_GFCV/figure_2_a.svg")
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp),
+            stratificationVar = "group", 
+            clustering_method = "complete",
+            clustering_distance_rows = "euclidean", 
+            show_colnames = FALSE, plot_name = "Significant genes", 
+            show_rownames = FALSE)
+dev.off()
+
+png("../../outputs/Paper_Figures_GFCV/figure_2_a.png")
+par(bg=NA)
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp),
+            stratificationVar = "group", 
+            clustering_method = "complete",
+            clustering_distance_rows = "euclidean",
+            show_colnames = FALSE, plot_name = "Significant genes", 
+            show_rownames = FALSE)
+dev.off()
+
+# ggsave(filename = , 
+#         plot = plot_g_h)
+p1 <- data_pca(dt_list = t(scale(t(assay(dt_exp)))), metadata = colData(dt_exp),
+        stratificationVar = "group", plot_name = "Gene expression PCA",
+        color_vect = group_color_dict) + 
+        theme(legend.title = element_blank(), 
+              legend.position = "bottom")
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_2_b.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_2_b.png", plot = p1)
+```
+
+```{r}
+plot_dt <- assay(dt_exp)
+
+plot_dt <- t(apply(plot_dt, 1, function(x){
+    tapply(x, INDEX = droplevels(dt_exp$group), FUN = mean)}))
+plot_dt <- reshape2::melt(plot_dt)
+# plot_dt$group <- colData(wgb_dt)[plot_dt$variable, "group"]
+library(ggplot2)
+
+# pdf(paste0(output_dir, "mean_zscore_rna_seq_expression.pdf"))
+p1 <- ggplot(plot_dt) + geom_histogram(aes(x = value, fill = Var2)) + 
+    theme_minimal() + xlab("Mean gene group expression (vst Z score)") + 
+    ylab(NULL) + theme(legend.position = "none") + 
+    facet_grid(vars(Var2)) + scale_fill_manual(values = group_color_dict) + 
+    theme(axis.title.x = element_text(size = 16),
+          strip.text.y = element_text(size = 16))
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_2_c.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_2_c.png", plot = p1)
+# dev.off()
+```
+
+
+
+```{r}
+# mice_dt <- readRDS("../../outputs/Mice_Data/processed_mice_dt.rds")
+# mice_found <- mice_dt[match(colnames(dt_exp), mice_dt$samplename),]
+# rownames(mice_found) <- mice_found$samplename
+# 
+# print("Body weight (sd)")
+# tapply(mice_found$`BW(g)`, INDEX = mice_found$group, sd)
+# print("Liver weight (sd)")
+# tapply(mice_found$`Liver(g)`, INDEX = mice_found$group, sd)
+# print("WAT weight (sd)")
+# tapply(mice_found$`WATep(g)`, INDEX = mice_found$group, sd)
+```
+
+
+```{r}
+# #
+# # cor(assay(dt_exp))
+# #
+# 
+# #
+
+# 
+# dt_exp$group <- droplevels(dt_exp$group)
+# 
+# cor_dt <- apply(assay(dt_exp), 1, function(x){
+#     cor(x, mice_found["BW(g)"])
+# })
+# hist(cor_dt)
+# 
+# 
+# cor_dt <- apply(assay(dt_exp), 1, function(x){
+#     cor(x, mice_found["Liver(g)"])
+# })
+# hist(cor_dt)
+# 
+# cor_dt <- apply(assay(dt_exp), 1, function(x){
+#     cor(x, mice_found["WATep(g)"])
+# })
+# hist(cor_dt)
+# 
+# 
+# 
+# data_pca(dt_list = t(scale(t(cb_corrected))), metadata = colData(dt_exp),
+#         stratificationVar = "group", plot_name = "",
+#         color_vect = group_color_dict)
+# 
+# heatMapFun(dt_list =  t(scale(t(cb_corrected))), metadata = colData(dt_exp),
+#            stratificationVar = "group",
+#            clustering_method = "complete",
+#            clustering_distance_rows = "euclidean",
+#            show_colnames = FALSE, plot_name = "", show_rownames = TRUE)
+# 
+# plotly::ggplotly(data_pca(dt_list = t(scale(t(assay(dt_exp)))), metadata = colData(dt_exp),  
+#         stratificationVar = "samplename", plot_name = ""))
+# 
+# data_pca(dt_list = t(scale(t(assay(dt_exp)))), metadata = mice_found,  
+#         stratificationVar = "WATep(g)", plot_name = "", 
+#         color_vect = group_color_dict)
+# data_pca(dt_list = t(scale(t(assay(dt_exp)))), metadata = mice_found,  
+#         stratificationVar = "Liver(g)", plot_name = "", 
+#         color_vect = group_color_dict)
+# 
+# boxplot(mice_found$`WATep(g)` ~ mice_found$group)
+# test_bw <- boxplot(mice_found$`BW(g)` ~ mice_found$group)
+# boxplot(mice_found$`WATep(g)` ~ mice_found$group)
+
+```
+
+```{r}
+## Variable variance tests
+library(DESeq2)
+dt_exp_raw_DESeq <- DESeqDataSetFromMatrix(countData = assay(dt_exp_raw),
+                                      colData = colData(dt_exp_raw),
+                                      design= ~ 0 + group)
+dt_exp_raw_DESeq <- estimateSizeFactors(dt_exp_raw_DESeq)
+normalized_counts <- counts(dt_exp_raw_DESeq, normalized = TRUE)
+
+## Without filtering
+group_sds <- lapply(levels(dt_exp_raw_DESeq$group), function(x){
+    group_dt <- normalized_counts[,dt_exp_raw_DESeq$group == x]
+    data.frame("sd" = rowSds(as.matrix(assay(group_dt))), "group" = x)
+})
+group_sds <- do.call(rbind, group_sds)
+
+ggplot(group_sds) + geom_density(aes(x = log(sd), fill = group))
+
+tapply(X = group_sds$sd, INDEX = group_sds$group, FUN = summary)
+
+kruskal.test(formula = sd ~ group, data = group_sds)
+DescTools::ConoverTest(x = group_sds$sd, g = group_sds$group, 
+                        method = "fdr", alternative = "two.sided")
+
+# conover.test::conover.test(x = group_sds$sd, g = group_sds$group)
+
+## With filtering
+p_val_dt_g <- rowData(dt_exp_raw)[,grepl("adj.p.value",
+                                        colnames(rowData(dt_exp_raw)))]
+# p_val_dt_g <- p_val_dt_g[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt_g))]
+normalized_counts_f <- normalized_counts[apply(as.matrix(p_val_dt_g) <= 0.05, 1, any),]
+
+group_sds_f <- lapply(levels(dt_exp_raw_DESeq$group), function(x){
+    group_dt <- normalized_counts_f[,dt_exp_raw_DESeq$group == x]
+    data.frame("sd" = rowSds(as.matrix(assay(group_dt))), "group" = x)
+})
+group_sds_f <- do.call(rbind, group_sds_f)
+
+ggplot(group_sds_f) + geom_density(aes(x = sd, fill = group))
+ggplot(group_sds_f) + geom_boxplot(aes(x = group, y = log(sd)))
+
+kruskal.test(formula = sd ~ group, data = group_sds_f)
+DescTools::ConoverTest(x = group_sds_f$sd, g = group_sds_f$group, 
+                        method = "fdr", alternative = "two.sided")
+
+summary(aov(formula = log(sd) ~ group, data = group_sds_f))
+TukeyHSD(aov(formula = log(sd) ~ group, data = group_sds_f))
+
+# conover.test::conover.test(x = group_sds_f$sd, g = group_sds_f$group, 
+#                            method = "bh", altp = T)
+
+###
+```
+
+```{r}
+table(rowData(dt_exp)$gene_biotype)
+```
+
+
+## Epigenetics analysis
+
+### DNA Methylation
+
+```{r}
+exp_id <- "WGB_DNA_Methylation"
+dt_exp <- multi_omics[[exp_id]]
+
+dt_exp_raw <- multi_omics_raw[[exp_id]]
+dt_exp_raw <- dt_exp_raw[,dt_exp_raw$group != "HFE"]
+
+svg("../../outputs/Paper_Figures_GFCV/figure_3_a.svg")
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp), 
+           stratificationVar = "group", 
+           clustering_method = "complete", plot_name = "DNA Methylation",
+           clustering_distance_rows = "euclidean", 
+           show_colnames = FALSE)
+dev.off()
+
+png("../../outputs/Paper_Figures_GFCV/figure_3_a.png")
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp), 
+           stratificationVar = "group", 
+           clustering_method = "complete", plot_name = "DNA Methylation",
+           clustering_distance_rows = "euclidean", 
+           show_colnames = FALSE)
+dev.off()
+
+
+png("../../outputs/Paper_Figures_GFCV/figure_3_c.png")
+heatMapFun(dt_list =  assay(dt_exp_raw), metadata = colData(dt_exp), 
+           stratificationVar = "group", 
+           clustering_method = "complete", plot_name = "DNA Methylation",
+           clustering_distance_rows = "euclidean", 
+           show_colnames = FALSE)
+dev.off()
+
+p1 <- data_pca(dt_list = assay(dt_exp), metadata = colData(dt_exp),  
+        stratificationVar = "group", plot_name = "DNA Methylation PCA", 
+        color_vect = group_color_dict) +  
+        theme(legend.title = element_blank(), 
+              legend.position = "bottom")
+p1
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_3_b.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_3_b.png", plot = p1)
+
+```
+
+```{r}
+p_val_dt <- rowData(dt_exp)[,grepl("adj.p.value",
+                                colnames(rowData(dt_exp)))]
+# p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+
+fc_dt <- rowData(dt_exp)[,grepl("FC",
+                                colnames(rowData(dt_exp)))]
+# fc_dt <- fc_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(fc_dt))]
+
+p_val_sum <- lapply(p_val_dt, function(x){
+    sum(x <= 0.05)
+})
+
+fc_dir <- lapply(seq_along(fc_dt), function(x_id){
+    sig_vars <- fc_dt[[x_id]][p_val_dt[[x_id]] <= 0.05]
+    fc_dir <- ifelse(sig_vars <= 0, "Down-regulated", "Up-regulated")
+    table(fc_dir)
+})
+names(fc_dir) <- names(fc_dt)
+fc_dir
+
+
+summary_fc <- lapply(seq_along(fc_dt), function(x_id){
+    sig_vars <- fc_dt[[x_id]][p_val_dt[[x_id]] <= 0.05]
+    summary(abs(sig_vars))
+})
+names(summary_fc) <- names(fc_dt)
+
+# summary_fc
+
+comp_dt <- lapply(seq_along(fc_dt), function(x_id){
+    sig_vars <- fc_dt[[x_id]][p_val_dt[[x_id]] <= 0.05]
+    summary(sig_vars)
+    data.frame("fc" = sig_vars, "comparison" = names(fc_dt)[[x_id]])
+})
+comp_dt <- do.call(rbind, comp_dt)
+ggplot(comp_dt) + geom_histogram(aes(x = abs(fc), fill = comparison), bins = 60) +
+    theme_minimal()
+
+tapply(abs(comp_dt$fc), INDEX = comp_dt$comparison, summary)
+```
+
+
+
+```{r, height = 12, width = 6}
+plot_dt <- assay(dt_exp)
+
+plot_dt <- t(apply(plot_dt, 1, function(x){
+    tapply(x, INDEX = droplevels(dt_exp$group), FUN = mean)}))
+plot_dt <- reshape2::melt(plot_dt)
+# plot_dt$group <- colData(wgb_dt)[plot_dt$variable, "group"]
+library(ggplot2)
+
+# pdf(paste0(output_dir, "mean_zscore_rna_seq_expression.pdf"))
+
+p1 <- ggplot(plot_dt) + geom_histogram(aes(x = value, fill = Var2)) + 
+        theme_minimal() + xlab("Mean DMR group methylation (vst Z score)") + 
+        ylab(NULL) + theme(legend.position = "none") + 
+        facet_grid(vars(Var2)) + scale_fill_manual(values = group_color_dict) + 
+        theme(axis.title.x = element_text(size = 16),
+              strip.text.y = element_text(size = 16))
+p1
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_3_c.svg", plot = p1,
+        fix_text_size = FALSE, width = 6)
+
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_3_c.png", plot = p1, width = 6)
+```
+
+
+```{r}
+group_sds_f <- lapply(levels(droplevels(dt_exp_raw$group)), function(x){
+    group_dt <- assay(dt_exp_raw)[,dt_exp_raw$group == x]
+    data.frame("sd" = rowSds(as.matrix(assay(group_dt))), "group" = x)
+})
+group_sds_f <- do.call(rbind, group_sds_f)
+
+ggplot(group_sds_f) + geom_density(aes(x = sd, fill = group)) + theme_minimal()
+ggplot(group_sds_f) + geom_boxplot(aes(x = group, y = log(sd)))
+
+kruskal.test(formula = sd ~ group, data = group_sds_f)
+DescTools::ConoverTest(x = group_sds_f$sd, g = group_sds_f$group, 
+                        method = "fdr", alternative = "two.sided")
+```
+
+
+
+
+### Histone Modifications
+
+```{r}
+exp_id <- "Histone_Modifications_Proteomics"
+dt_exp <- multi_omics[[exp_id]]
+
+dt_exp_raw <- multi_omics_raw[[exp_id]]
+assayNames(dt_exp_raw) <- "dt1"
+
+dt_exp_raw <- dt_exp_raw[,dt_exp_raw$group != "HFE"]
+
+
+unique_res <- unique(rowData(dt_exp)$Histone_Residues)
+rownames(rowData(dt_exp))
+# dt_exp_raw <- multi_omics_raw[[exp_id]]
+melted_dt <- reshape2::melt(data = as.matrix(assay(dt_exp_raw)))
+melted_dt$Histone_Residues <- rowData(dt_exp_raw)[melted_dt$Var1,]$Histone_Residues_K
+
+melted_dt$group <- colData(dt_exp_raw)[melted_dt$Var2,]$group
+
+
+sample_order <- rownames(colData(dt_exp_raw))[order(colData(dt_exp_raw)$group)]
+
+levels(melted_dt$Var2) <- sample_order
+```
+
+
+```{r}
+p_val_dt <- rowData(dt_exp_raw)[,grepl("adj.p.value",
+                                colnames(rowData(dt_exp_raw)))]
+# p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
+
+sig_mods <- lapply(p_val_dt, function(x){
+    rownames(p_val_dt)[x <= 0.05]
+})
+
+library(VennDiagram)
+# venn.diagram(x = sig_mods, filename = "test.diagram.png")
+ggVennDiagram::ggVennDiagram(x = sig_mods) + scale_x_continuous(expand = expansion(mult = .2)) +
+    scale_fill_gradient(low = "#F4FAFE", high = "#4981BF")
+ 
+fc_dt <- rowData(dt_exp_raw)[,grepl("FC",
+                                colnames(rowData(dt_exp_raw)))]
+# fc_dt <- fc_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(fc_dt))]
+
+lapply(p_val_dt, function(x){sum(x <= 0.05)})
+
+fc_dir <- lapply(seq_along(fc_dt), function(x_id){
+    sig_vars <- fc_dt[[x_id]][p_val_dt[[x_id]] <= 0.05]
+    fc_dir <- ifelse(sig_vars <= 0, "Down-regulated", "Up-regulated")
+    table(fc_dir)
+})
+names(fc_dir) <- names(fc_dt)
+fc_dir
+
+
+```
+
+```{r}
+# plot_dt <- data.frame("Histone_Lysine" = rowData(dt_exp_raw)$Histone_Residues_K,
+#            "Any_Significant" = ifelse(rownames(rowData(dt_exp_raw)) %in% rownames(dt_exp), "Any Significant", "Unchanged"))
+# 
+# p1 <- ggplot(plot_dt) + geom_bar(aes(x = Histone_Lysine, fill = Any_Significant), 
+#                                  width = 0.6, position = "fill") + 
+#     scale_fill_brewer(palette = "Set2") + theme_minimal() + 
+#     theme(legend.title = element_blank()) + ylab("Frequency") + xlab(NULL) + 
+#     annotate(geom = "text", x = unique(plot_dt$Histone_Lysine), y= 1.05, label = tapply(plot_dt$Any_Significant, plot_dt$Histone_Lysine, length))
+# p1
+# 
+# ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_4_c.svg", plot = p1,
+#         fix_text_size = FALSE)
+# ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_4_c.png", plot = p1)
+```
+
+
+```{r}
+# t_his <- table(rowData(dt_exp_raw)$Histone_Residues_K, rownames(dt_exp_raw) %in% rownames(dt_exp))
+# 
+# chi_t_his <- chisq.test(t_his)
+# chi_t_his
+# chi_t_his$observed
+# chi_t_his$expected
+
+```
+
+```{r}
+dt_exp_raw_scaled <- t(scale(t(assay(dt_exp_raw))))
+
+sds_list <- lapply(levels(droplevels(dt_exp_raw$group)), function(x){
+    data.frame("SD" = matrixStats::rowSds(as.matrix(assay(dt_exp_raw)[dt_exp_raw$group == x,])), 
+                "group" = x)
+})
+sds_list <- do.call(rbind, sds_list)
+ggplot(sds_list) + geom_boxplot(aes(x = group, y = SD))
+DescTools::ConoverTest(x = sds_list$SD, g = sds_list$group)
+```
+
+
+```{r}
+svg("../../outputs/Paper_Figures_GFCV/figure_4_a.svg")
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp), 
+           stratificationVar = "group", 
+           clustering_method = "average", 
+           clustering_distance_rows = "euclidean", 
+           show_colnames = TRUE)
+dev.off()
+table(rowData(dt_exp)$Histone_Residues_K)
+
+png("../../outputs/Paper_Figures_GFCV/figure_4_a.png")
+heatMapFun(dt_list =  assay(dt_exp), metadata = colData(dt_exp), 
+           stratificationVar = "group", 
+           clustering_method = "average", 
+           clustering_distance_rows = "euclidean", 
+           show_colnames = FALSE)
+dev.off()
+table(rowData(dt_exp)$Histone_Residues_K)
+
+p1 <- data_pca(dt_list = assay(dt_exp), metadata = colData(dt_exp),  
+        stratificationVar = "group", plot_name = "Histone Modifications Proteomics", 
+        color_vect = group_color_dict) + 
+        theme(legend.title = element_blank(), 
+                legend.position = "bottom")
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_4_b.svg", plot = p1,
+        fix_text_size = FALSE)
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_4_b.png", plot = p1)
+
+```
+
+```{r}
+lapply(unique(melted_dt$Histone_Residues), function(histone_id){
+    plot_dt <- melted_dt[melted_dt$Histone_Residues == histone_id,]
+    ggplot(plot_dt) + 
+        geom_col(aes(x = Var2, y = value, fill = Var1)) + 
+        facet_grid(rows = vars(Histone_Residues)) +
+        theme(axis.text.x = element_text(angle = 90))    
+})
+```
+
+
+```{r}
+mofa_dir_name <- "gfcv_full"
+dir.create("../../outputs/Multi_Omics_Analysis_GFCV/MOFA_Results/")
+sel_multi_omics_mofa <- names(multi_omics)[c(5,11, 13:22)]
+score_filter <- 0.8
+    
+param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
+    output_dir = "../../outputs/Multi_Omics_Analysis_GFCV/MOFA_Results/",
+    multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE", rev(sel_multi_omics_mofa)],
+    group_var = "group",
+    num_factors = 2,
+    results_name = mofa_dir_name,
+    color_vec = group_color_dict, 
+    score_filter = score_filter)
+xfun::Rscript_call(rmarkdown::render,
+                    args = list(input = "./MOFA_Models.Rmd", 
+                                output_file = paste0(param_list$output_dir,
+                                                     param_list$results_name, ".html"), 
+                                params = param_list
+                            )
+                    )
+```
+
+
+## Explaining gene expression 
+
+```{r}
+rna_seq_all <- multi_omics_full[["RNA_Sequencing"]]
+assayNames(rna_seq_all) <- "dt1"
+
+histone_all <- multi_omics_full[["Histone_Modifications_Proteomics"]]
+assayNames(histone_all) <- "dt1"
+
+rna_seq_dt <- multi_omics[["RNA_Sequencing"]]
+assayNames(rna_seq_dt) <- "dt1"
+
+dna_met_dt <- multi_omics[["WGB_DNA_Methylation"]]
+assayNames(dna_met_dt) <- "dt1"
+
+histone_dt <- multi_omics[["Histone_Modifications_Proteomics"]]
+assayNames(histone_dt) <- "dt1"
+
+corr_output_name <- "gene_tf_histone_analysis"
+corr_output_dir <- paste0(params$output_dir, corr_output_name, "/")
+
+corr_methods <- c("pearson", "spearman")
+
+rowData(dna_met_dt)$ensemblId <- mapIds(x = org.Mm.eg.db, 
+                                        keys = rowData(dna_met_dt)$geneId,
+                                        column = "ENSEMBL", keytype = "ENTREZID")
+
+if(!dir.exists(corr_output_dir)){dir.create(corr_output_dir)}
+```
+
+```{r}
+simplified_DMR_annotation <- sapply(rowData(dna_met_dt)$annotation, function(dmr_an){
+            if(grepl("Promoter", dmr_an)){return("Promoter")
+            } else if(grepl("Intron", dmr_an)){return("Intron")
+            } else if(grepl("Exon", dmr_an)){return("Exon")
+            } else if(grepl("Downstream", dmr_an)){return("Downstream")
+            } else if(grepl("Distal Intergenic", dmr_an)){return("Distal Intergenic")
+            } else if(grepl("Upstream", dmr_an)){return("Upstream")
+            } else if(grepl("3' UTR", dmr_an)){return("3' UTR")
+            } else if(grepl("5' UTR", dmr_an)){return("5' UTR")
+            } else{"Other"}
+        })
+names(simplified_DMR_annotation) <- rownames(dna_met_dt)
+
+RNA_chromosomes <- rowData(rna_seq_dt)$chromosome_name
+names(RNA_chromosomes) <- rownames(rna_seq_dt)
+
+DMR_chromosomes <- as.character(rowData(dna_met_dt)$geneChr)
+names(DMR_chromosomes) <- rownames(dna_met_dt)
+
+
+
+DMR_ensembl <- rowData(dna_met_dt)$ensemblId
+names(DMR_ensembl) <- rownames(dna_met_dt)
+```
+
+```{r}
+annotation_dt <- rowData(dna_met_dt)$annotation
+annotation_regions <- sapply(annotation_dt, function(dmr_an){
+    if(grepl("Promoter", dmr_an)){return("Promoter")
+    } else if(grepl("Intron", dmr_an)){return("Intron")
+    } else if(grepl("Exon", dmr_an)){return("Exon")
+    } else if(grepl("Downstream", dmr_an)){return("Downstream")
+    } else if(grepl("Distal Intergenic", dmr_an)){return("Distal Intergenic")
+    } else if(grepl("Upstream", dmr_an)){return("Upstream")
+    } else if(grepl("3' UTR", dmr_an)){return("3' UTR")
+    } else if(grepl("5' UTR", dmr_an)){return("5' UTR")
+    } else{"Other"}
+})
+table(annotation_regions)
+
+
+overlap_1 <- list("DMR IDs" = rowData(dna_met_dt)$geneId, 
+                "All Gene IDs" = rowData(rna_seq_all)$entrezID[!is.na(rowData(rna_seq_all)$entrezID)])
+
+overlap_2 <- list("DMR IDs" = rowData(dna_met_dt)$geneId, 
+                "Gene IDs" = rowData(rna_seq_dt)$entrezID[!is.na(rowData(rna_seq_dt)$entrezID)])
+
+ggVennDiagram::ggVennDiagram(overlap_1) + scale_x_continuous(expand = expansion(mult = .2)) +
+    scale_fill_gradient(low = "#F4FAFE", high = "#4981BF") 
+ggVennDiagram::ggVennDiagram(overlap_2, ) + 
+    scale_x_continuous(expand = expansion(mult = .4)) +
+    scale_fill_gradient(low = "#F4FAFE", high = "#4981BF") 
+library(RColorBrewer)
+myCol <- brewer.pal(2, "Set1")[1:2]
+venn.diagram(x = overlap_2, filename = "../../outputs/Paper_Figures_GFCV/figure_5_a.png", 
+             height = 3200,
+             width = 3200, disable.logging = TRUE,
+             cex = 0.6,
+            fontface = "bold",
+            fontfamily = "arial",
+            
+            lwd = 2,
+            lty = 'blank',
+            fill = myCol,
+            print.mode=c("raw","percent"),
+            cat.cex = 0.6,
+            cat.fontface = "bold",
+            cat.default.pos = "outer",
+            cat.fontfamily = "arial")
+
+print("Overlapping geneID between DMRs and changing gene expression")
+
+print(paste0("With all genes: ", 
+             length(Reduce(f = intersect, overlap_1))))
+print(paste0("With significant genes: ", 
+            length(Reduce(f = intersect, overlap_2))))
+
+
+
+rowData(dna_met_dt)$annotation
+
+
+colnames(rowData(dna_met_dt))
+rowData(dna_met_dt)
+```
+
+```{r}
+length(intersect(rowData(dna_met_dt)$geneId, rowData(rna_seq_dt)$entrezID))
+
+dmr_other <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_005/WGB_DNA_Methylation_exp_lima.rds")
+
+length(intersect(rowData(dmr_other)$geneId, rowData(rna_seq_dt)$entrezID))/nrow((rna_seq_dt))
+
+```
+
+### Reg regions - Genes Correlations
+
+```{r}
+reg_regions_dt <- readRDS("../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements_GFCV_MA.rds")
+contrasts_results <- rowData(reg_regions_dt)
+
+p_val_mat <- contrasts_results[,grep("adj.p.value", colnames(contrasts_results))]
+p_val_mat <- as.matrix(p_val_mat[,!grepl("Group", colnames(p_val_mat))])
+
+keep_dmrs <- rowSums(!is.na(p_val_mat) & p_val_mat <= 0.05) != 0
+
+reg_regions_dt_filt <- reg_regions_dt[keep_dmrs,]
+
+gfm_cvm_reg_regions <- reg_regions_dt[!is.na(rowData(reg_regions_dt)$`GFM-CVM.adj.p.value`) &
+                                        (rowData(reg_regions_dt)$`GFM-CVM.adj.p.value` <= 0.05),]
+
+gfm_cvm_reg_regions
+```
+
+```{r}
+corr_vect <- c("pearson", "spearman")
+
+list_overlaps <- lapply(rownames(rna_seq_dt), function(gene_id){
+    gene_rd <- rowData(rna_seq_dt[gene_id,])
+    
+    start_gene <- as.numeric(gene_rd$start_position) - 1000000
+    end_gene <- as.numeric(gene_rd$end_position) + 1000000
+    
+    if(!is.na(start_gene)){
+        chr_id <- gene_rd$chromosome_id
+        chr_dmrs_id <- as.character(seqnames(rowRanges(reg_regions_dt_filt)))
+        
+        gene_gr <- GRanges(seqnames = chr_id, ranges = IRanges(start = start_gene, 
+                                                               end = end_gene))
+        
+        chr_dmrs <- reg_regions_dt_filt[chr_dmrs_id == chr_id,]
+    
+        dmr_overlap <- findOverlaps(query = gene_gr, rowRanges(chr_dmrs), type = "any")
+        chr_dmrs[dmr_overlap@to,]    
+    } else{
+        return(reg_regions_dt_filt[rowData(reg_regions_dt_filt)$ensemblId %in%
+                                         gene_id,])    
+    }
+})
+names(list_overlaps) <- rownames(rna_seq_dt)
+
+intersect_samples <- intersect(colnames(rna_seq_dt),
+                               colnames(reg_regions_dt_filt))
+
+assayNames(rna_seq_dt) <- "dt1"
+corr_vect <- c("pearson", "spearman")
+
+corr_dt_list_reg_regions_2 <- lapply(corr_vect, function(corr_name){
+    
+    list_prom <- lapply(rownames(rna_seq_dt), function(gene_id){
+        rna_seq_gene <- rna_seq_dt[gene_id,]
+        
+        own_dmrs <- list_overlaps[[gene_id]]
+        # entrez_id <- rownames(rna_seq_gene)
+        # if(is.na(entrez_id)){return(NULL)}
+        
+        if(!nrow(own_dmrs)){return(NULL)}
+        
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene[,intersect_samples], 
+                                            experiment2 = own_dmrs[,intersect_samples],
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE, 
+                                            verbose = FALSE)
+    })
+    do.call(rbind, list_prom)
+})
+
+corr_dt_list_reg_regions_2 <- lapply(corr_dt_list_reg_regions_2, function(x){
+    x$adj.p.value <- p.adjust(x$pval, "fdr")
+    x
+})
+names(corr_dt_list_reg_regions_2) <- corr_vect
+
+saveRDS(corr_dt_list_reg_regions_2, "../../outputs/Multi_Omics_Analysis/test_reg_regions_1MB_cors.rds")
+
+
+reg_regions_gfcv <- list("Full_dt" = reg_regions_dt_filt,
+                         "GFCV_sig" = gfm_cvm_reg_regions,
+                         "Correlations_1MB" = corr_dt_list_reg_regions_2)
+
+saveRDS(reg_regions_gfcv, "../../outputs/Multi_Omics_Analysis/test_reg_regions_gfcv.rds")
+```
+
+
+### Correlations Genes-Associated DMRS
+
+```{r}
+rna_seq_dt_found <- rna_seq_dt[rownames(rna_seq_dt) %in%
+                                rowData(dna_met_dt)$ensemblId,]
+rna_seq_dt_found
+
+overlap_samples <- intersect(colnames(rna_seq_dt), colnames(dna_met_dt))
+overlap_samples
+
+gene_dmr_cors_list <- lapply(corr_methods, function(corr_name){
+    corr_dt <- lapply(rownames(rna_seq_dt_found), function(x){
+        rna_seq_gene <- rna_seq_dt_found[x, overlap_samples]
+        dna_met_dmr <- dna_met_dt[!is.na(rowData(dna_met_dt)$ensemblId) & 
+                                    rowData(dna_met_dt)$ensemblId %in% x, overlap_samples]
+        mia::getExperimentCrossCorrelation(x = rna_seq_gene, 
+                                            experiment2 = dna_met_dmr,
+                                            method = corr_name,
+                                            assay.type1 = "dt1", 
+                                            assay.type2 = "dt1",
+                                            test_significance =  TRUE)
+
+    })
+    corr_dt <- do.call(rbind, corr_dt)
+    corr_dt$p_adj <- p.adjust(corr_dt$pval, method = "fdr")
+    corr_dt
+})
+names(gene_dmr_cors_list) <- corr_methods
+
+saveRDS(gene_dmr_cors_list, paste0(corr_output_dir, "sig_genes_own_dmr_corr.rds"))
+```
+
+
+```{r}
+gene_dmr_cors_list <- readRDS(paste0(corr_output_dir, "sig_genes_own_dmr_corr.rds"))
+
+colnames(rowData(dna_met_dt))
+
+gene_dmr_cors_list <- lapply(names(gene_dmr_cors_list), function(cor_id){
+    gene_dmr_cors <- gene_dmr_cors_list[[cor_id]]
+    gene_dmr_cors <- gene_dmr_cors[gene_dmr_cors$p_adj <= 0.05,]
+    gene_dmr_cors$isNeg <- ifelse(gene_dmr_cors$cor <= 0, "Negative", "Positive")
+    gene_dmr_cors$type <- cor_id
+    gene_dmr_cors$DMR_annotation <- simplified_DMR_annotation[as.character(gene_dmr_cors$Var2)]
+    gene_dmr_cors
+})
+names(gene_dmr_cors_list) <- corr_methods
+```
+
+
+```{r}
+lapply(gene_dmr_cors_list, function(gene_dmr_cors){
+    table(gene_dmr_cors$isNeg)
+})
+lapply(gene_dmr_cors_list, function(gene_dmr_cors){
+    chisq.test(table(gene_dmr_cors$isNeg))
+})
+```
+
+
+```{r}
+plot_dt <- do.call(rbind, gene_dmr_cors_list)
+p1 <- ggplot(plot_dt)+ 
+    geom_bar(aes(x = DMR_annotation, 
+                  fill = isNeg), position = "dodge") + 
+    theme_minimal() + scale_fill_brewer(palette = "Set2") +
+    theme(axis.text.x = element_text(angle = 45), 
+          legend.title = element_blank()) +
+    xlab("DMR Annotation") + ylab("Count") + facet_grid(cols = vars(type)) 
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a.svg", plot = p1,
+        fix_text_size = FALSE)
+
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a.png", plot = p1)
+
+p1 <- ggplot(plot_dt)+ 
+    geom_bar(aes(x = DMR_annotation, 
+                  fill = isNeg), width = 0.6) + 
+    theme_minimal() + scale_fill_brewer(palette = "Set2") +
+    theme(axis.text.x = element_text(angle = 45), 
+          legend.title = element_blank()) +
+    xlab("DMR Annotation") + ylab("Count") + facet_grid(cols = vars(type))
+p1
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_1.svg", plot = p1,
+        fix_text_size = FALSE)
+
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_1.png", plot = p1)
+
+
+p1 <- ggplot(plot_dt)+ 
+    geom_bar(aes(x = DMR_annotation, 
+                  fill = isNeg), width = 0.6, position = "fill") + 
+    theme_minimal() + scale_fill_brewer(palette = "Set2") +
+    theme(axis.text.x = element_text(angle = 45), 
+          legend.title = element_blank()) +
+    xlab("DMR Annotation") + ylab("Count") + facet_grid(cols = vars(type))
+p1
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_2.svg", plot = p1,
+        fix_text_size = FALSE)
+
+ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_6_a_2.png", plot = p1)
+
+
+```
+
+
+```{r}
+lapply(names(gene_dmr_cors_list), function(gene_dmr_cors_id){
+    gene_dmr_cors <- gene_dmr_cors_list[[gene_dmr_cors_id]]
+    ggplot(gene_dmr_cors) + geom_boxplot(aes(x = isNeg, fill = isNeg)) + 
+        theme_minimal() + ggtitle(paste0(gene_dmr_cors_id)) + 
+        xlab("Type of correlation") + ylab("Absolute correlation") + 
+        theme(legend.position = "none") + 
+        scale_fill_manual(values = list("Positive" = "lightcoral", 
+                                        "Negative" = "lightblue"))
+})
+
+lapply(names(gene_dmr_cors_list), function(gene_dmr_cors_id){
+    gene_dmr_cors <- gene_dmr_cors_list[[gene_dmr_cors_id]]
+    ggplot(gene_dmr_cors) + geom_boxplot(aes(x = isNeg, y = abs(cor), fill = isNeg)) + 
+        theme_minimal() + ggtitle(paste0(gene_dmr_cors_id)) + 
+        xlab("Type of correlation") + ylab("Absolute correlation") + 
+        theme(legend.position = "none") + 
+        scale_fill_manual(values = list("Positive" = "lightcoral", 
+                                        "Negative" = "lightblue"))
+})
+
+lapply(gene_dmr_cors_list, function(gene_dmr_cors){
+    gene_dmr_cors$isNeg <- ifelse(gene_dmr_cors$cor <= 0, "Negative", "Positive")
+    wilcox.test(abs(gene_dmr_cors$cor) ~ gene_dmr_cors$isNeg) 
+})
+  
+lapply(gene_dmr_cors_list, function(gene_dmr_cors){
+    gene_dmr_cors$isNeg <- ifelse(gene_dmr_cors$cor <= 0, "Negative", "Positive")
+    tapply(abs(gene_dmr_cors$cor), gene_dmr_cors$isNeg, summary) 
+})  
+
+dmr_associated_list <- lapply(gene_dmr_cors_list, function(gene_dmr_cors){
+    dmr_associated <- tapply(gene_dmr_cors$Var2, 
+                        INDEX = gene_dmr_cors$Var1, 
+                        function(x){x})
+    dmr_associated <- dmr_associated[lengths(dmr_associated) != 0]
+    dmr_associated
+})
+
+dmr_regulated <- union(names(dmr_associated_list$pearson),
+                        names(dmr_associated_list$spearman))
+
+table(rowData(rna_seq_all)[dmr_regulated,]$`HFD-CNT.log2FC` < 0)
+
+reg_genes <- rowData(omic_dt[["RNA_Sequencing"]])[dmr_regulated,]
+```
+
+
+```{r}
+
+gfm_cvm_exp <- lapply(names(multi_omics_full), function(multi_omics_names){
+    multi_omics_exp <- experiments(multi_omics_full)[[multi_omics_names]]
+    p_val_dt <- rowData(multi_omics_exp)[,grepl("adj.p.value", colnames(rowData(multi_omics_exp)))]
+    p_val_dt <- p_val_dt[,grepl("GFM_CVM", colnames(p_val_dt)), drop = FALSE]
+    multi_omics_exp <- multi_omics_exp[apply(as.matrix(p_val_dt) <= 0.05, 1, any),]
+    
+    # if(nrow(multi_omics_exp) == 0){return(NA)}
+    
+    multi_omics_exp
+})
+names(gfm_cvm_exp) <- names(multi_omics_full)
+
+gfcv_keep_vars <- list("DMRregulated" = dmr_regulated,
+                        "GFM-CVM" = gfm_cvm_exp,
+                       "Full_dt" = multi_omics_full,
+                       "Correlations" = gene_dmr_cors_list)
+
+saveRDS(gfcv_keep_vars, 
+        paste0(params$output_dir, "gfcv_interesting_vars.rds"))
+```
