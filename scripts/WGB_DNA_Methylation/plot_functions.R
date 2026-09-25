@@ -1,27 +1,29 @@
 group_distribution_plots <- function(methrix_obj, group_var, scale_dt = TRUE, 
                                      plot_title = "group values distribution"){
-  if(scale_dt){
-    cpg_dt <- t(scale(t(assay(methrix_obj))))    
-  } else{
-    cpg_dt <- assay(methrix_obj)
-  }
-  plot_dt <- lapply(unique(methrix_obj[[group_var]]), function(ctrs_id){
-    data.frame("CpG_Means" = rowMeans2(cpg_dt, cols = methrix_sub[[group_var]] == ctrs_id), "Group" = ctrs_id)   
-  })
-  plot_dt <- do.call(rbind, plot_dt)
-  p_1 <- ggplotly(ggplot(plot_dt, aes(x = CpG_Means, fill = Group)) + 
-                    geom_histogram(position = "identity") + theme_minimal() +
-                    ggtitle(paste("Mean", plot_title)))
-  
-  
-  plot_dt <- lapply(unique(methrix_sub[[params$group_var]]), function(ctrs_id){
-    data.frame("CpG_Means" = matrixStats::rowMedians(cpg_dt, cols = methrix_sub[[group_var]] == ctrs_id), "Group" = ctrs_id)
-  })
-  plot_dt <- do.call(rbind, plot_dt)
-  p_2 <- ggplotly(ggplot(plot_dt, aes(x = CpG_Means, fill = Group)) + geom_histogram(position = "identity") + theme_minimal()+
-                    ggtitle(paste("Median", plot_title)))
-  
-  return(list(p_1, p_2))
+    
+    if(scale_dt){
+        cpg_dt <- t(scale(t(assay(methrix_obj))))    
+      } else{
+        cpg_dt <- assay(methrix_obj)
+      }
+      plot_dt <- lapply(unique(methrix_obj[[group_var]]), function(ctrs_id){
+        data.frame("CpG_Means" = rowMeans2(cpg_dt, cols = methrix_obj[[group_var]] == ctrs_id, na.rm = TRUE),
+                    "Group" = ctrs_id)   
+      })
+      plot_dt <- do.call(rbind, plot_dt)
+      p_1 <- ggplot(plot_dt, aes(x = CpG_Means, fill = Group)) + 
+                        geom_histogram(position = "identity") + theme_minimal() +
+                        ggtitle(paste("Mean", plot_title))
+      
+      
+      plot_dt <- lapply(unique(methrix_sub[[params$group_var]]), function(ctrs_id){
+        data.frame("CpG_Means" = matrixStats::rowMedians(cpg_dt, cols = methrix_sub[[group_var]] == ctrs_id), "Group" = ctrs_id)
+      })
+      plot_dt <- do.call(rbind, plot_dt)
+      p_2 <- ggplot(plot_dt, aes(x = CpG_Means, fill = Group)) + geom_histogram(position = "identity") + theme_minimal()+
+                        ggtitle(paste("Median", plot_title))
+      
+      return(list(p_1, p_2))
 }
 
 sample_distribution_plot <- function(methrix_obj, group_var, scale_dt = TRUE, 
@@ -36,10 +38,10 @@ sample_distribution_plot <- function(methrix_obj, group_var, scale_dt = TRUE,
                "Sample_ID" = sample_id, "Sample_Group" = methrix_sub[,sample_id][[group_var]])
   })
   plot_dt2 <- do.call(rbind, plot_dt2)
-  ggplotly(ggplot(plot_dt2, aes(x = Sample_Values, fill = Sample_ID)) + 
+  ggplot(plot_dt2, aes(x = Sample_Values, fill = Sample_ID)) + 
              geom_histogram(position = "identity", bins = 100) +
              theme_minimal() + facet_grid(rows = vars(Sample_Group))+
-             ggtitle(plot_title))
+             ggtitle(plot_title)
 }
 
 
