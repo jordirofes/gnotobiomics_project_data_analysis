@@ -11,6 +11,126 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Generate output and figure dir
 
 ```{r}
+packages <- c(
+  "AnnotationDbi",
+  "AnnotationHub",
+  "ape",
+  "annotatr",
+  "biomaRt",
+  "BiocParallel",
+  "bsseq",
+  "car",
+  "ChIPseeker",
+  "circlize",
+  "clusterProfiler",
+  "compositions",
+  "cowplot",
+  "data.table",
+  "DESeq2",
+  "devtools",
+  "DescTools",
+  "dplyr",
+  "DT",
+  "edgeR",
+  "enrichplot",
+  "GenomicRanges",
+  "GGally",
+  "ggplot2",
+  "ggpubr",
+  "ggsankey",
+  "ggh4x",
+  "ggsignif",
+  "ggVennDiagram",
+  "GOSemSim",
+  "grDevices",
+  "igraph",
+  "IHW",
+  "impute",
+  "IRanges",
+  "KEGGREST",
+  "knitr",
+  "limma",
+  "magrittr",
+  "MetaboAnalystR",
+  "MetaboCoreUtils",
+  "methrix",
+  "mia",
+  "miaViz",
+  "mixOmics",
+  "MOFA2",
+  "MSnbase",
+  "msigdbr",
+  "MultiAssayExperiment",
+  "networkD3",
+  "openxlsx",
+  "org.Mm.eg.db",
+  "patchwork",
+  "phyloseq",
+  "plotly",
+  "pmp",
+  "qHermes",
+  "qgraph",
+  "readr",
+  "readxl",
+  "rGREAT",
+  "RColorBrewer",
+  "RHermes",
+  "sva",
+  "scater",
+  "stringi",
+  "stringr",
+  "SummarizedExperiment",
+  "survcomp",
+  "tibble",
+  "tidyr",
+  "TreeSummarizedExperiment",
+  "TxDb.Mmusculus.UCSC.mm39.refGene",
+  "vegan",
+  "VennDiagram",
+  "vsn",
+  "xcms"
+)
+
+install_pkg <- function(pkg) {
+    # Check if already installed
+    if (requireNamespace(pkg, quietly = TRUE)) {
+      message(pkg, " is already installed.")
+      return(invisible(NULL))
+    }
+    
+    # Check CRAN
+    cran_pkgs <- available.packages(repos = "https://cloud.r-project.org")[, "Package"]
+    if (pkg %in% cran_pkgs) {
+      message("Installing '", pkg, "' from CRAN...")
+      install.packages(pkg, repos = "https://cloud.r-project.org")
+      return(invisible(NULL))
+    }
+    
+    # Check Bioconductor
+    if (!requireNamespace("BiocManager", quietly = TRUE)) {
+      install.packages("BiocManager", repos = "https://cloud.r-project.org")
+    }
+    bioc_pkgs <- tryCatch(
+      BiocManager::available(),
+      error = function(e) character(0)
+    )
+    if (pkg %in% bioc_pkgs) {
+      message("Installing '", pkg, "' from Bioconductor...")
+      BiocManager::install(pkg, ask = FALSE)
+      return(invisible(NULL))
+    }
+    
+    # Not found in either
+    message("Package '", pkg, "' was not found on CRAN or Bioconductor.")
+}
+
+lapply(packages, install_pkg)
+
+if(!require("RHermes")) devtools::install_github("RogerGinBer/RHermes@devel")
+if(!require("qHermes")) devtools::install_github("RogerGinBer/qHermes")
+```
+
+```{r}
 output_dir <- "../outputs/"
 figure_dir <- "../outputs/Paper_Figures/"
 multi_omics_dir <- "../outputs/Multi_Omics_Analysis/"
@@ -18,28 +138,43 @@ multi_omics_dir <- "../outputs/Multi_Omics_Analysis/"
 if(!dir.exists(output_dir)){dir.create(output_dir)}
 if(!dir.exists(figure_dir)){dir.create(figure_dir)}
 if(!dir.exists(multi_omics_dir)){dir.create(multi_omics_dir)}
-
 ```
 
 ## Generate omic dir
 
 ```{r}
-omic_ids_vect <- c("RNA_Sequencing", "WGB_DNA_Methylation",
-              "Histone_Modifications_Proteomics", "Untargeted_Metabolomics",
-               "Targeted_Metabolomics", "Metallomics", "Shotgun_metagenomics")
+omic_ids_vect <- c("RNA_Sequencing", "Histone_Modifications_Proteomics", 
+                "Untargeted_Metabolomics", "Targeted_Metabolomics", 
+                "Metallomics", "Shotgun_Metagenomics", "WGB_DNA_Methylation")
 
 
 lapply(omic_ids_vect, function(omic_id){
-    omic_dir <- paste0("../outputs/", omic_id, "/")
-    if(!dir.exists(omic_dir)){dir.create(omic_dir)}
+    omic_script_dir <- paste0("./", omic_id, "/")
     
-    omic_input_dir <- paste0("../inputs/", omic_id, "/")
+    omic_input_dir <- paste0("../../inputs/", omic_id, "/")
+    omic_output_dir <- paste0("../../outputs/", omic_id, "/")
     
-    omic_outputs_lima <- paste0(omic_dir, omic_id, "_exp_lima.rds")
-    omic_outputs_gfcv <- paste0(omic_dir, omic_id, "_exp_gfcv.rds")
+    omic_output_dir_here <- paste0("../outputs/", omic_id, "/")
+    omic_input_dir_here <- paste0("../inputs/", omic_id, "/")
     
-    if(!file.exists(omic_outputs_gfcv) | !file.exists(omic_outputs_lima)){
-        script_path <- paste0(omic_dir, omic_id, "_script.Rmd")
+    if(!dir.exists(omic_output_dir_here)){dir.create(omic_output_dir_here)}
+
+    omic_outputs_here_lima <- paste0(omic_output_dir_here, omic_id, "_exp_lima.rds")
+    omic_outputs_here_gfcv <- paste0(omic_output_dir_here, omic_id, "_exp_gfcv.rds")
+    
+    omic_inputs_here_lima <- paste0(omic_input_dir_here, omic_id, "_exp_lima.rds")
+    omic_inputs_here_gfcv <- paste0(omic_input_dir_here, omic_id, "_exp_gfcv.rds")
+    
+    
+    missing_output <- !file.exists(omic_outputs_here_gfcv) | !file.exists(omic_outputs_here_lima)
+    missing_input <- !file.exists(omic_inputs_here_lima) | !file.exists(omic_inputs_here_gfcv)
+    
+    if(file.exists(omic_outputs_here_lima) & omic_id == "Shotgun_Metagenomics"){return(NULL)}
+    
+    if(missing_output & missing_input){
+        
+        
+        script_path <- paste0(omic_script_dir, omic_id, "_script.Rmd")
         script_output_name <- paste0(omic_id, "_script.html")
         
         xfun::Rscript_call(rmarkdown::render, 
@@ -47,25 +182,28 @@ lapply(omic_ids_vect, function(omic_id){
                       output_file = script_output_name, 
                       params = list(
                         input_dir = omic_input_dir,
-                        output_dir = omic_dir)
+                        output_dir = omic_output_dir)
                     )
             )
     }
 })
 
-multi_omics_prepro_script_path <- paste0(multi_omics_dir, "Multi_Omics_Processing.Rmd")
+multi_omics_prepro_script_path <- "./Multi_Omics_Analysis/Multi_Omics_Processing.Rmd"
 multi_omics_prepro_script_name <- "Multi_Omics_Processing.html"
+
+output_dir_mo <- "../../outputs/Multi_Omics_Analysis/"
+
+
 
 xfun::Rscript_call(rmarkdown::render, 
             args = list(input = multi_omics_prepro_script_path, 
                       output_file = multi_omics_prepro_script_name, 
                       params = list(
-                        input_dir = omic_input_dir,
-                        output_dir = omic_dir)
-                    )
+                        output_dir = output_dir_mo)
+                    ), 
             )
 
-multi_omics_script_path_gfcv <- paste0(multi_omics_dir, "Multi_Omics_Analysis_GFCV.Rmd")
+multi_omics_script_path_gfcv <- "./Multi_Omics_Analysis/Multi_Omics_Analysis_GFCV.Rmd"
 multi_omics_script_name_gfcv <- "Multi_Omics_Analysis_GFCV.html"
 
 xfun::Rscript_call(rmarkdown::render, 
@@ -73,19 +211,19 @@ xfun::Rscript_call(rmarkdown::render,
                       output_file = multi_omics_script_name_gfcv, 
                       params = list(
                         input_dir = "../../inputs/",
-                        output_dir = omic_dir)
+                        output_dir = output_dir_mo)
                     )
             )
 
 
-multi_omics_script_path <- paste0(multi_omics_dir, "Multi_Omics_Analysis.Rmd")
+multi_omics_script_path <- "./Multi_Omics_Analysis/Multi_Omics_Analysis.Rmd"
 multi_omics_script_name <- "Multi_Omics_Analysis.html"
 
 xfun::Rscript_call(rmarkdown::render, 
             args = list(input = multi_omics_script_path, 
                       output_file = multi_omics_script_name, 
                       params = list(
-                        output_dir = omic_dir)
+                        output_dir = output_dir_mo)
                     )
             )
 

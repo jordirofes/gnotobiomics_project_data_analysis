@@ -3,10 +3,10 @@ title: "Coverage/Bedgraph Processing"
 output: html_document
 date: "2023-12-06"
 params:
-  file_dir: "/home/rstudio/bioinf-d/lima_coverage/"
-  output_dir: "/home/rstudio/bioinf-d/lima_results_methylseq/Results/"
+  file_dir: "~/Github/gnotobiomics_project_data_analysis/inputs/WGB_DNA_Methylation/lima_coverage/"
+  output_dir: "~/Github/gnotobiomics_project_data_analysis/outputs/WGB_DNA_Methylation/LIMA/"
   threads: 1
-  file_metadata_path: "/home/rstudio/bioinf-d/lima_results_methylseq/lima_metadata.csv" # A csv with the sample names as rownames, a group column and a file path column (absolute path).
+  file_metadata_path: "~/Github/gnotobiomics_project_data_analysis/inputs/WGB_DNA_Methylation/lima_metadata.csv" # A csv with the sample names as rownames, a group column and a file path column (absolute path).
   file_path_var: "file_path"
   group_var: "group"
   levels_order: !r c("CNT", "HFD", "INT", "HFE")
@@ -58,22 +58,28 @@ bsseq_files <- list.files(params$file_dir,
 
 # meta_data <- data.frame("file_path" = bsseq_files)
 # rownames(meta_data) <- sapply(strsplit(basename(bsseq_files), "_"), function(x){x[[1]]})
-# meta_data$group <- factor(substr(x = rownames(meta_data), start = 1, stop = 2), 
-#                           levels = c("CM", "CF", "GM", "GF"), 
+# meta_data$group <- factor(substr(x = rownames(meta_data), start = 1, stop = 2),
+#                           levels = c("CM", "CF", "GM", "GF"),
 #                           labels = c("CVM", "CVF", "GFM", "GFF"))
 # meta_data$gfcv <- factor(substr(x = rownames(meta_data), start = 1, stop = 1))
 # meta_data$sex <- factor(substr(x = rownames(meta_data), start = 2, stop = 2))
 # meta_data$batch <- factor(substr(x = rownames(meta_data), start = 4, stop = 4))
 # 
-# write.csv(meta_data, "../bioinf-d/gfcv_results_methylseq/gfcv_metadata.csv", row.names = TRUE)
 
 meta_data <- read.csv(params$file_metadata_path, header = TRUE, row.names = 1, stringsAsFactors = TRUE)
+# meta_data$file_path <- basename(as.character(meta_data$file_path))
+# write.csv(meta_data, "~/Github/gnotobiomics_project_data_analysis/inputs/WGB_DNA_Methylation/gfcv_metadata.csv", row.names = TRUE)
+
 
 if(!is.null(params$levels_order)){
-  meta_data[[params$group_var]] <- factor(meta_data[[params$group_var]], labels = params$levels_order)
+  meta_data[[params$group_var]] <- factor(meta_data[[params$group_var]], 
+                                          levels = params$levels_order,
+                                          labels = params$levels_order)
 }
 
-meta_data <- meta_data[match(x = bsseq_files, meta_data[[params$file_path_var]]),]
+meta_data <- meta_data[match(x = basename(bsseq_files),
+                            as.character(meta_data[[params$file_path_var]])),]
+meta_data$found_path <- bsseq_files 
 
 methrix_obj_path <- paste0(params$output_dir, "merged_methrix.rds")
 
@@ -95,11 +101,11 @@ if(!file.exists(methrix_obj_path)){
     stranded = params$stranded, 
     collapse_strands = params$collapse_strands
   )
-  methrix_report_dir <- paste0(params$output_dir, "methrix_report/")
-  
-  if(!dir.exists(methrix_report_dir)){dir.create(methrix_report_dir)}
-  
-  methrix_report(meth = merged_methrix, output_dir = methrix_report_dir)
+  # methrix_report_dir <- paste0(params$output_dir, "methrix_report/")
+  # 
+  # if(!dir.exists(methrix_report_dir)){dir.create(methrix_report_dir)}
+  # 
+  # methrix_report(meth = merged_methrix, output_dir = methrix_report_dir)
   
   merged_methrix <- methrix::mask_methrix(m = merged_methrix, low_count = 5, 
                                         high_quantile = 0.99, n_cores = 1)

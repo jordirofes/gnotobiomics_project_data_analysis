@@ -559,8 +559,8 @@ xcms_p_dc_filt <- xcms_p_dc_filt[(mz_rd$isotope == "M0" & (rownames(mz_rd) %in% 
 
 
 ```{r}
-# saveRDS(xcms_p_dc_filt,
-#         paste0(params$output_results, "xcms_hermes_exp_gfcv.rds"))
+saveRDS(xcms_p_dc_filt,
+        paste0(params$output_results, "xcms_hermes_exp_gfcv.rds"))
 ```
 
 ### LIMA model analysis
@@ -980,7 +980,7 @@ xcms_p_dc_filt <- xcms_p_dc_filt[(mz_rd$isotope == "M0" & (rownames(mz_rd) %in% 
 
 
 ```{r}
-# saveRDS(xcms_p_dc_filt,
-#         paste0(params$output_results, "xcms_hermes_exp_lima.rds"))
+saveRDS(xcms_p_dc_filt,
+        paste0(params$output_results, "xcms_hermes_exp_lima.rds"))
 ```
 

@@ -31,6 +31,7 @@ library(GGally)
 library(igraph)
 library(survcomp)
 library(clusterProfiler)
+library(reshape2)
 ```
 
 
@@ -73,9 +74,27 @@ multi_omics_selected <- multi_omics_selected[multi_omics_selected %in% names(mul
 ```
 
 ```{r}
-multi_omics_ordered <- names(multi_omics)[c(16, 41, 13, 40, 38, 14, 
-                                            39, 37, 15, 5, 11, 19, 25, 
-                                            29, 33, 30, 34, 32, 36, 31, 35)]
+# multi_omics_ordered <- names(multi_omics)[c(16, 41, 13, 40, 38, 14, 
+#                                             39, 37, 15, 5, 11, 19, 25, 
+#                                             29, 33, 30, 34, 32, 36, 31, 35)]
+omic_names <- names(multi_omics)
+
+order_names_ids <- c(grep("RNA", omic_names),
+  grep("WGB", omic_names),
+  grep("Histone", omic_names),
+  grep("Untargeted", omic_names),
+  grep("Targeted.*\\.liver", omic_names),
+  grep("Metal.*\\.liver", omic_names),
+  grep("\\.serum", omic_names),
+  grep("Targeted.*\\.cecum", omic_names),
+  grep("Metal.*\\.cecum", omic_names),
+  grep("Shotgun.*\\.cecum\\.Genus$", omic_names),
+  grep("Shotgun.*\\.colon\\.Genus$", omic_names),
+  grep("Shotgun.*Functional.*EC", omic_names),
+  grep("Shotgun.*Functional.*kegg", omic_names),
+  grep("Shotgun.*Functional.*cogs", omic_names),
+  grep("Shotgun.*Functional.*pathway", omic_names))
+
 
 omic_names_dict <- c("Liver RNA Sequencing", "Liver DNA Methylation", 
                     "Liver Histone Modifications", 
@@ -83,7 +102,6 @@ omic_names_dict <- c("Liver RNA Sequencing", "Liver DNA Methylation",
                     "Liver Targeted Metabolomics", "Liver Metallomics",
                     "Serum Targeted Metabolomics",
                     "Cecum Targeted Metabolomics", "Cecum Metallomics",    
-                    "Cecum 16S Metagenomics", "Colon 16S Metagenomics", 
                     "Cecum Shotgun Metagenomics", "Colon Shotgun Metagenomics",
                     paste(rep(c("Cecum","Colon"), 3), 
                         "Shotgun Functional", 
@@ -91,7 +109,7 @@ omic_names_dict <- c("Liver RNA Sequencing", "Liver DNA Methylation",
                           "Pathways", "Pathways"))
                     )
 
-names(omic_names_dict) <- multi_omics_ordered
+names(omic_names_dict) <- omic_names[order_names_ids]
     
 group_color_dict <- RColorBrewer::brewer.pal(n = length(levels(droplevels(multi_omics$group))), 
                                              name = "Set2")
@@ -100,6 +118,7 @@ names(group_color_dict) <- levels(droplevels(multi_omics$group))
 ```
 
 ```{r}
+multi_omics_ordered <- names(multi_omics)[order_names_ids]
 omic_names_dup <- sapply(strsplit(multi_omics_ordered, "\\."), 
                         function(x){x[[1]]})
 omic_names_dup[grep("cogs", multi_omics_ordered)] <- "cogs"
@@ -111,7 +130,7 @@ names(omic_names_dup) <- multi_omics_ordered
 
 unique_omics <- unique(omic_names_dup)
 
-omic_colors <- RColorBrewer::brewer.pal(n = length(unique_omics), name = "Set3")
+omic_colors <- RColorBrewer::brewer.pal(n = length(unique_omics) + 1, name = "Set3")
 
 col_list <- lapply(seq_along(unique_omics), function(omic_id){
     omic_name <- unique_omics[omic_id]
@@ -239,14 +258,14 @@ multi_omics_selected_gfcv <- c("Untargeted_Metabolomics", "RNA_Sequencing")
 
 # multi_omics_selected <- multi_omics_names[grepl("WGB|RNA|Untargeted",
 #                                                 multi_omics_names)]
-multi_omics_gfcv_raw <- readRDS("../../outputs/Multi_Omics_Analysis_GFCV/Multi_Omics_Analysis_exp_gfcv.rds")
+multi_omics_gfcv_raw <- readRDS("../../outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_exp_gfcv.rds")
 
-multi_omics_gfcv_ma <- readRDS("../../outputs/Multi_Omics_Analysis_GFCV/Multi_Omics_Analysis_MA_exp_gfcv.rds")
+multi_omics_gfcv_ma <- readRDS("../../outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_MA_exp_gfcv.rds")
 ```
 
 
 ```{r}
-gfcv_vars <- readRDS("../../outputs/Multi_Omics_Analysis_GFCV/gfcv_interesting_vars.rds")
+gfcv_vars <- readRDS("../../outputs/Multi_Omics_Analysis/gfcv_interesting_vars.rds")
 
 multi_omics_gfcv <- multi_omics_gfcv_raw
 experiments(multi_omics_gfcv) <- ExperimentList(gfcv_vars$`GFM-CVM`)
@@ -422,23 +441,22 @@ names(fc_dict) <- col_names
 
 
 ```{r}
-kegg_db_enrich_path <- paste0(params$output_dir, "kegg_enrich_db_red.rds")
-kegg_db_path <- paste0(params$output_dir, "kegg_enrich_db.rds")
+kegg_db_enrich_path <- "../../inputs/RNA_Sequencing/kegg_enrich_db_red.rds"
+kegg_db_list <- readRDS(kegg_db_enrich_path)
 
-if(!file.exists(kegg_db_enrich_path)){
-    library(KEGGREST)
-
-    kegg_db_info <- lapply(pathway_ids, function(x){keggGet(x)[[1]]})
-    names(kegg_db_info) <- pathway_ids
-    kegg_db_list <- kegg_db_info[sapply(kegg_db_info, function(x){
-        is.null(x$CLASS) || !grepl("Human", x$CLASS)
-    })]
-
-    saveRDS(kegg_db_list, kegg_db_enrich_path)
-    saveRDS(kegg_db_info, kegg_db_path)
-} else{
-    kegg_db_list <- readRDS(kegg_db_enrich_path)
-}
+# if(!file.exists(kegg_db_enrich_path)){
+#     library(KEGGREST)
+# 
+#     kegg_db_info <- lapply(pathway_ids, function(x){keggGet(x)[[1]]})
+#     names(kegg_db_info) <- pathway_ids
+#     kegg_db_list <- kegg_db_info[sapply(kegg_db_info, function(x){
+#         is.null(x$CLASS) || !grepl("Human", x$CLASS)
+#     })]
+# 
+#     saveRDS(kegg_db_list, kegg_db_enrich_path)
+#     saveRDS(kegg_db_info, kegg_db_path)
+# } else{
+# }
 
 term2name_dt <- kegg_db_list$term2name
 integ_enrich_db <- kegg_db_list$term2gene
@@ -462,16 +480,16 @@ names(kegg_description_vect) <- kegg_db_list$term2name$term
 ```
 
 ```{r}
-chebi_filt <- readRDS("../../outputs/Multi_Omics_Analysis/chebi_filt.rds")
-term2gene_filt <- chebi_filt$term2gene
-term2name_filt <- chebi_filt$term2name
-term2kegg_filt <- chebi_filt$term2kegg
+# chebi_filt <- readRDS("../../outputs/Multi_Omics_Analysis/chebi_filt.rds")
+# term2gene_filt <- chebi_filt$term2gene
+# term2name_filt <- chebi_filt$term2name
+# term2kegg_filt <- chebi_filt$term2kegg
 ```
 
 ### Mice parameters
 
 ```{r}
-mice_dt <- openxlsx::read.xlsx(paste0(params$input_dir, "AnimalData_OscarYanes.xlsx"))
+mice_dt <- openxlsx::read.xlsx(paste0(params$input_dir, "Mice_Data/AnimalData.xlsx"))
 # mice_num <- mice_dt[,c("BW(g)", "WATep(g)", "Liver(g)")]
 mice_num <- mice_dt
 mice_s <- as.data.frame(mice_num)
@@ -480,14 +498,15 @@ dict_vect <- c("Ctrl" = "CNT", "Ctrl ext" = "CNT", "HFD" = "HFD",
 mice_s$group <- factor(dict_vect[mice_dt$Group], levels = c("CNT", "HFD", 
                                                             "INT", "HFE"))
 dict_vect_g <- c("CNT" = "C", "HFD" = "H", "INT" = "I", "HFE" = "E")
-mice_s$samplename <- paste0(make.names(mice_dt$ID), dict_vect_g[mice_s$group])
+# mice_dt$samplename <- paste0(make.names(mice_s$ID), dict_vect_g[mice_s$group])
+mice_s$samplename <- paste0(make.names(mice_s$ID), dict_vect_g[mice_s$group])
 mice_s$samplename[mice_s$samplename == "X686I"] <- "X687I"
 mice_s$Sacrifice <- as.factor(mice_s$Sacrifice)
 
-mice_found <- mice_s[match(colnames(dt_exp), mice_s$samplename),]
+mice_found <- mice_s[match(rownames(colData(multi_omics)), mice_s$samplename),]
 rownames(mice_found) <- mice_found$samplename
 
-mice_all <- mice_dt[match(rownames(colData(multi_omics_raw)), mice_dt$samplename),]
+mice_all <- mice_s[match(rownames(colData(multi_omics_raw)), mice_s$samplename),]
 
 print("Body weight (sd)")
 tapply(mice_found$`BW(g)`, INDEX = mice_found$group, sd)
@@ -702,7 +721,7 @@ rowData(multi_omics[["RNA_Sequencing"]])$tf_checkpoint <- rownames(multi_omics[[
 ### DNA Methylation
 
 ```{r}
-merged_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/merged_methrix.rds")
+# merged_methrix <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/merged_methrix.rds")
 # merged_methrix
 # library(MultiAssayExperiment)
 # cpg_info <- rowData(merged_methrix)
@@ -2022,7 +2041,7 @@ sel_multi_omics_mofa <- grep("RNA|WGB|Histone|Untargeted|Shotgun.*Genus|Shotgun.
                             names(multi_omics), value = TRUE)
 sel_multi_omics_mofa <- grep("cecum", sel_multi_omics_mofa, value = TRUE, invert = TRUE)
 
-sel_multi_omics_mofa <- sel_multi_omics_mofa[match(multi_omics_ordered[multi_omics_ordered %in% sel_multi_omics_mofa], sel_multi_omics_mofa)]
+sel_multi_omics_mofa <- sel_multi_omics_mofa[match(names(multi_omics)[order_names_ids][names(multi_omics)[order_names_ids] %in% sel_multi_omics_mofa], sel_multi_omics_mofa)]
 sel_multi_omics_mofa
 # sel_multi_omics_mofa <- c(sel_multi_omics_mofa, "WGB_Test")
 
@@ -2204,9 +2223,12 @@ all_raw_vars
 ```
 
 ```{r}
+mofa_path <- "../../outputs/Multi_Omics_Analysis/MOFA_Results/" 
+if(!dir.exists(mofa_path)){dir.create(mofa_path)}
 param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
-    output_dir = "../../outputs/Multi_Omics_Analysis/MOFA_Results/",
-    multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE", rev(sel_multi_omics_mofa)],
+    output_dir = mofa_path,
+    multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE",
+                                    rev(sel_multi_omics_mofa)],
     group_var = "group",
     num_factors = 2,
     results_name = mofa_dir_name,
@@ -4730,12 +4752,6 @@ lapply(names(experiments(multi_omics_mofa_hfe)), function(exp_id){
 dev.off()
 ```
 
-
-```{r}
-aaaaa
-```
-
-
 ## Factor 1 epigenetic relationships
 
 ### DNA Methylation MOFA factor
@@ -5116,75 +5132,75 @@ dna_met_rd$gene_Ensembl <- AnnotationDbi::mapIds(x = org.Mm.eg.db,
 
 
 ```{r}
-as.character(found_corr_dt_gfcv_filt$ENSMUSG00000010651$Var2)
-rownames(dna_met_rd)[dna_met_rd$gene_Ensembl %in% "ENSMUSG00000010651"]
-
-# plot_dt_lima_1 <- assay(dna_met_dt[rownames(dna_met_rd)[dna_met_rd$gene_Ensembl %in% "ENSMUSG00000010651"],])
-# plot_dt_gfcv_1 <- assay(gfcv_vars$`GFM-CVM`$WGB_DNA_Methylation[as.character(found_corr_dt_gfcv_filt$ENSMUSG00000010651$Var2),])
-
-plot_dt_lima_1 <- assay(dna_met_dt["DMR2603",])
-
-plot_dt_lima_1 <- melt(plot_dt_lima_1)
-plot_dt_lima_1$group <- sample_2_group[as.character(plot_dt_lima_1$variable)]
-plot_dt_lima_1$type <- "LiMa"
-
-
-plot_dt_gfcv_1 <- assay(gfcv_vars$`GFM-CVM`$WGB_DNA_Methylation["DMR3931",])
-plot_dt_gfcv_1 <- melt(plot_dt_gfcv_1)
-plot_dt_gfcv_1$group <- ifelse(grepl("CM", plot_dt_gfcv_1$variable), "CV", "GF")
-
-plot_dt_gfcv_1 <- plot_dt_gfcv_1[grepl("CM|GM", plot_dt_gfcv_1$variable),]
-plot_dt_gfcv_1$type <- "GFCV"
-
-merged_plot_dt_test <- rbind(plot_dt_lima_1, plot_dt_gfcv_1)
-
-group_color_dict_gfcv <- c("CV" = "#ffc20a80", "GF" = "#0c7bdc80")
-
-ggplot(merged_plot_dt_test, aes(x = group, y = value, fill = group)) + geom_boxplot() + theme_minimal() + 
-    ggtitle("LiMa DMR2604 (Intron 5 of 11) / GFCV DMR4529 (Promoter) Gene Acaa1b") + 
-    ylab("Methylation levels (Z score)") + xlab("") + 
-    theme(axis.text.x = element_blank()) + 
-    guides(fill = guide_legend("Group")) + 
-    scale_fill_manual(values = c(group_color_dict, group_color_dict_gfcv))
+# as.character(found_corr_dt_gfcv_filt$ENSMUSG00000010651$Var2)
+# rownames(dna_met_rd)[dna_met_rd$gene_Ensembl %in% "ENSMUSG00000010651"]
+# 
+# # plot_dt_lima_1 <- assay(dna_met_dt[rownames(dna_met_rd)[dna_met_rd$gene_Ensembl %in% "ENSMUSG00000010651"],])
+# # plot_dt_gfcv_1 <- assay(gfcv_vars$`GFM-CVM`$WGB_DNA_Methylation[as.character(found_corr_dt_gfcv_filt$ENSMUSG00000010651$Var2),])
+# 
+# plot_dt_lima_1 <- assay(dna_met_dt["DMR2603",])
+# 
+# plot_dt_lima_1 <- melt(plot_dt_lima_1)
+# plot_dt_lima_1$group <- sample_2_group[as.character(plot_dt_lima_1$variable)]
+# plot_dt_lima_1$type <- "LiMa"
+# 
+# 
+# plot_dt_gfcv_1 <- assay(gfcv_vars$`GFM-CVM`$WGB_DNA_Methylation["DMR3931",])
+# plot_dt_gfcv_1 <- melt(plot_dt_gfcv_1)
+# plot_dt_gfcv_1$group <- ifelse(grepl("CM", plot_dt_gfcv_1$variable), "CV", "GF")
+# 
+# plot_dt_gfcv_1 <- plot_dt_gfcv_1[grepl("CM|GM", plot_dt_gfcv_1$variable),]
+# plot_dt_gfcv_1$type <- "GFCV"
+# 
+# merged_plot_dt_test <- rbind(plot_dt_lima_1, plot_dt_gfcv_1)
+# 
+# group_color_dict_gfcv <- c("CV" = "#ffc20a80", "GF" = "#0c7bdc80")
+# 
+# ggplot(merged_plot_dt_test, aes(x = group, y = value, fill = group)) + geom_boxplot() + theme_minimal() + 
+#     ggtitle("LiMa DMR2604 (Intron 5 of 11) / GFCV DMR4529 (Promoter) Gene Acaa1b") + 
+#     ylab("Methylation levels (Z score)") + xlab("") + 
+#     theme(axis.text.x = element_blank()) + 
+#     guides(fill = guide_legend("Group")) + 
+#     scale_fill_manual(values = c(group_color_dict, group_color_dict_gfcv))
 ```
 
 
 ```{r}
-as.character(found_corr_dt_gfcv_filt$ENSMUSG00000000594$Var2)
-rownames(dna_met_rd)[dna_met_rd$gene_Ensembl %in% "ENSMUSG00000000594"]
-
-dna_met_rd[dna_met_rd$gene_Ensembl %in% "ENSMUSG00000000594",]
-
-gfcv_dna_met_rds[as.character(found_corr_dt_gfcv_filt$ENSMUSG00000000594$Var2),]
-
-plot_dt_lima_2 <- assay(dna_met_dt[rownames(dna_met_rd)[dna_met_rd$gene_Ensembl %in% "ENSMUSG00000000594"],])
-plot_dt_lima_2 <- melt(plot_dt_lima_2)
-plot_dt_lima_2$group <- sample_2_group[as.character(plot_dt_lima_2$variable)]
-plot_dt_lima_2$type <- "LiMa"
-
-plot_dt_gfcv_2 <- assay(gfcv_vars$`GFM-CVM`$WGB_DNA_Methylation[as.character(found_corr_dt_gfcv_filt$ENSMUSG00000000594$Var2),])
-
-plot_dt_gfcv_2 <- melt(plot_dt_gfcv_2)
-plot_dt_gfcv_2$group <- ifelse(grepl("CM", plot_dt_gfcv_2$variable), "CV", "GF")
-
-plot_dt_gfcv_2 <- plot_dt_gfcv_2[grepl("CM|GM", plot_dt_gfcv_2$variable),]
-plot_dt_gfcv_2$type <- "GFCV"
-
-merged_plot_dt_test <- rbind(plot_dt_lima_2, plot_dt_gfcv_2)
-
-group_color_dict_gfcv <- c("CV" = "#A6D854", "GF" = "#FFD92F")
-
-p1 <- ggplot(merged_plot_dt_test, aes(x = group, y = value, fill = group)) +
-    geom_boxplot() + theme_minimal() + 
-    ggtitle("LiMa DMR3004 (Promoter) / GFCV DMR4529 (Intron 2 of 3) Gene Gm2a") + 
-    ylab("Methylation levels (Z score)") + xlab("") + 
-    theme(axis.text.x = element_blank()) + 
-    guides(fill = guide_legend("Group")) + 
-    scale_fill_manual(values = c(group_color_dict, group_color_dict_gfcv))
-p1
-ggsave(filename = "../../outputs/Paper_Figures/Supplementary_Figure_X_gm2a_methylation.svg",
-        plot = p1,
-        fix_text_size = FALSE)
+# as.character(found_corr_dt_gfcv_filt$ENSMUSG00000000594$Var2)
+# rownames(dna_met_rd)[dna_met_rd$gene_Ensembl %in% "ENSMUSG00000000594"]
+# 
+# dna_met_rd[dna_met_rd$gene_Ensembl %in% "ENSMUSG00000000594",]
+# 
+# gfcv_dna_met_rds[as.character(found_corr_dt_gfcv_filt$ENSMUSG00000000594$Var2),]
+# 
+# plot_dt_lima_2 <- assay(dna_met_dt[rownames(dna_met_rd)[dna_met_rd$gene_Ensembl %in% "ENSMUSG00000000594"],])
+# plot_dt_lima_2 <- melt(plot_dt_lima_2)
+# plot_dt_lima_2$group <- sample_2_group[as.character(plot_dt_lima_2$variable)]
+# plot_dt_lima_2$type <- "LiMa"
+# 
+# plot_dt_gfcv_2 <- assay(gfcv_vars$`GFM-CVM`$WGB_DNA_Methylation[as.character(found_corr_dt_gfcv_filt$ENSMUSG00000000594$Var2),])
+# 
+# plot_dt_gfcv_2 <- melt(plot_dt_gfcv_2)
+# plot_dt_gfcv_2$group <- ifelse(grepl("CM", plot_dt_gfcv_2$variable), "CV", "GF")
+# 
+# plot_dt_gfcv_2 <- plot_dt_gfcv_2[grepl("CM|GM", plot_dt_gfcv_2$variable),]
+# plot_dt_gfcv_2$type <- "GFCV"
+# 
+# merged_plot_dt_test <- rbind(plot_dt_lima_2, plot_dt_gfcv_2)
+# 
+# group_color_dict_gfcv <- c("CV" = "#A6D854", "GF" = "#FFD92F")
+# 
+# p1 <- ggplot(merged_plot_dt_test, aes(x = group, y = value, fill = group)) +
+#     geom_boxplot() + theme_minimal() + 
+#     ggtitle("LiMa DMR3004 (Promoter) / GFCV DMR4529 (Intron 2 of 3) Gene Gm2a") + 
+#     ylab("Methylation levels (Z score)") + xlab("") + 
+#     theme(axis.text.x = element_blank()) + 
+#     guides(fill = guide_legend("Group")) + 
+#     scale_fill_manual(values = c(group_color_dict, group_color_dict_gfcv))
+# p1
+# ggsave(filename = "../../outputs/Paper_Figures/Supplementary_Figure_X_gm2a_methylation.svg",
+#         plot = p1,
+#         fix_text_size = FALSE)
 ```
 
 
@@ -5252,10 +5268,10 @@ ggsave(filename = "../../outputs/Paper_Figures/Supp_Figure_X_gm2a_expression.svg
 
 
 ```{r}
-merged_plot_dt_test$dt_type <- "methylation"
-plot_dt_merged_test$dt_type <- "expression"
-
-plot_merge_test_met_exp <- rbind(merged_plot_dt_test, plot_dt_merged_test)
+# merged_plot_dt_test$dt_type <- "methylation"
+# plot_dt_merged_test$dt_type <- "expression"
+# 
+# plot_merge_test_met_exp <- rbind(merged_plot_dt_test, plot_dt_merged_test)
 ```
 
 <!-- ##### GBD Enrich -->
@@ -7065,11 +7081,6 @@ length(raw_bfs_full$order)/length(V(tf_nw_tplink_full))*100
 rm(tf_nw_tplink_full)
 ```
 
-```{r}
-aaaaaa
-```
-
-
 ##### Factor 1 and factor 2 comparison FC
 
 ```{r}
@@ -7770,18 +7781,18 @@ mofa_factor_kegg_enrich <- lapply(enrich_exp_list, function(factor_dt){
 ##### Chebi enrich 
 
 ```{r}
-mofa_factor_chebi_enrich <- lapply(enrich_exp_list, function(factor_dt){
-    lapply(factor_dt, function(weight_dt){
-        symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
-                             column = "SYMBOL", keytype = "ENSEMBL")
-        
-        enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05, 
-                pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
-                universe = NULL, maxGSSize = Inf)
-        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
-        enrich_res
-    })
-})
+# mofa_factor_chebi_enrich <- lapply(enrich_exp_list, function(factor_dt){
+#     lapply(factor_dt, function(weight_dt){
+#         symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
+#                              column = "SYMBOL", keytype = "ENSEMBL")
+#         
+#         enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05, 
+#                 pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
+#                 universe = NULL, maxGSSize = Inf)
+#         enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+#         enrich_res
+#     })
+# })
 ```
 
 ```{r}
@@ -7915,20 +7926,20 @@ mofa_factor_kegg_enrich_own_dmrreg <- lapply(enrich_exp_list, function(factor_dt
 ##### Chebi enrich 
 
 ```{r}
-mofa_factor_chebi_enrich_own_dmrreg <- lapply(enrich_exp_list, function(factor_dt){
-    lapply(factor_dt, function(weight_dt){
-        symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
-                             column = "SYMBOL", keytype = "ENSEMBL")
-        
-        enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05, 
-                pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
-                universe = NULL, maxGSSize = Inf)
-        if(is.null(enrich_res) || nrow(enrich_res@result) == 0){return(NULL)}
-        
-        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
-        enrich_res
-    })
-})
+# mofa_factor_chebi_enrich_own_dmrreg <- lapply(enrich_exp_list, function(factor_dt){
+#     lapply(factor_dt, function(weight_dt){
+#         symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
+#                              column = "SYMBOL", keytype = "ENSEMBL")
+#         
+#         enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05, 
+#                 pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
+#                 universe = NULL, maxGSSize = Inf)
+#         if(is.null(enrich_res) || nrow(enrich_res@result) == 0){return(NULL)}
+#         
+#         enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+#         enrich_res
+#     })
+# })
 ```
 
 ```{r}
@@ -7960,18 +7971,18 @@ lapply(names(mofa_factor_kegg_enrich_own_dmrreg), function(factor_id){
     })
 })
 
-lapply(names(mofa_factor_chebi_enrich_own_dmrreg), function(factor_id){
-    factor_dt <- mofa_factor_chebi_enrich_own_dmrreg[[factor_id]]
-    lapply(names(factor_dt), function(weight_id){
-        weight_dt <- factor_dt[[weight_id]]
-        
-        sheet_name <- paste0("chbi.", factor_id,".", weight_id)
-        openxlsx::addWorksheet(wb = output_wb, 
-                            sheetName = sheet_name)       
-        openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
-                    x = weight_dt)
-    })
-})
+# lapply(names(mofa_factor_chebi_enrich_own_dmrreg), function(factor_id){
+#     factor_dt <- mofa_factor_chebi_enrich_own_dmrreg[[factor_id]]
+#     lapply(names(factor_dt), function(weight_id){
+#         weight_dt <- factor_dt[[weight_id]]
+#         
+#         sheet_name <- paste0("chbi.", factor_id,".", weight_id)
+#         openxlsx::addWorksheet(wb = output_wb, 
+#                             sheetName = sheet_name)       
+#         openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
+#                     x = weight_dt)
+#     })
+# })
 
 openxlsx::saveWorkbook(wb = output_wb,  overwrite = TRUE,
                     file = paste0(enrich_dir, "Factor_Enrich_GBD_genes.xlsx"))
@@ -8057,18 +8068,18 @@ mofa_factor_kegg_enrich_dmrreg <- lapply(enrich_exp_list, function(factor_dt){
 ##### Chebi enrich 
 
 ```{r}
-mofa_factor_chebi_enrich_dmrreg <- lapply(enrich_exp_list, function(factor_dt){
-    lapply(factor_dt, function(weight_dt){
-        symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
-                             column = "SYMBOL", keytype = "ENSEMBL")
-        
-        enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05, 
-                pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
-                universe = NULL, maxGSSize = Inf)
-        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
-        enrich_res
-    })
-})
+# mofa_factor_chebi_enrich_dmrreg <- lapply(enrich_exp_list, function(factor_dt){
+#     lapply(factor_dt, function(weight_dt){
+#         symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt),
+#                              column = "SYMBOL", keytype = "ENSEMBL")
+# 
+#         enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05,
+#                 pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
+#                 universe = NULL, maxGSSize = Inf)
+#         enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+#         enrich_res
+#     })
+# })
 ```
 
 ```{r}
@@ -8100,18 +8111,18 @@ lapply(names(mofa_factor_kegg_enrich_dmrreg), function(factor_id){
     })
 })
 
-lapply(names(mofa_factor_chebi_enrich_dmrreg), function(factor_id){
-    factor_dt <- mofa_factor_chebi_enrich_dmrreg[[factor_id]]
-    lapply(names(factor_dt), function(weight_id){
-        weight_dt <- factor_dt[[weight_id]]
-        
-        sheet_name <- paste0("chbi.", factor_id,".", weight_id)
-        openxlsx::addWorksheet(wb = output_wb, 
-                            sheetName = sheet_name)       
-        openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
-                    x = weight_dt)
-    })
-})
+# lapply(names(mofa_factor_chebi_enrich_dmrreg), function(factor_id){
+#     factor_dt <- mofa_factor_chebi_enrich_dmrreg[[factor_id]]
+#     lapply(names(factor_dt), function(weight_id){
+#         weight_dt <- factor_dt[[weight_id]]
+#         
+#         sheet_name <- paste0("chbi.", factor_id,".", weight_id)
+#         openxlsx::addWorksheet(wb = output_wb, 
+#                             sheetName = sheet_name)       
+#         openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
+#                     x = weight_dt)
+#     })
+# })
 
 openxlsx::saveWorkbook(wb = output_wb,  overwrite = TRUE,
                     file = paste0(enrich_dir, "Factor_Enrich_Distal_1MB_genes.xlsx"))
@@ -8177,7 +8188,9 @@ ggsave(filename = paste0(fig_dir, "Supp_Figure_Gene_Overlap_Hist.svg"),
 observed_overlap_metab <- length(intersect(metab_microb_reg,
                                     rownames(f2_multi_omics[["Untargeted_Metabolomics"]])))
 
-metab_seq_full <- readRDS("../../outputs/Untargeted_Metabolomics/Untargeted_Metabolomics_exp_gfcv.rds")
+
+metab_seq_full <- readRDS("../../outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_exp_gfcv.rds")
+metab_seq_full <- metab_seq_full[["Untargeted_Metabolomics"]]
 
 gfcv_all <- rownames(metab_seq_full)
 lima_all <- rownames(multi_omics_raw[["Untargeted_Metabolomics"]])
@@ -8267,7 +8280,8 @@ ggsave(filename = paste0(fig_dir, "Supp_Figure_F1_Gene_Overlap_Hist.svg"),
 observed_overlap_metab <- length(intersect(metab_microb_reg,
                                     rownames(f1_multi_omics[["Untargeted_Metabolomics"]])))
 
-metab_seq_full <- readRDS("../../outputs/Untargeted_Metabolomics/Untargeted_Metabolomics_exp_gfcv.rds")
+metab_seq_full <- readRDS("../../outputs/Multi_Omics_Analysis/Multi_Omics_Analysis_exp_gfcv.rds")
+metab_seq_full <- metab_seq_full[["Untargeted_Metabolomics"]]
 
 gfcv_all <- rownames(metab_seq_full)
 lima_all <- rownames(multi_omics_raw[["Untargeted_Metabolomics"]])
@@ -8432,18 +8446,18 @@ mofa_factor_kegg_enrich_microb <- lapply(enrich_exp_list, function(factor_dt){
 ##### Chebi enrich 
 
 ```{r}
-mofa_factor_chebi_enrich_microb <- lapply(enrich_exp_list, function(factor_dt){
-    lapply(factor_dt, function(weight_dt){
-        symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
-                             column = "SYMBOL", keytype = "ENSEMBL")
-        
-        enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05, 
-                pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
-                universe = NULL, maxGSSize = Inf)
-        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
-        enrich_res
-    })
-})
+# mofa_factor_chebi_enrich_microb <- lapply(enrich_exp_list, function(factor_dt){
+#     lapply(factor_dt, function(weight_dt){
+#         symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
+#                              column = "SYMBOL", keytype = "ENSEMBL")
+#         
+#         enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05, 
+#                 pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
+#                 universe = NULL, maxGSSize = Inf)
+#         enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+#         enrich_res
+#     })
+# })
 ```
 
 ```{r}
@@ -8495,7 +8509,7 @@ openxlsx::saveWorkbook(wb = output_wb,  overwrite = TRUE,
 ### MOFA factor enrichment GBD & Microbiota Regulated genes
 
 ```{r}
-gfcv_vars <- readRDS("../../outputs/Multi_Omics_Analysis_GFCV/gfcv_interesting_vars.rds")
+gfcv_vars <- readRDS("../../outputs/Multi_Omics_Analysis/gfcv_interesting_vars.rds")
 
 genes_microb_reg <- rownames(gfcv_vars$`GFM-CVM`$RNA_Sequencing)
 ```
@@ -8575,18 +8589,18 @@ mofa_factor_kegg_enrich_dmrreg_microb <- lapply(enrich_exp_list, function(factor
 ##### Chebi enrich 
 
 ```{r}
-mofa_factor_chebi_enrich_dmrreg_microb <- lapply(enrich_exp_list, function(factor_dt){
-    lapply(factor_dt, function(weight_dt){
-        symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
-                             column = "SYMBOL", keytype = "ENSEMBL")
-        
-        enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05, 
-                pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
-                universe = NULL, maxGSSize = Inf)
-        enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
-        enrich_res
-    })
-})
+# mofa_factor_chebi_enrich_dmrreg_microb <- lapply(enrich_exp_list, function(factor_dt){
+#     lapply(factor_dt, function(weight_dt){
+#         symbol_ids <- mapIds(x = org.Mm.eg.db, keys = rownames(weight_dt), 
+#                              column = "SYMBOL", keytype = "ENSEMBL")
+#         
+#         enrich_res <- enricher(gene = symbol_ids, pvalueCutoff = 0.05, 
+#                 pAdjustMethod = "fdr", TERM2GENE = term2gene_filt, TERM2NAME = term2name_filt,
+#                 universe = NULL, maxGSSize = Inf)
+#         enrich_res@result$enrich_log2fc <- log2(calculate_enrich_fc(enrich_res))
+#         enrich_res
+#     })
+# })
 ```
 
 ```{r}
@@ -8618,18 +8632,18 @@ lapply(names(mofa_factor_kegg_enrich_dmrreg_microb), function(factor_id){
     })
 })
 
-lapply(names(mofa_factor_chebi_enrich_dmrreg_microb), function(factor_id){
-    factor_dt <- mofa_factor_chebi_enrich_dmrreg_microb[[factor_id]]
-    lapply(names(factor_dt), function(weight_id){
-        weight_dt <- factor_dt[[weight_id]]
-        
-        sheet_name <- paste0("chbi.", factor_id,".", weight_id)
-        openxlsx::addWorksheet(wb = output_wb, 
-                            sheetName = sheet_name)       
-        openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
-                    x = weight_dt)
-    })
-})
+# lapply(names(mofa_factor_chebi_enrich_dmrreg_microb), function(factor_id){
+#     factor_dt <- mofa_factor_chebi_enrich_dmrreg_microb[[factor_id]]
+#     lapply(names(factor_dt), function(weight_id){
+#         weight_dt <- factor_dt[[weight_id]]
+#         
+#         sheet_name <- paste0("chbi.", factor_id,".", weight_id)
+#         openxlsx::addWorksheet(wb = output_wb, 
+#                             sheetName = sheet_name)       
+#         openxlsx::writeData(wb = output_wb, sheet = sheet_name, 
+#                     x = weight_dt)
+#     })
+# })
 
 openxlsx::saveWorkbook(wb = output_wb,  overwrite = TRUE,
                     file = paste0(enrich_dir, "Factor_Enrich_GBD_Microbiota_Regulated.xlsx"))
@@ -8777,7 +8791,7 @@ table(rowData(unt_met_dt)$Full_Factor)
 
 ```{r}
 library(clusterProfiler)
-kegg_db_enrich_path <- paste0(params$output_dir, "kegg_enrich_db_red.rds")
+kegg_db_enrich_path <- "../../inputs/RNA_Sequencing/kegg_enrich_db_red.rds"
 kegg_db_list <- readRDS(kegg_db_enrich_path)
 term2name_dt <- kegg_db_list$term2name
 integ_enrich_db <- kegg_db_list$term2gene
@@ -9471,12 +9485,6 @@ openxlsx::saveWorkbook(results_wb,
 #                         overwrite = TRUE)
 ```
 
-
-```{r}
-aaaaa
-```
-
-
 ## Mofa enrich plots
 
 ### GO / CHEBI plots
@@ -9983,46 +9991,46 @@ dev.off()
 #### CHEBI plots
 
 ```{r}
-pdf(paste0(mofa_figure_path, "factor_chebi_enrich_dotplot.pdf"), 
-    width = 15, height = 15)
-lapply(names(mofa_factor_chebi_enrich), function(factor_id){
-    factor_dt <- mofa_factor_chebi_enrich[[factor_id]]
-    lapply(names(factor_dt), function(weight_id){
-        weight_dt <- factor_dt[[weight_id]]
-        if(is.null(weight_dt) || !nrow(weight_dt)){return(NULL)}
+# pdf(paste0(mofa_figure_path, "factor_chebi_enrich_dotplot.pdf"), 
+#     width = 15, height = 15)
+# lapply(names(mofa_factor_chebi_enrich), function(factor_id){
+#     factor_dt <- mofa_factor_chebi_enrich[[factor_id]]
+#     lapply(names(factor_dt), function(weight_id){
+#         weight_dt <- factor_dt[[weight_id]]
+#         if(is.null(weight_dt) || !nrow(weight_dt)){return(NULL)}
+# 
+#         enrichplot::dotplot(weight_dt, showCategory = 15, font.size = 30) +
+#             ggtitle(gsub("_", " ", paste(factor_id, weight_id)))
+#     })
+# })
+# dev.off()
 
-        enrichplot::dotplot(weight_dt, showCategory = 15, font.size = 30) +
-            ggtitle(gsub("_", " ", paste(factor_id, weight_id)))
-    })
-})
-dev.off()
-
-pdf(paste0(mofa_figure_path, "factor_dmrreg_chebi_enrich_dotplot.pdf"), 
-    width = 15, height = 15)
-lapply(names(mofa_factor_chebi_enrich_dmrreg), function(factor_id){
-    factor_dt <- mofa_factor_chebi_enrich_dmrreg[[factor_id]]
-    lapply(names(factor_dt), function(weight_id){
-        weight_dt <- factor_dt[[weight_id]]
-        if(is.null(weight_dt) || !nrow(weight_dt)){return(NULL)}
-        
-        enrichplot::dotplot(weight_dt, showCategory = 15, font.size = 30) +
-            ggtitle(gsub("_", " ", paste(factor_id, weight_id)))
-    })
-})
-dev.off()
-
-pdf(paste0(mofa_figure_path, "factor_dmrreg_microb_chebi_enrich_dotplot.pdf"), 
-    width = 15, height = 15)
-lapply(names(mofa_factor_chebi_enrich_dmrreg_microb), function(factor_id){
-    factor_dt <- mofa_factor_chebi_enrich_dmrreg_microb[[factor_id]]
-    lapply(names(factor_dt), function(weight_id){
-        weight_dt <- factor_dt[[weight_id]]
-        if(is.null(weight_dt) || !nrow(weight_dt)){return(NULL)}
-        enrichplot::dotplot(weight_dt, showCategory = 15, font.size = 30) +
-            ggtitle(gsub("_", " ", paste(factor_id, weight_id)))
-    })
-})
-dev.off()
+# pdf(paste0(mofa_figure_path, "factor_dmrreg_chebi_enrich_dotplot.pdf"), 
+#     width = 15, height = 15)
+# lapply(names(mofa_factor_chebi_enrich_dmrreg), function(factor_id){
+#     factor_dt <- mofa_factor_chebi_enrich_dmrreg[[factor_id]]
+#     lapply(names(factor_dt), function(weight_id){
+#         weight_dt <- factor_dt[[weight_id]]
+#         if(is.null(weight_dt) || !nrow(weight_dt)){return(NULL)}
+#         
+#         enrichplot::dotplot(weight_dt, showCategory = 15, font.size = 30) +
+#             ggtitle(gsub("_", " ", paste(factor_id, weight_id)))
+#     })
+# })
+# dev.off()
+# 
+# pdf(paste0(mofa_figure_path, "factor_dmrreg_microb_chebi_enrich_dotplot.pdf"), 
+#     width = 15, height = 15)
+# lapply(names(mofa_factor_chebi_enrich_dmrreg_microb), function(factor_id){
+#     factor_dt <- mofa_factor_chebi_enrich_dmrreg_microb[[factor_id]]
+#     lapply(names(factor_dt), function(weight_id){
+#         weight_dt <- factor_dt[[weight_id]]
+#         if(is.null(weight_dt) || !nrow(weight_dt)){return(NULL)}
+#         enrichplot::dotplot(weight_dt, showCategory = 15, font.size = 30) +
+#             ggtitle(gsub("_", " ", paste(factor_id, weight_id)))
+#     })
+# })
+# dev.off()
 
 
 # pdf(paste0(mofa_figure_path, "factor_1_2_dmrreg_microb_chebi_enrich_dotplot.pdf"), 
@@ -10036,12 +10044,12 @@ dev.off()
 #     })
 # dev.off()
 
-p1 <- enrichplot::dotplot(mofa_factor_chebi_enrich_dmrreg$Factor_1$`All Weights`,
-                        showCategory = 15, font.size = 30) +
-    ggtitle("Factor 1") + theme(legend.key.size = unit(2, 'cm'), legend.title = element_text(size = 18),
-                 legend.text = element_text(size = 18))
-ggsave(filename = paste0(fig_dir, "Supp_Figure_Factor1_Enrich_gbd_dotplot.svg"), plot = p1, 
-        width = 18, height = 18, fix_text_size = FALSE)
+# p1 <- enrichplot::dotplot(mofa_factor_chebi_enrich_dmrreg$Factor_1$`All Weights`,
+#                         showCategory = 15, font.size = 30) +
+#     ggtitle("Factor 1") + theme(legend.key.size = unit(2, 'cm'), legend.title = element_text(size = 18),
+#                  legend.text = element_text(size = 18))
+# ggsave(filename = paste0(fig_dir, "Supp_Figure_Factor1_Enrich_gbd_dotplot.svg"), plot = p1, 
+#         width = 18, height = 18, fix_text_size = FALSE)
 
 # ggsave(filename = paste0(fig_dir, "figure_12_g.png"), plot = p1, 
 #         width = 18, height = 18)
@@ -10541,7 +10549,7 @@ names(kegg_db_list_dt) <- unique(kegg_db_list$term2gene$term)
 ```
 
 ```{r}
-kegg_info_path <- "./test_kegg_ids_info.rds"
+kegg_info_path <- "../../inputs/RNA_Sequencing/test_kegg_ids_info.rds"
 
 if(!file.exists(kegg_info_path)){
     
@@ -10631,7 +10639,7 @@ if(!file.exists(kegg_info_path)){
     # })
     # names(kegg_full_info) <- all_met_kegg_ids
     
-    saveRDS(found_info_full, "./test_kegg_ids_info.rds")
+    saveRDS(found_info_full, kegg_info_path)
 } else{
     found_info_full <- readRDS(kegg_info_path)    
 }
@@ -11422,6 +11430,17 @@ untargeted_features_interesting <- c("Hilic_Positive.FT00157",
                                      "Hilic_Positive.FT02517",
                                      "Hilic_Positive.FT01897",
                                      "Taurine_Hypotaurine_Ratio")
+untarg_liv_met_hfe <- multi_omics_hfe_raw_ma[["Untargeted_Metabolomics"]]
+
+
+# untargeted_met_features_f1 <- untargeted_met_features_f1[untargeted_met_features_f1 %in%
+#                                rownames(untarg_liv_met_hfe)]
+
+# untargeted_met_features_f2 <- untargeted_met_features_f2[untargeted_met_features_f2 %in%
+#                                rownames(untarg_liv_met_hfe)]
+
+# untargeted_features_interesting <-  untargeted_features_interesting[untargeted_features_interesting %in%
+#                                rownames(untarg_liv_met_hfe)]
 
 ordered_feature_levesl <- c("RP_Positive.FT3909", "Hilic_Negative.FT03159",
                             "Hilic_Positive.FT02323", "Hilic_Positive.FT02517",
@@ -11591,6 +11610,8 @@ untargeted_features_interesting <- c("Hilic_Positive.FT00157",
                                      "Hilic_Positive.FT02517",
                                      "Hilic_Positive.FT01897",
                                      "Taurine_Hypotaurine_Ratio")
+# untargeted_features_interesting <-  untargeted_features_interesting[untargeted_features_interesting %in%
+#                                rownames(untarg_liv_met_gfcv)]
 
 ordered_feature_levesl <- c("RP_Positive.FT3909", "Hilic_Negative.FT03159",
                             "Hilic_Positive.FT02323", "Hilic_Positive.FT02517",
@@ -14063,7 +14084,7 @@ hfd_ex_corr_res <- lapply(names(f2_multi_omics_filt_hfe), function(dt_id){
     corr_res_list <- lapply(omic_1_ids, function(omic_id){
             
         omic_exp <- f2_multi_omics_filt_hfe[,,c(omic_id,dt_id)] 
-        
+        if(any(lengths(omic_exp) == 0)){return(NULL)}
         overlap_samples <- intersect(colnames(omic_exp[[1]]), 
                                     colnames(omic_exp[[2]]))
         
@@ -14288,7 +14309,8 @@ hfd_ex_corr_res <- lapply(names(f2_multi_omics_filt_hfe), function(dt_id){
         
     
         omic_exp <- f2_multi_omics_filt_hfe[,,c(omic_id,dt_id)] 
-        
+        if(any(lengths(omic_exp) == 0)){return(NULL)}
+
         overlap_samples <- intersect(colnames(omic_exp[[1]]), 
                                     colnames(omic_exp[[2]]))
         

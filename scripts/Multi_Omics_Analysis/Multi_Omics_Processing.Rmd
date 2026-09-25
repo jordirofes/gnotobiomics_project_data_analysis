@@ -42,14 +42,28 @@ source("../Utility_Functions/utilities.R")
 
 ```{r}
 multi_omic_dir <- params$output_dir
-
+output_dir <- "../../outputs/"
+input_dir <- "../../inputs/"
 if(dir.exists(multi_omic_dir)){dir.create(multi_omic_dir)}
+
+omic_list <- list("Histone_Modifications_Proteomics", 
+                  "Metallomics", "RNA_Sequencing", "Shotgun_Metagenomics", 
+                  "Targeted_Metabolomics", "Untargeted_Metabolomics", 
+                  "WGB_DNA_Methylation")
 #### GFCV merge
 search_pattern <- "_exp_gfcv.rds"
 gfcv_exp_list <- lapply(omic_list, function(omic_id){
     omic_output_dir <- paste0(output_dir, omic_id, "/")
+    omic_input_dir <- paste0(input_dir, omic_id, "/")
     
-    files_found <- list.files(path = omic_output_dir, pattern = search_pattern, full.names = TRUE)
+    files_found2 <- list.files(path = omic_input_dir, 
+                              pattern = search_pattern, full.names = TRUE)
+    
+    files_found <- list.files(path = omic_output_dir, 
+                              pattern = search_pattern, full.names = TRUE)
+    
+    if(length(files_found2) != 0){files_found <- files_found2}
+    
     files_name <- basename(gsub(search_pattern, "", files_found))
     
     files_load <- lapply(files_found, function(x){
@@ -72,7 +86,7 @@ omics_metadata$group <- factor(paste0(omics_metadata$gfcv, ifelse(omics_metadata
 ctrs_list <- apply(combn(levels(omics_metadata$group), 2), 2, function(x){
     paste(x[2:1], collapse = "-")
 })
-ctrs_list
+ctrs_list <- ctrs_list[2]
 
 gfcv_exp_list_proc <- lapply(names(gfcv_exp_list), function(mae_exp_name){
     mae_exp <- gfcv_exp_list[[mae_exp_name]]
@@ -80,7 +94,8 @@ gfcv_exp_list_proc <- lapply(names(gfcv_exp_list), function(mae_exp_name){
     for(p_val_col in p_val_cols){
         rowData(mae_exp)[[p_val_col]][is.na(rowData(mae_exp)[[p_val_col]])] <- 1   
     }
-    
+    # mae_exp <- mae_exp[,mae_exp$group %in% c("CVM", "GFM")]
+    mae_exp$group <- droplevels(mae_exp$group)
     if(!grepl("RNA|Shotgun|16S", mae_exp_name)){
         mod_mat <- model.matrix(~ group + 0, colData(mae_exp))
         colnames(mod_mat) <- gsub("group", "", colnames(mod_mat))
@@ -111,11 +126,18 @@ search_pattern <- "_exp_lima.rds"
 lima_exp_list <- lapply(omic_list, function(omic_id){
     
     omic_output_dir <- paste0(output_dir, omic_id, "/")
+    omic_input_dir <- paste0(input_dir, omic_id, "/")
+
+    files_found2 <- list.files(path = omic_input_dir, 
+                              pattern = search_pattern, full.names = TRUE)
     
-    files_found <- list.files(path = omic_output_dir, pattern = search_pattern, 
-                                full.names = TRUE)
+    files_found <- list.files(path = omic_output_dir, 
+                              pattern = search_pattern, full.names = TRUE)
+    
+    if(length(files_found2) != 0){files_found <- files_found2}
+    
     files_name <- basename(gsub(search_pattern, "", files_found))
-    
+
     files_load <- lapply(files_found, function(x){
         readRDS(x)    
     })

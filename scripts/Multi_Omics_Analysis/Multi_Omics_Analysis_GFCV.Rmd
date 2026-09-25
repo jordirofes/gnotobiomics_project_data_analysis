@@ -380,28 +380,6 @@ fc_dict <- lapply(col_names, function(col_name){
 names(fc_dict) <- col_names
 ```
 
-```{r}
-library(clusterProfiler)
-kegg_db_enrich_path <- paste0(params$output_dir, "kegg_enrich_db_red.rds")
-kegg_db_list <- readRDS(kegg_db_enrich_path)
-term2name_dt <- kegg_db_list$term2name
-integ_enrich_db <- kegg_db_list$term2gene
-membership_attribute <- "cluster_ids"
-min_n <- 10
-
-kegg_pathway_list_genes <- lapply(kegg_db_list$term2name$term, function(x){
-    kegg_db_list$term2gene$gene[kegg_db_list$term2gene$term == x & kegg_db_list$term2gene$type == "gene_id"]
-})
-names(kegg_pathway_list_genes) <- kegg_db_list$term2name$term
-kegg_description_vect <- kegg_db_list$term2name$name
-names(kegg_description_vect) <- kegg_db_list$term2name$term
-# enrich_name <- "gsea_part_kegg"
-# enrich_nw_dir <- paste0(corr_output_dir, enrich_name, "/")
-# 
-# if(!dir.exists(enrich_nw_dir)){dir.create(enrich_nw_dir)}
-```
-
-
 ## Gene analysis
 
 ```{r}
@@ -689,11 +667,11 @@ ggsave(filename = "../../outputs/Paper_Figures_GFCV/figure_3_b.png", plot = p1)
 
 ```{r}
 p_val_dt <- rowData(dt_exp)[,grepl("adj.p.value",
-                                colnames(rowData(dt_exp)))]
+                                colnames(rowData(dt_exp))), drop = FALSE]
 # p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
 
 fc_dt <- rowData(dt_exp)[,grepl("FC",
-                                colnames(rowData(dt_exp)))]
+                                colnames(rowData(dt_exp))), drop = FALSE]
 # fc_dt <- fc_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(fc_dt))]
 
 p_val_sum <- lapply(p_val_dt, function(x){
@@ -803,7 +781,7 @@ levels(melted_dt$Var2) <- sample_order
 
 ```{r}
 p_val_dt <- rowData(dt_exp_raw)[,grepl("adj.p.value",
-                                colnames(rowData(dt_exp_raw)))]
+                                colnames(rowData(dt_exp_raw))), drop = FALSE]
 # p_val_dt <- p_val_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(p_val_dt))]
 
 sig_mods <- lapply(p_val_dt, function(x){
@@ -816,7 +794,7 @@ ggVennDiagram::ggVennDiagram(x = sig_mods) + scale_x_continuous(expand = expansi
     scale_fill_gradient(low = "#F4FAFE", high = "#4981BF")
  
 fc_dt <- rowData(dt_exp_raw)[,grepl("FC",
-                                colnames(rowData(dt_exp_raw)))]
+                                colnames(rowData(dt_exp_raw))), drop = FALSE]
 # fc_dt <- fc_dt[,grepl("HFD-CNT|INT-HFD|INT-CNT", colnames(fc_dt))]
 
 lapply(p_val_dt, function(x){sum(x <= 0.05)})
@@ -914,26 +892,26 @@ lapply(unique(melted_dt$Histone_Residues), function(histone_id){
 
 
 ```{r}
-mofa_dir_name <- "gfcv_full"
-dir.create("../../outputs/Multi_Omics_Analysis_GFCV/MOFA_Results/")
-sel_multi_omics_mofa <- names(multi_omics)[c(5,11, 13:22)]
-score_filter <- 0.8
-    
-param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
-    output_dir = "../../outputs/Multi_Omics_Analysis_GFCV/MOFA_Results/",
-    multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE", rev(sel_multi_omics_mofa)],
-    group_var = "group",
-    num_factors = 2,
-    results_name = mofa_dir_name,
-    color_vec = group_color_dict, 
-    score_filter = score_filter)
-xfun::Rscript_call(rmarkdown::render,
-                    args = list(input = "./MOFA_Models.Rmd", 
-                                output_file = paste0(param_list$output_dir,
-                                                     param_list$results_name, ".html"), 
-                                params = param_list
-                            )
-                    )
+# mofa_dir_name <- "gfcv_full"
+# dir.create("../../outputs/Multi_Omics_Analysis_GFCV/MOFA_Results/")
+# sel_multi_omics_mofa <- names(multi_omics)[c(5,11, 13:22)]
+# score_filter <- 0.8
+#     
+# param_list <- list(input_dir = "../../outputs/Multi_Omics_Analysis/",
+#     output_dir = "../../outputs/Multi_Omics_Analysis_GFCV/MOFA_Results/",
+#     multi_omics_exp = multi_omics[,colData(multi_omics)$group != "HFE", rev(sel_multi_omics_mofa)],
+#     group_var = "group",
+#     num_factors = 2,
+#     results_name = mofa_dir_name,
+#     color_vec = group_color_dict, 
+#     score_filter = score_filter)
+# xfun::Rscript_call(rmarkdown::render,
+#                     args = list(input = "./MOFA_Models.Rmd", 
+#                                 output_file = paste0(param_list$output_dir,
+#                                                      param_list$results_name, ".html"), 
+#                                 params = param_list
+#                             )
+#                     )
 ```
 
 
@@ -1054,103 +1032,103 @@ colnames(rowData(dna_met_dt))
 rowData(dna_met_dt)
 ```
 
-```{r}
-length(intersect(rowData(dna_met_dt)$geneId, rowData(rna_seq_dt)$entrezID))
-
-dmr_other <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_005/WGB_DNA_Methylation_exp_lima.rds")
-
-length(intersect(rowData(dmr_other)$geneId, rowData(rna_seq_dt)$entrezID))/nrow((rna_seq_dt))
-
-```
+<!-- # ```{r} -->
+<!-- # length(intersect(rowData(dna_met_dt)$geneId, rowData(rna_seq_dt)$entrezID)) -->
+<!-- #  -->
+<!-- # dmr_other <- readRDS("../../outputs/WGB_DNA_Methylation/LIMA/DSS.group.non_smoothed_005/WGB_DNA_Methylation_exp_lima.rds") -->
+<!-- #  -->
+<!-- # length(intersect(rowData(dmr_other)$geneId, rowData(rna_seq_dt)$entrezID))/nrow((rna_seq_dt)) -->
+<!-- #  -->
+<!-- # ``` -->
 
 ### Reg regions - Genes Correlations
 
 ```{r}
-reg_regions_dt <- readRDS("../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements_GFCV_MA.rds")
-contrasts_results <- rowData(reg_regions_dt)
-
-p_val_mat <- contrasts_results[,grep("adj.p.value", colnames(contrasts_results))]
-p_val_mat <- as.matrix(p_val_mat[,!grepl("Group", colnames(p_val_mat))])
-
-keep_dmrs <- rowSums(!is.na(p_val_mat) & p_val_mat <= 0.05) != 0
-
-reg_regions_dt_filt <- reg_regions_dt[keep_dmrs,]
-
-gfm_cvm_reg_regions <- reg_regions_dt[!is.na(rowData(reg_regions_dt)$`GFM-CVM.adj.p.value`) &
-                                        (rowData(reg_regions_dt)$`GFM-CVM.adj.p.value` <= 0.05),]
-
-gfm_cvm_reg_regions
+# reg_regions_dt <- readRDS("../../outputs/WGB_DNA_Methylation/Test_Regulatory_Elements_GFCV_MA.rds")
+# contrasts_results <- rowData(reg_regions_dt)
+# 
+# p_val_mat <- contrasts_results[,grep("adj.p.value", colnames(contrasts_results))]
+# p_val_mat <- as.matrix(p_val_mat[,!grepl("Group", colnames(p_val_mat))])
+# 
+# keep_dmrs <- rowSums(!is.na(p_val_mat) & p_val_mat <= 0.05) != 0
+# 
+# reg_regions_dt_filt <- reg_regions_dt[keep_dmrs,]
+# 
+# gfm_cvm_reg_regions <- reg_regions_dt[!is.na(rowData(reg_regions_dt)$`GFM-CVM.adj.p.value`) &
+#                                         (rowData(reg_regions_dt)$`GFM-CVM.adj.p.value` <= 0.05),]
+# 
+# gfm_cvm_reg_regions
 ```
 
 ```{r}
-corr_vect <- c("pearson", "spearman")
-
-list_overlaps <- lapply(rownames(rna_seq_dt), function(gene_id){
-    gene_rd <- rowData(rna_seq_dt[gene_id,])
-    
-    start_gene <- as.numeric(gene_rd$start_position) - 1000000
-    end_gene <- as.numeric(gene_rd$end_position) + 1000000
-    
-    if(!is.na(start_gene)){
-        chr_id <- gene_rd$chromosome_id
-        chr_dmrs_id <- as.character(seqnames(rowRanges(reg_regions_dt_filt)))
-        
-        gene_gr <- GRanges(seqnames = chr_id, ranges = IRanges(start = start_gene, 
-                                                               end = end_gene))
-        
-        chr_dmrs <- reg_regions_dt_filt[chr_dmrs_id == chr_id,]
-    
-        dmr_overlap <- findOverlaps(query = gene_gr, rowRanges(chr_dmrs), type = "any")
-        chr_dmrs[dmr_overlap@to,]    
-    } else{
-        return(reg_regions_dt_filt[rowData(reg_regions_dt_filt)$ensemblId %in%
-                                         gene_id,])    
-    }
-})
-names(list_overlaps) <- rownames(rna_seq_dt)
-
-intersect_samples <- intersect(colnames(rna_seq_dt),
-                               colnames(reg_regions_dt_filt))
-
-assayNames(rna_seq_dt) <- "dt1"
-corr_vect <- c("pearson", "spearman")
-
-corr_dt_list_reg_regions_2 <- lapply(corr_vect, function(corr_name){
-    
-    list_prom <- lapply(rownames(rna_seq_dt), function(gene_id){
-        rna_seq_gene <- rna_seq_dt[gene_id,]
-        
-        own_dmrs <- list_overlaps[[gene_id]]
-        # entrez_id <- rownames(rna_seq_gene)
-        # if(is.na(entrez_id)){return(NULL)}
-        
-        if(!nrow(own_dmrs)){return(NULL)}
-        
-        mia::getExperimentCrossCorrelation(x = rna_seq_gene[,intersect_samples], 
-                                            experiment2 = own_dmrs[,intersect_samples],
-                                            method = corr_name,
-                                            assay.type1 = "dt1", 
-                                            assay.type2 = "dt1",
-                                            test_significance =  TRUE, 
-                                            verbose = FALSE)
-    })
-    do.call(rbind, list_prom)
-})
-
-corr_dt_list_reg_regions_2 <- lapply(corr_dt_list_reg_regions_2, function(x){
-    x$adj.p.value <- p.adjust(x$pval, "fdr")
-    x
-})
-names(corr_dt_list_reg_regions_2) <- corr_vect
-
-saveRDS(corr_dt_list_reg_regions_2, "../../outputs/Multi_Omics_Analysis/test_reg_regions_1MB_cors.rds")
-
-
-reg_regions_gfcv <- list("Full_dt" = reg_regions_dt_filt,
-                         "GFCV_sig" = gfm_cvm_reg_regions,
-                         "Correlations_1MB" = corr_dt_list_reg_regions_2)
-
-saveRDS(reg_regions_gfcv, "../../outputs/Multi_Omics_Analysis/test_reg_regions_gfcv.rds")
+# corr_vect <- c("pearson", "spearman")
+# 
+# list_overlaps <- lapply(rownames(rna_seq_dt), function(gene_id){
+#     gene_rd <- rowData(rna_seq_dt[gene_id,])
+#     
+#     start_gene <- as.numeric(gene_rd$start_position) - 1000000
+#     end_gene <- as.numeric(gene_rd$end_position) + 1000000
+#     
+#     if(!is.na(start_gene)){
+#         chr_id <- gene_rd$chromosome_id
+#         chr_dmrs_id <- as.character(seqnames(rowRanges(reg_regions_dt_filt)))
+#         
+#         gene_gr <- GRanges(seqnames = chr_id, ranges = IRanges(start = start_gene, 
+#                                                                end = end_gene))
+#         
+#         chr_dmrs <- reg_regions_dt_filt[chr_dmrs_id == chr_id,]
+#     
+#         dmr_overlap <- findOverlaps(query = gene_gr, rowRanges(chr_dmrs), type = "any")
+#         chr_dmrs[dmr_overlap@to,]    
+#     } else{
+#         return(reg_regions_dt_filt[rowData(reg_regions_dt_filt)$ensemblId %in%
+#                                          gene_id,])    
+#     }
+# })
+# names(list_overlaps) <- rownames(rna_seq_dt)
+# 
+# intersect_samples <- intersect(colnames(rna_seq_dt),
+#                                colnames(reg_regions_dt_filt))
+# 
+# assayNames(rna_seq_dt) <- "dt1"
+# corr_vect <- c("pearson", "spearman")
+# 
+# corr_dt_list_reg_regions_2 <- lapply(corr_vect, function(corr_name){
+#     
+#     list_prom <- lapply(rownames(rna_seq_dt), function(gene_id){
+#         rna_seq_gene <- rna_seq_dt[gene_id,]
+#         
+#         own_dmrs <- list_overlaps[[gene_id]]
+#         # entrez_id <- rownames(rna_seq_gene)
+#         # if(is.na(entrez_id)){return(NULL)}
+#         
+#         if(!nrow(own_dmrs)){return(NULL)}
+#         
+#         mia::getExperimentCrossCorrelation(x = rna_seq_gene[,intersect_samples], 
+#                                             experiment2 = own_dmrs[,intersect_samples],
+#                                             method = corr_name,
+#                                             assay.type1 = "dt1", 
+#                                             assay.type2 = "dt1",
+#                                             test_significance =  TRUE, 
+#                                             verbose = FALSE)
+#     })
+#     do.call(rbind, list_prom)
+# })
+# 
+# corr_dt_list_reg_regions_2 <- lapply(corr_dt_list_reg_regions_2, function(x){
+#     x$adj.p.value <- p.adjust(x$pval, "fdr")
+#     x
+# })
+# names(corr_dt_list_reg_regions_2) <- corr_vect
+# 
+# saveRDS(corr_dt_list_reg_regions_2, "../../outputs/Multi_Omics_Analysis/test_reg_regions_1MB_cors.rds")
+# 
+# 
+# reg_regions_gfcv <- list("Full_dt" = reg_regions_dt_filt,
+#                          "GFCV_sig" = gfm_cvm_reg_regions,
+#                          "Correlations_1MB" = corr_dt_list_reg_regions_2)
+# 
+# saveRDS(reg_regions_gfcv, "../../outputs/Multi_Omics_Analysis/test_reg_regions_gfcv.rds")
 ```
 
 
@@ -1183,7 +1161,8 @@ gene_dmr_cors_list <- lapply(corr_methods, function(corr_name){
 })
 names(gene_dmr_cors_list) <- corr_methods
 
-saveRDS(gene_dmr_cors_list, paste0(corr_output_dir, "sig_genes_own_dmr_corr.rds"))
+saveRDS(gene_dmr_cors_list, paste0(corr_output_dir,
+                                   "sig_genes_own_dmr_corr.rds"))
 ```
 
 

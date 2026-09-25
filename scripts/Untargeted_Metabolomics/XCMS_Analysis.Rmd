@@ -63,20 +63,20 @@ ms_data <- filterEmptySpectra(ms_data)
 ```
 
 ```{r}
-register(SnowParam())
+BiocParallel::register(SerialParam())
+# register(SnowParam())
 ms_data <- findChromPeaks(ms_data, param = CentWaveParam(ppm = 10, peakwidth = c(5, 50)))
 
-# group_colors <- brewer.pal(length(table(pData(ms_data)$group)), "Set3")
-# names(group_colors) <- names(table(pData(ms_data)$group))
-# tc <- spectra(ms_data)
-# tic_dt <- sapply(tc, tic)
-# 
-# tic_dt <- split(x = tic_dt, f = fromFile(ms_data))
-# 
-# boxplot(tic_dt, col = group_colors[pData(ms_data)$group],
-#         ylab = "intensity", main = "Total ion current")
+peak_path <- paste0(params$output_dir,"xcmsnexp_chrom_peaks.rds")
+if(!file.exists(peak_path)){
+    ms_data <- refineChromPeaks(ms_data, param = MergeNeighboringPeaksParam())
+    ms_data <- adjustRtime(ms_data, param = ObiwarpParam())
+    
+    saveRDS(ms_data, peak_path)    
+} else{
+    ms_data <- readRDS(peak_path)
+}
 
-saveRDS(ms_data, paste0(params$output_dir,"xcmsnexp_chrom_peaks.rds"))
 ```
 
 ```{r}
@@ -100,18 +100,14 @@ saveRDS(ms_data, paste0(params$output_dir,"xcmsnexp_chrom_peaks.rds"))
 
 
 ```{r}
-ms_data <- readRDS(paste0(params$output_dir,"xcmsnexp_chrom_peaks.rds"))
+plotAdjustedRtime(filterFile(ms_data, 3:10), peakGroupsPch = 1,
+                  peakGroupsCol = "#00ce0040")
 
-ms_data <- refineChromPeaks(ms_data, param = MergeNeighboringPeaksParam())
 # saveRDS(ms_data, paste0(params$output_dir,"xcmsnexp_chrom_peaks_merged.rds"))
 ```
 
 ```{r}
 #ms_data <- readRDS(paste0(params$output_dir,"xcmsnexp_chrom_peaks_merged.rds"))
-ms_data <- adjustRtime(ms_data, param = ObiwarpParam())
-plotAdjustedRtime(filterFile(ms_data, 3:10), peakGroupsPch = 1,
-                  peakGroupsCol = "#00ce0040")
-
 
 # saveRDS(ms_data, paste0(params$output_dir,"xcmsnexp_chrom_rt_corrected.rds"))
 ```
@@ -119,12 +115,18 @@ plotAdjustedRtime(filterFile(ms_data, 3:10), peakGroupsPch = 1,
 ```{r}
 # ms_data <- readRDS(paste0(params$output_dir,"xcmsnexp_chrom_rt_corrected.rds"))
 
-pdp <- PeakDensityParam(sampleGroups = gf_lima_meta$groups_m,
+filled_xcmsnexp_path <- paste0(params$output_dir, "xcmsnexp_filled.rds")
+summ_exp_path <- paste0(params$output_dir, "summarized.rds")
+if(!file.exists(filled_xcmsnexp_path)){
+    pdp <- PeakDensityParam(sampleGroups = gf_lima_meta$groups_m,
                         minFraction = 0.4, bw = 5, binSize = 0.01)
-ms_data <- groupChromPeaks(ms_data, param = pdp)
-ms_data <- fillChromPeaks(ms_data, param = FillChromPeaksParam())
-saveRDS(ms_data, file = paste0(params$output_dir, "xcmsnexp_filled.rds"))
-saveRDS(quantify(ms_data, value = "into"), file =  paste0(params$output_dir, "summarized.rds"))
+    ms_data <- groupChromPeaks(ms_data, param = pdp)
+    ms_data <- fillChromPeaks(ms_data, param = FillChromPeaksParam())
+    saveRDS(ms_data, file = filled_xcmsnexp_path)
+    saveRDS(quantify(ms_data, value = "into"), file =  summ_exp_path)
+} else{
+    ms_data <- readRDS(filled_xcmsnexp_path)
+}
 # write.csv(assay(xcms_dt), paste0(params$output_dir,"xcms_quant_matrix.csv"))
 # xcms_dt <- readRDS("./Hermes_Results/Hilic_Positive/xcmsnexp_filled.rds")
 ```
@@ -132,7 +134,6 @@ saveRDS(quantify(ms_data, value = "into"), file =  paste0(params$output_dir, "su
 ```{r}
 library(qHermes)
 library(xcms)
-ms_data <- readRDS(paste0(params$output_dir, "xcmsnexp_filled.rds"))
 hermes_dt <- readRDS(paste0(params$output_dir,"filteredSoiLists.rds"))
 ms_data <- qHermes::annotateFeaturesFromList(XCMSnExp = ms_data, RHermesExp = hermes_dt, 
                                              SOI_id = 4, filter = FALSE)

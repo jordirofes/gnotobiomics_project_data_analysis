@@ -23,8 +23,8 @@ hermes_results_path <- paste0(params$output_dir, "Hermes_Results/")
 if(!dir.exists(hermes_results_path)){dir.create(hermes_results_path)}
 
 column_ids <- c("Hilic_Positive", "Hilic_Negative", "RP_Positive")
-positive_adducts <- c("M+H", "M+NH4", "M+Na", "M+K", "M+")
-negative_adducts <- c("M-H", "M+Cl")
+positive_adducts <- c("[M+H]+", "[M+NH4]+", "[M+Na]+", "[M+K]+", "[M]+")
+negative_adducts <- c("[M-H]-", "[M+Cl]-")
 
 gfcv_exp <- list()
 lima_exp <- list()
@@ -36,10 +36,10 @@ for(id in column_ids){
     file_dir <- paste0(params$input_dir, id, "/")
     hermes_files <- paste0(file_dir, "Hermes_Files/")
     
-    hermes_output_path <- paste0(output_path, "filteredSoiLists.rds") 
+    hermes_output_path <- paste0(output_path, "filteredSoiLists.rds")
+    hermes_input_path <- paste0(file_dir, "filteredSoiLists.rds")
     ## HERMES Analysis
-    
-    if(!file.exists(hermes_output_path)){
+    if(!file.exists(hermes_output_path) & !file.exists(hermes_input_path)){
         param_list <- list(ms1_dir = hermes_files, 
                             qc_names =  "QC", blank_names = "Blank",
                             met_db = db_path, met_db_sep = ",",
@@ -48,6 +48,7 @@ for(id in column_ids){
                             min_max_mz = c(50, 1500), 
                             add_charge = 1, add_mult = 1,
                             soi_detection_type = "double",
+                            soi_filter_ids = c(1:3),
                             output_dir = output_path,
                             consensus = TRUE, 
                             soi_consensus = 1:3)
@@ -57,25 +58,34 @@ for(id in column_ids){
         param_list$ad_list <- ifelse(grepl("Positive", x = id, 
                                                 ignore.case = TRUE), 
                                         positive_adducts, negative_adducts)
-        rmarkdown::render(input = "./Hermes_Analysis.Rmd",
-                      output_file = paste0(output_path, "Hermes_Report.html"), 
-                      clean = TRUE, params = param_list)
+        xfun::Rscript_call(rmarkdown::render, 
+            args = list(
+                input = "./Hermes_Analysis.Rmd",
+                output_file = paste0(output_path, "Hermes_Report.html"), 
+                clean = TRUE, 
+                params = param_list
+            )
+        )
     }
     
     ## XCMS Analysis
     metadata_path <- paste0(file_dir, "LC_MS_metadata.csv")
     xcms_hermes_output_path <- paste0(output_path, "summarized_hermes_xcms.rds")
-    
-    if(!file.exists(xcms_hermes_output_path)){
+    xcms_hermes_input_path <- paste0(file_dir, "summarized_hermes_xcms.rds")
+    if(!file.exists(xcms_hermes_output_path) & !file.exists(xcms_hermes_input_path)){
         param_list <- list(
             file_dir = file_dir,
             metadata_file = metadata_path,
             output_dir = output_path
         )
-            
-        rmarkdown::render(input = "./XCMS_Analysis.Rmd",
-                  output_file = paste0(output_path, "XCMS_Analysis.html"), 
-                  clean = TRUE, params = param_list)    
+        
+        xfun::Rscript_call(rmarkdown::render, 
+            args = list(
+                input = "./XCMS_Analysis.Rmd",
+                output_file = paste0(output_path, "XCMS_Analysis.html"), 
+                clean = TRUE, params = param_list
+            )
+        )
     }
     
     ## XMCS-HERMES Analysis
@@ -106,9 +116,14 @@ for(id in column_ids){
             param_list$mummichog_ionization <- "positive"
         })
         
-        rmarkdown::render(input = "./XCMS_HERMES_Post_Processing.Rmd", 
-                      output_file = paste0(output_path, "xcms_hermes_results.html"), 
-                      clean = TRUE, params = param_list, envir = new.env())
+        xfun::Rscript_call(rmarkdown::render, 
+            args = list(
+                input = "./XCMS_HERMES_Post_Processing.Rmd", 
+                output_file = paste0(output_path, "xcms_hermes_results.html"), 
+                clean = TRUE, 
+                params = param_list
+            )
+        )
     }
 
     gfcv_exp[[id]] <- readRDS(untargeted_gfcv_output)
@@ -125,6 +140,9 @@ results_output <- paste0(params$output_dir, "Mummichog_results/")
 
 if(!dir.exists(results_output)){dir.create(results_output)}
 
+file.copy(from = "../../inputs/Untargeted_Metabolomics/mmu_kegg.qs", 
+          to = paste0(results_output, "mmu_kegg.qs"), overwrite = TRUE)
+
 mummichog_input <- as.data.frame(rowData(gfcv_exp))[,c("mzmed", "rtmed", 
                                                     "GF_CV.p.value", 
                                                     "GF_CV.p.value")]
@@ -136,6 +154,8 @@ colnames(mummichog_input) <- c("mz", "rt", "t.score", "p.value", "mode")
 mummichog_input$p.value <- p.adjust(mummichog_input$p.value, "fdr")
 
 if(!dir.exists(results_output)){dir.create(results_output)}
+
+
 old_dir <- getwd()
 setwd(results_output)
 write.table(mummichog_input, row.names = FALSE, 
@@ -148,6 +168,7 @@ mSet <- SetRTincluded(mSet, "seconds")
 mSet <- SanityCheckMummichogData(mSet)
 mSet <- SetPeakEnrichMethod(mSet, "mum", "v2")
 mSet <- SetMummichogPval(mSet, cutoff = 0.05)
+
 mSet <- PerformPSEA(mSet, "mmu_kegg", "current", 3 , 100)
 
 mSet<-PlotPeaks2Paths(mSet, "peaks_to_paths_0_", "png", 72, width=NA)
@@ -424,54 +445,54 @@ saveRDS(lima_exp, paste0(params$output_dir, "Untargeted_Metabolomics_exp_lima.rd
 ```
 
 
-## Tests Hermes
+<!-- ## Tests Hermes -->
 
-```{r}
-library(SummarizedExperiment)
-db_path <- paste0(params$input_dir, "FullHMDB_Chebi_Tripeptides_db.csv")
+<!-- ```{r} -->
+<!-- library(SummarizedExperiment) -->
+<!-- db_path <- paste0(params$input_dir, "FullHMDB_Chebi_Tripeptides_db.csv") -->
 
-column_ids <- c("Hilic_Positive", "Hilic_Negative", "RP_Positive")
-positive_adducts <- c("[M+H]+", "[M+NH4]+", "[M+Na]+", "[M+K]+", "[M+]+")
-negative_adducts <- c("[M-H]-", "[M+Cl]-")
+<!-- column_ids <- c("Hilic_Positive", "Hilic_Negative", "RP_Positive") -->
+<!-- positive_adducts <- c("[M+H]+", "[M+NH4]+", "[M+Na]+", "[M+K]+", "[M+]+") -->
+<!-- negative_adducts <- c("[M-H]-", "[M+Cl]-") -->
 
-gfcv_exp <- list()
-lima_exp <- list()
+<!-- gfcv_exp <- list() -->
+<!-- lima_exp <- list() -->
 
-for(id in column_ids){
-       
-    file_dir <- paste0(params$input_dir, id, "/")
-    hermes_files <- paste0(file_dir, "Hermes_Test/")
-    output_path <- hermes_files
-    if(!dir.exists(output_path)){dir.create(output_path)}
-    hermes_output_path <- paste0(output_path, "filteredSoiLists.rds") 
-    ## HERMES Analysis
-    
-    if(!file.exists(hermes_output_path)){
-        param_list <- list(ms1_dir = hermes_files, 
-                            qc_names =  "QC", blank_names = "Blank",
-                            met_db = db_path, met_db_sep = ",",
-                            ppm_error = 10, instrument = "QTOF", resolution = 30000, 
-                            noise_int = 1000, labelled = FALSE,
-                            min_max_mz = c(50, 1500), 
-                            add_charge = 1, add_mult = 1,
-                            soi_detection_type = "double",
-                            output_dir = output_path,
-                            consensus = TRUE, 
-                            soi_consensus = 1:3)
-        param_list$ionization <- ifelse(grepl("Positive", x = id, 
-                                                ignore.case = TRUE), 
-                                        "+", "-")
-        if(grepl("Positive", id)){
-            param_list$ad_list <- positive_adducts    
-        } else{
-            param_list$ad_list <- negative_adducts
-        }
-        
-        rmarkdown::render(input = "./Hermes_Analysis.Rmd",
-                      output_file = paste0(output_path, "Hermes_Report_Test.html"), 
-                      clean = TRUE, params = param_list)
+<!-- for(id in column_ids){ -->
 
-        }
-}
-```
+<!--     file_dir <- paste0(params$input_dir, id, "/") -->
+<!--     hermes_files <- paste0(file_dir, "Hermes_Test/") -->
+<!--     output_path <- hermes_files -->
+<!--     if(!dir.exists(output_path)){dir.create(output_path)} -->
+<!--     hermes_output_path <- paste0(output_path, "filteredSoiLists.rds")  -->
+<!--     ## HERMES Analysis -->
+
+<!--     if(!file.exists(hermes_output_path)){ -->
+<!--         param_list <- list(ms1_dir = hermes_files,  -->
+<!--                             qc_names =  "QC", blank_names = "Blank", -->
+<!--                             met_db = db_path, met_db_sep = ",", -->
+<!--                             ppm_error = 10, instrument = "QTOF", resolution = 30000,  -->
+<!--                             noise_int = 1000, labelled = FALSE, -->
+<!--                             min_max_mz = c(50, 1500),  -->
+<!--                             add_charge = 1, add_mult = 1, -->
+<!--                             soi_detection_type = "double", -->
+<!--                             output_dir = output_path, -->
+<!--                             consensus = TRUE,  -->
+<!--                             soi_consensus = 1:3) -->
+<!--         param_list$ionization <- ifelse(grepl("Positive", x = id,  -->
+<!--                                                 ignore.case = TRUE),  -->
+<!--                                         "+", "-") -->
+<!--         if(grepl("Positive", id)){ -->
+<!--             param_list$ad_list <- positive_adducts     -->
+<!--         } else{ -->
+<!--             param_list$ad_list <- negative_adducts -->
+<!--         } -->
+
+<!--         rmarkdown::render(input = "./Hermes_Analysis.Rmd", -->
+<!--                       output_file = paste0(output_path, "Hermes_Report_Test.html"),  -->
+<!--                       clean = TRUE, params = param_list) -->
+
+<!--         } -->
+<!-- } -->
+<!-- ``` -->
 

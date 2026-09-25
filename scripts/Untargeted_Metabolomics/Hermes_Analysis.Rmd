@@ -4,8 +4,8 @@ author: "Jordi Rofes Herrera"
 date: "27/1/2022"
 output: html_document
 params:
-    ms1_dir: "../../inputs/Untargeted_Metabolomics/Hilic_Negative/"
-    qc_names: "HN_QC"
+    ms1_dir: "../../inputs/Untargeted_Metabolomics/Hilic_Positive/"
+    qc_names: "HP_QC"
     blank_names: "Blank"
     met_db: "../../inputs/Untargeted_Metabolomics/FullHMDB_Chebi_Tripeptides_db.csv"
     met_db_sep: ","
@@ -13,17 +13,17 @@ params:
     instrument: "QTOF"
     resolution: 30000
     noise_int: 1000 
-    ionization: "-"
+    ionization: "+"
     labelled: FALSE
-    ad_list: !r c("M+Cl", "M-H")
+    ad_list: !r c("[M+H]+", "[M+Na]+")
     min_max_mz: !r c(50, 1500)
     add_charge: 1
     add_mult: 1
     soi_detection_type: "double"
     soi_file_ids: !r c(1:3)
     soi_blank_ids: !r c(4,4,4)
-    output_dir: "./Hermes_Results/Hilic_Positive/"
-    soi_filter_ids: !r c(1:2)
+    output_dir: "../../outputs/Untargeted_Metabolomics/Hermes_Results/Hilic_Positive/"
+    soi_filter_ids: !r c(1:3)
     consensus: TRUE
     soi_consensus: !r c(1:3)
 ---
@@ -63,14 +63,18 @@ hermes_dt <- setExpParam(hermes_dt, params = ExpParam(ppm = params$ppm_error, re
 
 
 ```{r}
-hermes_dt <- setDB(hermes_dt, db = "custom", DBfile = params$met_db, 
-                  adlist = params$ad_list, adcharge = params$add_charge, admult = params$add_mult)
-```
+pk_list_path <- paste0(params$output_dir, "peakList.rds")
 
+if(!file.exists(pk_list_path)){
+    hermes_dt <- setDB(hermes_dt, db = "custom", DBfile = params$met_db, 
+                    adlist = params$ad_list, adcharge = params$add_charge, 
+                    admult = params$add_mult)
 
-```{r}
-hermes_dt <- processMS1(struct = hermes_dt, files = ms1_files, labelled = params$labelled)
-saveRDS(hermes_dt, file = paste0(params$output_dir, "peakList.rds"))
+    hermes_dt <- processMS1(struct = hermes_dt, files = ms1_files, labelled = params$labelled)
+    saveRDS(hermes_dt, file = pk_list_path)
+} else{
+    hermes_dt <- readRDS(pk_list_path)
+}
 ```
 
 ## SOI processing
@@ -88,6 +92,7 @@ if(!file.exists(soi_list_path)){
 ```
 
 ## SOI filtering
+
 ```{r, eval=TRUE}
 soi_filt_list_path <- paste0(params$output_dir, "filteredSoiLists.rds")
 if(!file.exists(soi_filt_list_path)){

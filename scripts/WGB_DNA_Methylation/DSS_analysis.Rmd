@@ -21,6 +21,7 @@ params:
   smoothing: FALSE
   dmr_pvalue: 0.001
   percentage_sig: 0.5
+  plot_results: FALSE
 ---
 
 ```{r setup, include=FALSE}
@@ -133,7 +134,7 @@ hist_list <- lapply(names(dss_results_list), function(ctrs_name){
 
 ###### Beta values
 
-```{r}
+```{r, eval = params$plot_results}
 heatmal_list <- lapply(names(dss_results_list), function(ctrs_name){
   max_cpgs <- min(5000, nrow(dss_results_list[[ctrs_name]]))
   
@@ -162,7 +163,7 @@ heatmal_list <- lapply(names(dss_results_list), function(ctrs_name){
 
 ###### Scaled Beta values
 
-```{r}
+```{r, eval = params$plot_results}
 heatmap_list <- lapply(names(dss_results_list), function(ctrs_name){
   max_cpgs <- min(5000, nrow(dss_results_list[[ctrs_name]]))
 
@@ -193,7 +194,7 @@ heatmap_list <- lapply(names(dss_results_list), function(ctrs_name){
 
 ###### Beta values
 
-```{r}
+```{r, eval = params$plot_results}
 heatmap_list <- lapply(names(dss_results_list), function(ctrs_name){
   sig_cpgs <- dss_results_list[[ctrs_name]][,5] <= params$adj.p.value_thr
   
@@ -222,7 +223,7 @@ heatmap_list <- lapply(names(dss_results_list), function(ctrs_name){
 
 ###### Scaled Beta values
 
-```{r}
+```{r, eval = params$plot_results}
 heatmap_list <-lapply(names(dss_results_list), function(ctrs_name){
   sig_cpgs <- dss_results_list[[ctrs_name]][,5] <= params$adj.p.value_thr
   
@@ -309,7 +310,7 @@ Significant DMRs found with DSS (more than `params$percentage_sig` with pvalue h
 
 ##### Heatmaps full
 
-```{r results_heatmaps_full}
+```{r results_heatmaps_full, eval = params$plot_results}
 heat_map_list <- lapply(names(called_dmrs_granges), function(ctrs_name){
   ctrs <- called_dmrs_granges[[ctrs_name]]
   sig_dmrs <- ctrs[mcols(ctrs)[,grepl("adj.p.value", colnames(mcols(ctrs)))] <= params$adj.p.value_thr]
@@ -350,7 +351,7 @@ heat_map_list <- lapply(names(called_dmrs_granges), function(ctrs_name){
 
 ##### Heatmap full CpGs
 
-```{r results_heatmaps_full_cpgs}
+```{r results_heatmaps_full_cpgs, eval = params$plot_results}
 heat_map_list <- lapply(names(called_dmrs_granges), function(ctrs_name){
   ctrs <- called_dmrs_granges[[ctrs_name]]
   sig_dmrs <- ctrs[mcols(ctrs)[,grepl("adj.p.value", colnames(mcols(ctrs)))] <= params$adj.p.value_thr]

@@ -1363,7 +1363,7 @@ lapply(results_list[[2]], summary)
 annotation_list <- list.files(params$input_dir, pattern = "\\.txt$", 
                               full.names = TRUE)
 
-annotation_list <- annotation_list[c(5, 1, 3)]
+annotation_list <- annotation_list[c(4, 1, 2)]
 names(annotation_list) <- c("EC", "metaerg_pathway", "cogs")
 
 # annotation_dt <- lapply(annotation_list, function(x){

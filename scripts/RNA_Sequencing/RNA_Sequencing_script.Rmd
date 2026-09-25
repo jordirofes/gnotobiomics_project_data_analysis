@@ -479,9 +479,6 @@ vst_dt
 ```
 
 
-
-
-
 ```{r}
 lima_DESeq_results <- lapply(lima_DESeq_results, function(ctrs_res){
     colnames(ctrs_res)[c(2,5:6)] <- c("log2FC","p.value", "adj.p.value")
@@ -505,7 +502,7 @@ lima_DESeq_results$gene_lab <- ifelse(!is.na(lima_DESeq_results$gene_name),
 ```
 
 ```{r}
-alias_trad <- readLines(paste0(params$output_dir, 
+alias_trad <- readLines(paste0(params$input_dir, 
                         "/mm10.chromAlias.txt"))
 alias_trad <- strsplit(alias_trad, split = "\t")
 
@@ -519,38 +516,39 @@ names(chrom_id_to_name) <- alias_trad$DB_ID
 
 # ids_to_map[gene_info$Accession,"chromosome_name"] <- paste0("chr", sapply(strsplit(gene_info$Position, ":"), function(x){x[1]}))
 
+# library(biomaRt)
+# ensembl <- useEnsembl(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
+# genes_chr <- getBM(attributes = c('ensembl_gene_id','chromosome_name',
+#                                 'start_position','end_position'), 
+#                     filters = 'ensembl_gene_id', values = rownames(rna_seq_exp), 
+#                     mart = ensembl)
+# 
+# gene_info <- read.table(paste0(params$input_dir, 
+#                         "/remaining_genes_information.txt"), sep = "\t", header = TRUE)
+# gene_info$chromosome_name <- sapply(strsplit(gene_info$Position, split = ":"),
+#                                     function(x){x[[1]]})
+# gene_info$start_position <- sapply(strsplit(gene_info$Position, split = ":"),
+#                                     function(x){
+#                                         strsplit(x[[2]], "-")[[1]][1]
+#                                     })
+# gene_info$end_position <- sapply(strsplit(gene_info$Position, split = ":"),
+#                                     function(x){
+#                                         strsplit(x[[2]], "-")[[1]][2]
+#                                     })
+# 
+# gene_info_proc <- data.frame("ensembl_gene_id" = gene_info$Accession, 
+#                             "chromosome_name" = gene_info$chromosome_name,
+#                             "start_position" = gene_info$start_position,
+#                             "end_position" = gene_info$end_position)
+# gene_info_full <- rbind(genes_chr, gene_info_proc)
+# 
+# rownames(gene_info_full) <- gene_info_full$ensembl_gene_id
+# 
+# gene_info_full$chromosome_id <- chrom_id_to_name[gene_info_full$chromosome_name]
+# 
+# gene_info_merge <- gene_info_full[rownames(rna_seq_exp),]
 
-library(biomaRt)
-ensembl <- useEnsembl(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
-genes_chr <- getBM(attributes = c('ensembl_gene_id','chromosome_name',
-                                'start_position','end_position'), 
-                    filters = 'ensembl_gene_id', values = rownames(rna_seq_exp), 
-                    mart = ensembl)
-
-gene_info <- read.table(paste0(params$output_dir, 
-                        "/remaining_genes_information.txt"), sep = "\t", header = TRUE)
-gene_info$chromosome_name <- sapply(strsplit(gene_info$Position, split = ":"),
-                                    function(x){x[[1]]})
-gene_info$start_position <- sapply(strsplit(gene_info$Position, split = ":"),
-                                    function(x){
-                                        strsplit(x[[2]], "-")[[1]][1]
-                                    })
-gene_info$end_position <- sapply(strsplit(gene_info$Position, split = ":"),
-                                    function(x){
-                                        strsplit(x[[2]], "-")[[1]][2]
-                                    })
-
-gene_info_proc <- data.frame("ensembl_gene_id" = gene_info$Accession, 
-                            "chromosome_name" = gene_info$chromosome_name,
-                            "start_position" = gene_info$start_position,
-                            "end_position" = gene_info$end_position)
-gene_info_full <- rbind(genes_chr, gene_info_proc)
-
-rownames(gene_info_full) <- gene_info_full$ensembl_gene_id
-
-gene_info_full$chromosome_id <- chrom_id_to_name[gene_info_full$chromosome_name]
-
-gene_info_merge <- gene_info_full[rownames(rna_seq_exp),]
+gene_info_merge <- readRDS(paste0(params$input_dir, "biomart_info_lima.rds"))
 
 lima_DESeq_results <- cbind(lima_DESeq_results, gene_info_merge)
 
@@ -583,49 +581,49 @@ lima_DESeq_results <- cbind(lima_DESeq_results, gene_info_merge)
 ```
 
 ```{r}
-library(biomaRt)
-# ensembl <- useEnsembl(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
-genes_type <- getBM(attributes = c('ensembl_gene_id', "gene_biotype"), 
-                    filters = 'ensembl_gene_id', values = rownames(rna_seq_exp), 
-                    mart = ensembl)
-
-
-rownames(rna_seq_exp) %in% genes_type$ensembl_gene_id
-
-lima_DESeq_results$gene_biotype <- genes_type$gene_biotype[match(rownames(rna_seq_exp),
-                                                                genes_type$ensembl_gene_id)]
+# library(biomaRt)
+# # ensembl <- useEnsembl(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
+# genes_type <- getBM(attributes = c('ensembl_gene_id', "gene_biotype"), 
+#                     filters = 'ensembl_gene_id', values = rownames(rna_seq_exp), 
+#                     mart = ensembl)
+# 
+# 
+# rownames(rna_seq_exp) %in% genes_type$ensembl_gene_id
+# 
+# lima_DESeq_results$gene_biotype <- genes_type$gene_biotype[match(rownames(rna_seq_exp),
+#                                                                 genes_type$ensembl_gene_id)]
 
 ```
 
 ```{r}
-grep("go", biomaRt::listAttributes(ensembl))
-biomaRt::listAttributes(ensembl)
-
-
-results <- getBM(attributes = c("ensembl_gene_id", 
-                                "external_gene_name",
-                                "description"),
-                 filters = "go_parent_term",
-                 values = "GO:0003700",
-                 mart = ensembl)
-
-results2 <- getBM(attributes = c("ensembl_gene_id", 
-                                "external_gene_name",
-                                "description"),
-                 filters = "go_parent_term",
-                 values = "GO:0140297",
-                 mart = ensembl)
-lima_DESeq_results$has_GO_0003700 <- rownames(lima_DESeq_results) %in% results$ensembl_gene_id
-lima_DESeq_results$has_GO_0140297 <- rownames(lima_DESeq_results) %in% results2$ensembl_gene_id
-
-
-results3 <- getBM(attributes = c("ensembl_gene_id", 
-                                "external_gene_name",
-                                "description"),
-                 filters = "go_parent_term",
-                 values = "GO:0040029",
-                 mart = ensembl)
-lima_DESeq_results$has_GO_0040029 <- rownames(lima_DESeq_results) %in% results$ensembl_gene_id
+# grep("go", biomaRt::listAttributes(ensembl))
+# biomaRt::listAttributes(ensembl)
+# 
+# 
+# results <- getBM(attributes = c("ensembl_gene_id", 
+#                                 "external_gene_name",
+#                                 "description"),
+#                  filters = "go_parent_term",
+#                  values = "GO:0003700",
+#                  mart = ensembl)
+# 
+# results2 <- getBM(attributes = c("ensembl_gene_id", 
+#                                 "external_gene_name",
+#                                 "description"),
+#                  filters = "go_parent_term",
+#                  values = "GO:0140297",
+#                  mart = ensembl)
+# lima_DESeq_results$has_GO_0003700 <- rownames(lima_DESeq_results) %in% results$ensembl_gene_id
+# lima_DESeq_results$has_GO_0140297 <- rownames(lima_DESeq_results) %in% results2$ensembl_gene_id
+# 
+# 
+# results3 <- getBM(attributes = c("ensembl_gene_id", 
+#                                 "external_gene_name",
+#                                 "description"),
+#                  filters = "go_parent_term",
+#                  values = "GO:0040029",
+#                  mart = ensembl)
+# lima_DESeq_results$has_GO_0040029 <- rownames(lima_DESeq_results) %in% results$ensembl_gene_id
 ```
 
 
@@ -1099,114 +1097,117 @@ rowData(gfcv_80_exp)$gene_lab <- ifelse(!is.na(rowData(gfcv_80_exp)$gene_name),
 ```
 
 ```{r}
-alias_trad <- readLines(paste0(params$output_dir, 
-                        "/mm10.chromAlias.txt"))
-alias_trad <- strsplit(alias_trad, split = "\t")
-
-alias_trad <- lapply(alias_trad, function(x){
-    data.frame("ID" = x[1], "DB_ID" = ifelse(!is.na(x[4]), x[4], x[3]))
-})
-alias_trad <- do.call(rbind, alias_trad)
-
-chrom_id_to_name <- gsub("_.*$", "", alias_trad$ID)
-names(chrom_id_to_name) <- alias_trad$DB_ID
-
-# ids_to_map[gene_info$Accession,"chromosome_name"] <- paste0("chr", sapply(strsplit(gene_info$Position, ":"), function(x){x[1]}))
-
-
-library(biomaRt)
-ensembl <- useEnsembl(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
-genes_chr <- getBM(attributes = c('ensembl_gene_id','chromosome_name',
-                                'start_position','end_position'), 
-                    filters = 'ensembl_gene_id', values = rownames(gfcv_80_exp), 
-                    mart = ensembl)
-
-# copied_metadata <- lapply(rownames(gfcv_80_exp), function(x){
-#     found_id <- RNA_Sequencing_exp_lima[rownames(RNA_Sequencing_exp_lima) == x,]
-#     if(nrow(found_id)){
-#         return(rowData(found_id)[,c("chromosome_name", "start_position", 
-#                                     "end_position", "chromosome_id", "gene_biotype",
-#                                     "has_GO_0003700", "has_GO_0140297", "has_GO_0040029")])
-#     } else{
-#         return(data.frame("chromosome_name" = NA, "start_position" = NA, 
-#                         "end_position" = NA, "chromosome_id" = NA, 
-#                         "gene_biotype" = NA, "has_GO_0003700" = NA, 
-#                         "has_GO_0140297" = NA, "has_GO_0040029" = NA))
-#     }
+# alias_trad <- readLines(paste0(params$output_dir, 
+#                         "/mm10.chromAlias.txt"))
+# alias_trad <- strsplit(alias_trad, split = "\t")
+# 
+# alias_trad <- lapply(alias_trad, function(x){
+#     data.frame("ID" = x[1], "DB_ID" = ifelse(!is.na(x[4]), x[4], x[3]))
 # })
+# alias_trad <- do.call(rbind, alias_trad)
+# 
+# chrom_id_to_name <- gsub("_.*$", "", alias_trad$ID)
+# names(chrom_id_to_name) <- alias_trad$DB_ID
+# 
+# # ids_to_map[gene_info$Accession,"chromosome_name"] <- paste0("chr", sapply(strsplit(gene_info$Position, ":"), function(x){x[1]}))
+# 
+# 
+# library(biomaRt)
+# ensembl <- useEnsembl(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
+# genes_chr <- getBM(attributes = c('ensembl_gene_id','chromosome_name',
+#                                 'start_position','end_position'), 
+#                     filters = 'ensembl_gene_id', values = rownames(gfcv_80_exp), 
+#                     mart = ensembl)
+# 
+# # copied_metadata <- lapply(rownames(gfcv_80_exp), function(x){
+# #     found_id <- RNA_Sequencing_exp_lima[rownames(RNA_Sequencing_exp_lima) == x,]
+# #     if(nrow(found_id)){
+# #         return(rowData(found_id)[,c("chromosome_name", "start_position", 
+# #                                     "end_position", "chromosome_id", "gene_biotype",
+# #                                     "has_GO_0003700", "has_GO_0140297", "has_GO_0040029")])
+# #     } else{
+# #         return(data.frame("chromosome_name" = NA, "start_position" = NA, 
+# #                         "end_position" = NA, "chromosome_id" = NA, 
+# #                         "gene_biotype" = NA, "has_GO_0003700" = NA, 
+# #                         "has_GO_0140297" = NA, "has_GO_0040029" = NA))
+# #     }
+# # })
+# 
+# gene_info <- read.table(paste0(params$output_dir, 
+#                         "/remaining_genes_information.txt"), sep = "\t", header = TRUE)
+# gene_info$chromosome_name <- sapply(strsplit(gene_info$Position, split = ":"),
+#                                     function(x){x[[1]]})
+# gene_info$start_position <- sapply(strsplit(gene_info$Position, split = ":"),
+#                                     function(x){
+#                                         strsplit(x[[2]], "-")[[1]][1]
+#                                     })
+# gene_info$end_position <- sapply(strsplit(gene_info$Position, split = ":"),
+#                                     function(x){
+#                                         strsplit(x[[2]], "-")[[1]][2]
+#                                     })
+# 
+# gene_info_proc <- data.frame("ensembl_gene_id" = gene_info$Accession, 
+#                             "chromosome_name" = gene_info$chromosome_name,
+#                             "start_position" = gene_info$start_position,
+#                             "end_position" = gene_info$end_position)
+# gene_info_full <- rbind(genes_chr, gene_info_proc)
+# 
+# rownames(gene_info_full) <- gene_info_full$ensembl_gene_id
+# 
+# gene_info_full$chromosome_id <- chrom_id_to_name[gene_info_full$chromosome_name]
 
-gene_info <- read.table(paste0(params$output_dir, 
-                        "/remaining_genes_information.txt"), sep = "\t", header = TRUE)
-gene_info$chromosome_name <- sapply(strsplit(gene_info$Position, split = ":"),
-                                    function(x){x[[1]]})
-gene_info$start_position <- sapply(strsplit(gene_info$Position, split = ":"),
-                                    function(x){
-                                        strsplit(x[[2]], "-")[[1]][1]
-                                    })
-gene_info$end_position <- sapply(strsplit(gene_info$Position, split = ":"),
-                                    function(x){
-                                        strsplit(x[[2]], "-")[[1]][2]
-                                    })
+gene_info_merge <- readRDS(paste0(params$input_dir, "biomart_info_gfcv.rds"))
 
-gene_info_proc <- data.frame("ensembl_gene_id" = gene_info$Accession, 
-                            "chromosome_name" = gene_info$chromosome_name,
-                            "start_position" = gene_info$start_position,
-                            "end_position" = gene_info$end_position)
-gene_info_full <- rbind(genes_chr, gene_info_proc)
 
-rownames(gene_info_full) <- gene_info_full$ensembl_gene_id
-
-gene_info_full$chromosome_id <- chrom_id_to_name[gene_info_full$chromosome_name]
-
-gene_info_merge <- gene_info_full[rownames(gfcv_80_exp),]
+# gene_info_merge <- gene_info_full[rownames(gfcv_80_exp),]
 
 rowData(gfcv_80_exp) <- cbind(rowData(gfcv_80_exp), gene_info_merge)
 ```
 
 ```{r}
-library(biomaRt)
-# ensembl <- useEnsembl(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
-genes_type <- getBM(attributes = c('ensembl_gene_id', "gene_biotype"), 
-                    filters = 'ensembl_gene_id', values = rownames(gfcv_80_exp), 
-                    mart = ensembl)
-
-
-rownames(gfcv_80_exp) %in% genes_type$ensembl_gene_id
-
-rowData(gfcv_80_exp)$gene_biotype <- genes_type$gene_biotype[match(rownames(gfcv_80_exp),
-                                                                genes_type$ensembl_gene_id)]
+# library(biomaRt)
+# # ensembl <- useEnsembl(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
+# genes_type <- getBM(attributes = c('ensembl_gene_id', "gene_biotype"), 
+#                     filters = 'ensembl_gene_id', values = rownames(gfcv_80_exp), 
+#                     mart = ensembl)
+# 
+# 
+# rownames(gfcv_80_exp) %in% genes_type$ensembl_gene_id
+# 
+# rowData(gfcv_80_exp)$gene_biotype <- genes_type$gene_biotype[match(rownames(gfcv_80_exp),
+#                                                                 genes_type$ensembl_gene_id)]
 
 ```
 
 ```{r}
-grep("go", biomaRt::listAttributes(ensembl))
-biomaRt::listAttributes(ensembl)
-
-
-results <- getBM(attributes = c("ensembl_gene_id", 
-                                "external_gene_name",
-                                "description"),
-                 filters = "go_parent_term",
-                 values = "GO:0003700",
-                 mart = ensembl)
-
-results2 <- getBM(attributes = c("ensembl_gene_id", 
-                                "external_gene_name",
-                                "description"),
-                 filters = "go_parent_term",
-                 values = "GO:0140297",
-                 mart = ensembl)
-rowData(gfcv_80_exp)$has_GO_0003700 <- rownames(gfcv_80_exp) %in% results$ensembl_gene_id
-rowData(gfcv_80_exp)$has_GO_0140297 <- rownames(gfcv_80_exp) %in% results2$ensembl_gene_id
-
-
-results3 <- getBM(attributes = c("ensembl_gene_id", 
-                                "external_gene_name",
-                                "description"),
-                 filters = "go_parent_term",
-                 values = "GO:0040029",
-                 mart = ensembl)
-rowData(gfcv_80_exp)$has_GO_0040029 <- rownames(gfcv_80_exp) %in% results3$ensembl_gene_id
+# grep("go", biomaRt::listAttributes(ensembl))
+# biomaRt::listAttributes(ensembl)
+# 
+# 
+# results <- getBM(attributes = c("ensembl_gene_id", 
+#                                 "external_gene_name",
+#                                 "description"),
+#                  filters = "go_parent_term",
+#                  values = "GO:0003700",
+#                  mart = ensembl)
+# 
+# results2 <- getBM(attributes = c("ensembl_gene_id", 
+#                                 "external_gene_name",
+#                                 "description"),
+#                  filters = "go_parent_term",
+#                  values = "GO:0140297",
+#                  mart = ensembl)
+# rowData(gfcv_80_exp)$has_GO_0003700 <- rownames(gfcv_80_exp) %in% results$ensembl_gene_id
+# rowData(gfcv_80_exp)$has_GO_0140297 <- rownames(gfcv_80_exp) %in% results2$ensembl_gene_id
+# 
+# 
+# results3 <- getBM(attributes = c("ensembl_gene_id", 
+#                                 "external_gene_name",
+#                                 "description"),
+#                  filters = "go_parent_term",
+#                  values = "GO:0040029",
+#                  mart = ensembl)
+# rowData(gfcv_80_exp)$has_GO_0040029 <- rownames(gfcv_80_exp) %in% results3$ensembl_gene_id
 ```
 
 ```{r}

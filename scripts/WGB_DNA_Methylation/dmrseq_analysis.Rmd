@@ -3,7 +3,7 @@ title: "dmrseq_analysis"
 output: html_document
 date: "2023-12-06"
 params:
-  methrix_path: !r paste0(output_dir, "merged_methrix.rds")
+  methrix_path: !r methrix_path
   output_dir: !r dmrseq_output
   threads: 1
   
@@ -26,7 +26,7 @@ params:
   maxGap: 200 
   maxPerms: 3
   
-  results_name: "results_name"
+  results_name: "non_smoothed"
   
   dmrseq_thr: 0.05
 
@@ -159,7 +159,8 @@ plot_dt <- do.call(rbind, mean_methylation_diff)
 hist_mean_meth <- ggplot(plot_dt, aes(x = mean_methylation_diff, fill = ctrs_name)) +
   geom_histogram(alpha = 0.6, position = "identity") + theme_minimal() + 
   scale_fill_brewer(palette = "Set2")
-ggplotly(hist_mean_meth)
+# ggplotly(hist_mean_meth)
+hist_mean_meth
 ```
 
 ### DMR Widths
@@ -181,7 +182,8 @@ plot_dt <- do.call(rbind, plot_dt)
 plot_res <- ggplot(plot_dt, aes(x = dmr_widths, fill = ctrs_name)) + 
   geom_histogram(alpha = 0.6, position = "identity", aes(y = ..density..)) + 
   theme_minimal() + scale_fill_brewer(palette = "Set2")
-ggplotly(plot_res)
+plot_res
+# ggplotly(plot_res)
 ```
 
 ### pvalue distributions
@@ -190,7 +192,8 @@ ggplotly(plot_res)
 plot_res <- ggplot(plot_dt, aes(x = pvalues, fill = ctrs_name)) + 
   geom_histogram(alpha = 0.6, position = "identity") + theme_minimal() + 
   scale_fill_brewer(palette = "Set2") + geom_vline(xintercept = 0.05)
-ggplotly(plot_res)
+plot_res
+#ggplotly(plot_res)
 ```
 
 ### qvalue distributions
@@ -199,7 +202,8 @@ ggplotly(plot_res)
 plot_res <- ggplot(plot_dt, aes(x = qvalues, fill = ctrs_name)) + 
   geom_histogram(alpha = 0.6, position = "identity") + theme_minimal() + 
   scale_fill_brewer(palette = "Set2") + geom_vline(xintercept = 0.05)
-ggplotly(plot_res)
+plot_res
+#ggplotly(plot_res)
 ```
 
 ### Beta values distribution
@@ -214,7 +218,8 @@ plot_res <- ggplot(plot_dt_beta, aes(x = Beta_Value,
                                      fill = .data[[beta_plot_var]])) +
   geom_histogram(alpha = 0.6, position = "identity") + theme_minimal() +
   scale_fill_brewer(palette = "Set2")
-ggplotly(plot_res)
+plot_res
+#ggplotly(plot_res)
 ```
 
 ### Granges Percentage found DMRs Overlaps
